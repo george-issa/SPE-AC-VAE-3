@@ -85,3 +85,18 @@ def test_finetune_roundtrip(workspace, capsys):
     main(["info", "--checkpoint", str(out)])
     text = capsys.readouterr().out
     assert "num_poles" in text and "finetune" in text
+
+
+def test_continue_refine_reports_physical_units(workspace):
+    """RefineResult poles are already physical; converting twice shrank all
+    widths below the structural floor -- the exact bug this guards."""
+    import math
+    out = workspace["dir"] / "refined.npz"
+    main(["continue", "--bins", str(workspace["bins"]),
+          "--beta", str(workspace["beta"]),
+          "--checkpoint", str(workspace["ckpt"]),
+          "--refine", "--refine-steps", "60", "--out", str(out)])
+    z = np.load(out)
+    floor = 0.1 * math.pi / workspace["beta"]
+    assert (z["poles_gamma"] >= floor - 1e-9).all(), (
+        z["poles_gamma"].min(), floor)

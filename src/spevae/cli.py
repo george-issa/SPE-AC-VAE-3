@@ -90,7 +90,7 @@ def cmd_continue(args) -> None:
     if args.refine:
         rr = refine_latent(model, mg, RefineConfig(
             steps=args.refine_steps, min_eigenvalue=args.min_eigenvalue))
-        poles = rr.poles.to_physical(mg.beta)
+        poles = rr.poles                    # RefineResult poles are already physical
         A = rr.spectral(omega)
         A_np, A_std = A[0].double().numpy(), None
         G_recon = rr.G_recon
