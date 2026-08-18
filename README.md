@@ -78,6 +78,9 @@ spevae continue --bins mybins.txt --beta 8.0 --checkpoint out/model-tuned.pt \
                 --refine --out result.npz
 ```
 
+[`docs/TUTORIAL.md`](docs/TUTORIAL.md) walks all of this on a real half-filled
+Hubbard dataset, with every printed number a measured output.
+
 `--bins` takes whitespace-delimited `(N_bins × L_τ)` text, `τ = 0 … β`
 inclusive. The sign convention is **detected, not assumed** — the sum rule
 `G(0) + G(β) = 1` is satisfied by exactly one sign — and the run aborts rather
