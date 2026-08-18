@@ -77,6 +77,17 @@ class ACResult:
         """Participation ratio of the weights: how many poles the fit actually spends."""
         return effective_pole_count(self.poles.a / self.norm.reshape(-1, 1))
 
+    def positivity(self, atol: float = 1e-10) -> list:
+        r"""Exact pointwise-positivity certificate for every sample in the batch.
+
+        Decided from the pole parameters alone (no :math:`\omega` grid): see
+        :func:`spevae.physics.positivity.positivity_certificate`.  In
+        ``residue_mode="real"`` every report is trivially positive; in complex
+        mode this is the number to print next to any spectrum.
+        """
+        from ..physics.positivity import positivity_certificate
+        return positivity_certificate(self.poles_physical(), atol=atol)
+
 
 def active_units(mu: torch.Tensor, threshold: float = 1e-2) -> torch.Tensor:
     r"""Number of latent dimensions whose posterior mean actually varies with the input.

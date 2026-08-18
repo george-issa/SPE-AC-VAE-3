@@ -91,9 +91,16 @@ def run_spevae(
         spread = "bin to bin"
 
     poles = out["poles"]
+    # Exact certificate on the reported sample: A >= 0 decided from the pole
+    # parameters, with the negative excursion quantified when there is one.
+    from ..physics.positivity import positivity_certificate
+    cert = positivity_certificate(poles[0:1])[0]
     res = ContinuationResult(
         method="spevae", omega=omega, A=A_mean, A_std=A_std, runtime=t.elapsed,
         meta={"solver": "spevae SPE-VAE",
+              "certified_positive": bool(cert.is_positive),
+              "min_A_exact": float(cert.min_A),
+              "negative_weight": float(cert.negative_weight),
               "n_samples": n_samples, "spread": spread,
               "num_poles": int(poles.shape[1]),
               # Participation ratio on the *unit-sum* weights: poles.a has been

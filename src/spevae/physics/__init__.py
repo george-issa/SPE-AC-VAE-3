@@ -23,6 +23,7 @@ from .poles import (
     tail_coefficients,
     windowed_moments,
 )
+from .positivity import PositivityReport, certify, positivity_certificate
 
 __all__ = [
     "MATSUBARA_NU0",
@@ -42,4 +43,7 @@ __all__ = [
     "greens_matsubara",
     "matsubara_from_tau",
     "gaussian_mixture_spectrum",
+    "PositivityReport",
+    "certify",
+    "positivity_certificate",
 ]

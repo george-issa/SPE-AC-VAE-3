@@ -41,13 +41,13 @@ With ``b = 0`` the expansion is a *positive mixture of Lorentzians*,
 
 which is non-negative **pointwise, by construction**, normalised, causal, and
 :math:`\sim 1/\omega^2` at large :math:`|\omega|` — all four simultaneously and
-without any training pressure.  This is the package default
-(``residue_mode="real"``).  It is the discrete analogue of the observation that
-respecting the Nevanlinna analytic structure yields intrinsically positive and
-normalised spectra (Fei, Yeh & Gull, *PRL* **126**, 056402 (2021)).
+without any training pressure.  It is the discrete analogue of the observation
+that respecting the Nevanlinna analytic structure yields intrinsically positive
+and normalised spectra (Fei, Yeh & Gull, *PRL* **126**, 056402 (2021)).
 
-With :math:`b_p \neq 0` each pole acquires a dispersive (Fano-like) component
-and the *individual* :math:`A_p` is no longer sign-definite:
+With :math:`b_p \neq 0` — the package default, because physical line shapes are
+asymmetric — each pole acquires a dispersive (Fano-like) component and the
+*individual* :math:`A_p` is no longer sign-definite:
 
 .. math::
     \min_\omega A_p = \frac{a_p - \sqrt{a_p^2+b_p^2}}{2\pi\gamma_p} < 0
@@ -55,9 +55,12 @@ and the *individual* :math:`A_p` is no longer sign-definite:
 
 with magnitude diverging as :math:`\gamma_p \to 0`.  Positivity of the total
 then relies on cross-pole cancellation, which :math:`\sum_p b_p = 0` enforces
-only in the *integral*, not pointwise.  This is the failure mode that motivates
-``residue_mode="real"`` as the default; the complex mode remains available for
-correlators that are genuinely not positive-definite.
+in the *integral* while the :math:`|b_p| \le a_p` bound and the training-time
+penalty keep the pointwise excursions small.  Whether a given pole set is in
+fact non-negative everywhere is *decidable* without any grid — see
+:mod:`spevae.physics.positivity` for the exact certificate — and the verdict
+ships with every reported spectrum.  ``residue_mode="real"`` remains available
+when a structural guarantee matters more than asymmetry.
 """
 
 from __future__ import annotations
