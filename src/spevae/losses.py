@@ -59,11 +59,9 @@ particle--hole asymmetry as individual latent coordinates
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 
 from .physics.forward import SpectralQuadrature
 
@@ -120,15 +118,27 @@ def chi2(
         the noise is correlated -- acceptable only when that is genuinely true.
     n_independent
         Use only the leading ``n_independent`` time slices.  On an
-        endpoint-inclusive grid :math:`\tau=\beta` is linearly dependent on
-        :math:`\tau=0` through the sum rule, making the full covariance singular;
-        pass ``L-1`` there.
+        endpoint-inclusive grid of *measured* bins, :math:`\tau=\beta` is
+        linearly dependent on :math:`\tau=0` through the sum rule, making the
+        full covariance singular; pass ``L-1`` there, **together with a whitener
+        computed on that leading block** (:mod:`spevae.data.real` does).  A
+        whitener of any other size raises, because slicing
+        :math:`R^{-1/2}` is not the whitener of the sliced block.  Synthetic
+        batches need neither: their noise is full-rank over all ``L`` slices.
     """
     d = (G_pred - G_obs) / sigma
     if n_independent is not None:
         d = d[:, :n_independent]
-        if inv_sqrt_R is not None:
-            inv_sqrt_R = inv_sqrt_R[:n_independent, :n_independent]
+        if inv_sqrt_R is not None and inv_sqrt_R.shape[-1] != n_independent:
+            # Slicing a whitener computed for the full grid is NOT the whitener
+            # of the sliced block: (R^{-1/2})[:n,:n] != (R[:n,:n])^{-1/2}, and
+            # the mismatch silently mis-calibrates chi^2 by up to a few percent.
+            # Compute inv_sqrt_R on the block you score (data/real.py does).
+            raise ValueError(
+                f"inv_sqrt_R is {tuple(inv_sqrt_R.shape)} but n_independent="
+                f"{n_independent}; pass a whitener computed for exactly the "
+                f"leading {n_independent}x{n_independent} block."
+            )
     if inv_sqrt_R is not None:
         d = d @ inv_sqrt_R.transpose(-1, -2)
     return (d * d).sum(-1).mean() / d.shape[-1]
@@ -392,10 +402,14 @@ def pretrain_loss(
     quad = batch.quad
     A_pred = result.poles.spectral(quad.nodes.to(result.poles.eps.dtype))
 
-    # tau = beta is linearly dependent on tau = 0 through the sum rule.
-    n_ind = batch.G.shape[-1] - 1
+    # Use every slice.  On *measured* bins tau = beta is linearly dependent on
+    # tau = 0 through the sum rule and must be dropped (data/real.py does), but
+    # the synthetic generator draws noise independently at all L slices, so
+    # G(0) + G(beta) != 1 realisation by realisation and the full covariance is
+    # regular.  Dropping a slice here both discards a genuine constraint and
+    # de-calibrates chi^2, because batch.inv_sqrt_R whitens the full grid.
     raw_chi2 = chi2(result.G_recon, batch.G, batch.sigma,
-                    inv_sqrt_R=batch.inv_sqrt_R, n_independent=n_ind)
+                    inv_sqrt_R=batch.inv_sqrt_R)
     # chi^2 spans five orders of magnitude between initialisation and the
     # ansatz floor, so it needs compressing -- but not as hard as log1p, which
     # was the first attempt and silenced the term entirely once chi^2 was in the
@@ -430,7 +444,9 @@ def pretrain_loss(
         total = total + weights.consistency * L_cons
         parts["consistency"] = L_cons.detach()
 
-    if weights.positivity > 0.0:
+    # In real mode A is a positive Lorentzian mixture and the integrand of the
+    # positivity penalty is identically zero -- skip the (B, M)-sized no-op.
+    if weights.positivity > 0.0 and getattr(model, "residue_mode", "complex") != "real":
         L_pos = spectral_positivity(A_pred, quad)
         total = total + weights.positivity * L_pos
         parts["positivity"] = L_pos.detach()

@@ -258,7 +258,6 @@ def from_bins(
         b = -b
 
     if includes_endpoints is None and tau is None:
-        L = b.shape[1]
         inc = float((b[:, 0] + b[:, -1]).mean())
         # Under the exclusive convention the last slice is beta - dtau, whose
         # value is close to but not equal to G(beta); the inclusive reading is

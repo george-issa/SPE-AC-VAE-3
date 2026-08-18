@@ -176,7 +176,11 @@ def test_refinement_preserves_every_structural_guarantee(residue_mode):
     if residue_mode == "real":
         assert (A >= 0).all(), "positivity is structural in real mode"
     else:
-        assert torch.allclose(p.b, torch.zeros_like(p.b)) is False or True
+        # The dispersive parts must stay inside their per-pole bound, and the
+        # mode must actually be exercising them -- an identically-zero b would
+        # mean the complex branch silently degenerated to the real one.
+        assert (p.b.abs() <= p.a + 1e-8).all(), "|b_p| <= a_p bound"
+        assert float(p.b.abs().max()) > 0.0, "complex mode produced b == 0"
 
 
 def test_refinement_leaves_the_model_untouched():

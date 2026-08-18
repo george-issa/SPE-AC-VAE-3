@@ -96,7 +96,11 @@ def run_spevae(
         meta={"solver": "spevae SPE-VAE",
               "n_samples": n_samples, "spread": spread,
               "num_poles": int(poles.shape[1]),
-              "effective_poles": float(1.0 / (poles.a[0] ** 2).sum()),
+              # Participation ratio on the *unit-sum* weights: poles.a has been
+              # scaled by the measured norm N, and 1/sum(a^2) on those is off by
+              # N^2 -- the estimator must be 0-homogeneous to mean "how many".
+              "effective_poles": float(
+                  1.0 / ((poles.a[0] / poles.a[0].sum()) ** 2).sum()),
               "gamma_min": float(poles.gamma.min()),
               "gamma_max": float(poles.gamma.max()),
               "input": "bin mean" if use_bin_mean else "per bin"},

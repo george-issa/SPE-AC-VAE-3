@@ -74,7 +74,7 @@ class PoleDecoder(nn.Module):
         d_ff: int = 512,
         n_context: int = 4,
         dropout: float = 0.0,
-        residue_mode: str = "real",
+        residue_mode: str = "complex",
         gamma_min: float = DEFAULT_GAMMA_MIN,
         gamma_scale: float = math.pi,
         nu_max: float = 240.0,

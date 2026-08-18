@@ -96,8 +96,14 @@ def test_eigenvalue_floor_bounds_the_whitener():
         assert float(lam.max()) <= 1.0 / math.sqrt(f) + 1e-6
     unfloored = float(torch.linalg.eigvalsh(
         mg.covariance(0.0)["inv_sqrt_R"]).max())
+    # Compare at a floor that actually binds for this dataset: the unfloored
+    # amplification must exceed 1/sqrt(f), otherwise flooring is a no-op and
+    # the strict inequality below would compare a number with itself.
+    f_binding = 0.5
+    assert unfloored > 1.0 / math.sqrt(f_binding), (
+        "test data too well-conditioned for the floor to bind; raise f_binding")
     floored = float(torch.linalg.eigvalsh(
-        mg.covariance(0.25)["inv_sqrt_R"]).max())
+        mg.covariance(f_binding)["inv_sqrt_R"]).max())
     assert unfloored > floored
 
 

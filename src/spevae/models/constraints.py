@@ -11,13 +11,28 @@ property                                 how it is secured
 causality, :math:`\gamma_p > 0`          ``gamma = gamma_min + softplus(u)``
 positive weights, :math:`a_p > 0`        ``a = softmax(u)``
 sum rule, :math:`\sum_p a_p = 1`         ``softmax`` normalisation
-zero-sum tail, :math:`\sum_p b_p = 0`    ``b = a * (t - <t>_a)``; identically 0 by default
-:math:`A(\omega) \ge 0` pointwise        ``b = 0`` (positive Lorentzian mixture)
+zero-sum tail, :math:`\sum_p b_p = 0`    ``b = a * (t - <t>_a)``, identically
+bounded asymmetry, :math:`|b_p| \le a_p`  ``t = tanh(u)/2`` inside the ``b`` map
 :math:`A \sim 1/\omega^2`                follows from :math:`\sum_p b_p = 0`
 :math:`G \equiv 0 \Rightarrow A \equiv 0`  residues scaled by the measured norm
 :math:`A[cG] = c\,A[G]`                  encoder sees ``G/N``, decoder rescales by ``N``
 width floor :math:`\gamma_p \ge \gamma_{\min}`  additive floor inside the softplus
 ======================================  ==========================================
+
+Positivity in ``"complex"`` mode (the default)
+----------------------------------------------
+With :math:`b_p \ne 0` each pole contributes a Lorentzian *plus* an
+antisymmetric dispersive part, so pointwise :math:`A(\omega) \ge 0` is a
+collective property of the whole pole set rather than a per-term one -- it
+cannot be hardwired term by term without giving up asymmetry.  The package
+therefore (1) bounds each dispersive part by its own weight,
+:math:`|b_p| \le a_p`; (2) penalises :math:`\int \mathrm{ReLU}(-A)^2` during
+training; and (3) *certifies* positivity exactly at inference time via
+:func:`spevae.physics.positivity.positivity_certificate`, which reduces
+:math:`A \ge 0` on all of :math:`\mathbb{R}` to a real-root count of a
+polynomial built from the pole parameters -- no :math:`\omega` grid involved.
+``residue_mode="real"`` (:math:`b \equiv 0`) remains available when structural
+pointwise positivity matters more than asymmetric line shapes.
 
 Why ``softmax`` rather than ``|a| / sum|a|``
 --------------------------------------------
@@ -61,7 +76,7 @@ from torch import nn
 from ..physics.kernel import MATSUBARA_NU0
 from ..physics.poles import PoleSet
 
-__all__ = ["PoleConstraints", "DEFAULT_GAMMA_MIN"]
+__all__ = ["PoleConstraints", "DEFAULT_GAMMA_MIN", "spectral_norm_from_greens"]
 
 #: Width floor in dimensionless units: one tenth of the first Matsubara frequency.
 DEFAULT_GAMMA_MIN: float = 0.1 * MATSUBARA_NU0
@@ -73,13 +88,13 @@ class PoleConstraints(nn.Module):
     Parameters
     ----------
     residue_mode
-        ``"real"`` (default) sets :math:`b \equiv 0`, giving a positive mixture
-        of Lorentzians: :math:`A(\omega) \ge 0` pointwise by construction.
-        ``"complex"`` frees the dispersive part subject to
-        :math:`\sum_p b_p = 0` and :math:`|b_p| \le a_p`, which buys asymmetric
-        line shapes at the cost of pointwise positivity -- appropriate for
-        correlators that are genuinely not positive-definite, and *not*
-        recommended for a fermionic single-particle spectral function.
+        ``"complex"`` (default) frees the dispersive part subject to
+        :math:`\sum_p b_p = 0` and :math:`|b_p| \le a_p`, which buys the
+        asymmetric line shapes real spectra have; pointwise positivity is then
+        softly enforced in training and *exactly certified* at inference (see
+        the module docstring).  ``"real"`` sets :math:`b \equiv 0`, giving a
+        positive mixture of Lorentzians: :math:`A(\omega) \ge 0` pointwise by
+        construction, at the cost of per-pole symmetry.
     gamma_min
         Width floor, dimensionless.  Must exceed the quadrature's
         ``min_resolvable_gamma``.
@@ -98,7 +113,7 @@ class PoleConstraints(nn.Module):
 
     def __init__(
         self,
-        residue_mode: str = "real",
+        residue_mode: str = "complex",
         gamma_min: float = DEFAULT_GAMMA_MIN,
         gamma_scale: float = MATSUBARA_NU0,
         nu_max: float = 240.0,

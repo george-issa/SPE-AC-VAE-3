@@ -105,17 +105,24 @@ def evaluate(
     per_family: dict[str, list[tuple[float, float, float]]] = {}
     chi2s, aus, min_As = [], [], []
 
-    for _ in range(n_batches):
-        batch: TrainingBatch = generator.batch(batch_size, rng)
+    # fixed_scalars pins beta/dtau/family/noise-model draws to `seed` (and
+    # restores the training stream afterwards), so together with the seeded
+    # device generator the eval batches are bit-identical on every call --
+    # which is the property that makes eval curves comparable at all.
+    with generator.fixed_scalars(seed):
+        eval_batches = [generator.batch(batch_size, rng) for _ in range(n_batches)]
+
+    for batch in eval_batches:
         out = model(batch.G, batch.x, batch.beta, sigma=batch.sigma,
                     deterministic=True)
         A = out.poles.spectral(batch.quad.nodes.to(out.poles.eps.dtype))
         w1 = float(spectral_w1(A, batch.A_true, batch.quad, beta=batch.beta))
         l2 = float(spectral_l2(A, batch.A_true, batch.quad, relative=True))
         from ..losses import chi2 as _chi2
+        # All L slices: synthetic noise is drawn independently at every slice,
+        # so nothing is redundant and batch.inv_sqrt_R whitens the full grid.
         c = float(_chi2(out.G_recon, batch.G, batch.sigma,
-                        inv_sqrt_R=batch.inv_sqrt_R,
-                        n_independent=batch.G.shape[-1] - 1))
+                        inv_sqrt_R=batch.inv_sqrt_R))
         per_family.setdefault(batch.family[0], []).append((w1, l2, c))
         chi2s.append(c)
         aus.append(float(active_units(out.mu)))
@@ -161,11 +168,17 @@ def pretrain(
     model = model.to(device)
     rng = torch.Generator(device=device).manual_seed(cfg.seed)
     torch.manual_seed(cfg.seed)
+    # Without this, torch.Generator()'s fixed default seed means every run --
+    # whatever --seed says -- walks the identical beta/dtau/family/noise
+    # schedule, differing only in network init.  Offset so the training stream
+    # never collides with evaluate()'s fixed_scalars stream at the same seed.
+    generator.seed_scalars(cfg.seed + 0x5EED)
 
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr,
                             weight_decay=cfg.weight_decay, betas=(0.9, 0.98))
     ema = copy.deepcopy(model).eval() if cfg.ema_decay > 0 else None
     if ema is not None:
+        ema.clear_caches()               # no reason to deep-copy kernel matrices
         for p in ema.parameters():
             p.requires_grad_(False)
 

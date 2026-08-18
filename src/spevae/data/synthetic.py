@@ -23,6 +23,7 @@ two posteriors directly, at zero extra forward-map cost.
 
 from __future__ import annotations
 
+import contextlib
 import math
 from dataclasses import dataclass, field
 
@@ -148,6 +149,24 @@ class SyntheticGenerator:
     def seed_scalars(self, seed: int) -> None:
         """Seed the CPU stream used for beta, dtau, family and noise parameters."""
         self._cpu_rng.manual_seed(int(seed))
+
+    @contextlib.contextmanager
+    def fixed_scalars(self, seed: int):
+        """Freeze the scalar stream at ``seed``; restore it on exit.
+
+        Evaluation must draw the *same* sequence of (beta, dtau, family, noise
+        model) every time it runs, or the eval curve mixes model improvement
+        with whichever cells happened to be drawn -- chi^2 can then "improve"
+        3x between two evaluations of the same weights.  Wrapping the eval loop
+        in this context makes held-out batches genuinely fixed while leaving
+        the training stream exactly where it was.
+        """
+        state = self._cpu_rng.get_state()
+        self._cpu_rng.manual_seed(int(seed))
+        try:
+            yield self
+        finally:
+            self._cpu_rng.set_state(state)
 
     def sample_grid(self, rng: torch.Generator) -> tuple[float, torch.Tensor]:
         r"""Draw :math:`(\beta, x)` for one cell."""

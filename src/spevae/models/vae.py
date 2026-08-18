@@ -37,7 +37,8 @@ is, not where it sits.
 
 from __future__ import annotations
 
-import math
+import hashlib
+import weakref
 from dataclasses import dataclass
 
 import torch
@@ -176,6 +177,7 @@ class SPEVAE(nn.Module):
         )
         self._quad_cache: dict[tuple, PoleGreens] = {}
         self._kernel_cache: dict[tuple, torch.Tensor] = {}
+        self._grid_fingerprints: dict[int, str] = {}
 
     # -- quadrature bookkeeping -------------------------------------------- #
     #
@@ -224,9 +226,29 @@ class SPEVAE(nn.Module):
                                   self._cache_limit)
         return fwd
 
+    def _grid_fingerprint(self, x: torch.Tensor) -> str:
+        """Content hash of a grid tensor, memoised per tensor object.
+
+        Keying the kernel cache on (length, endpoints) alone lets two different
+        *non-uniform* grids with the same length and endpoints silently share a
+        kernel matrix.  Hashing the actual values closes that hole; the memo
+        means a caller reusing one grid tensor pays the device sync once.  The
+        memo is keyed by ``id(x)`` (tensors cannot live in a WeakKeyDictionary:
+        its lookups compare keys with ``==``, which is elementwise), and a
+        ``weakref.finalize`` evicts the entry the moment the tensor is freed,
+        so a recycled id can never return a stale fingerprint.
+        """
+        key = id(x)
+        fp = self._grid_fingerprints.get(key)
+        if fp is None:
+            fp = hashlib.sha1(x.detach().cpu().numpy().tobytes()).hexdigest()
+            self._grid_fingerprints[key] = fp
+            weakref.finalize(x, self._grid_fingerprints.pop, key, None)
+        return fp
+
     def kernel_matrix(self, beta: float, x: torch.Tensor) -> torch.Tensor:
         """Kernel matrix for one (beta, grid); reused across batches on that cell."""
-        key = (round(float(beta), 9), int(x.numel()), float(x[0]), float(x[-1]),
+        key = (round(float(beta), 9), int(x.numel()), self._grid_fingerprint(x),
                str(x.device), str(x.dtype))
         K = self._kernel_cache.get(key)
         if K is None:
