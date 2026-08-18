@@ -41,7 +41,9 @@ from spevae.models import SPEVAE  # noqa: E402
 from spevae import RefineConfig, load_model as _load  # noqa: E402
 from spevae.physics import PoleGreens, PoleSet, SpectralQuadrature  # noqa: E402
 
-CUBE = "Data/datasets/real/george_325.jld2"
+from spevae.paths import data_path  # noqa: E402
+
+CUBE = str(data_path("datasets", "real", "george_325.jld2"))
 
 
 def synthetic_case(beta=10.0, n_tau=81, n_bins=800, noise=1e-3, seed=0):

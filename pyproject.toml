@@ -16,6 +16,9 @@ dependencies = [
     "h5py",
 ]
 
+[project.scripts]
+spevae = "spevae.cli:main"
+
 [project.optional-dependencies]
 plot = ["matplotlib"]
 dev = ["pytest", "pytest-xdist", "matplotlib"]

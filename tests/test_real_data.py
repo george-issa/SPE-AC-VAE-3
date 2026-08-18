@@ -14,9 +14,10 @@ import pytest
 import torch
 
 from spevae.data import MeasuredGreens, from_bins, read_holstein_cube
+from spevae.paths import data_path
 from spevae.physics import PoleGreens, PoleSet, SpectralQuadrature
 
-CUBE = "Data/datasets/real/george_325.jld2"
+CUBE = str(data_path("datasets", "real", "george_325.jld2"))
 have_cube = os.path.exists(CUBE)
 
 

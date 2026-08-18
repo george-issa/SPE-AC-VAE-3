@@ -1,0 +1,330 @@
+r"""The ``spevae`` command-line interface.
+
+Four verbs, in the order a user meets them:
+
+``spevae continue``
+    The headline: bins in, spectrum out.  Reads whitespace-delimited
+    :math:`(N_{\rm bins} \times L_\tau)` text, detects the sign convention from
+    the sum rule (and refuses to guess when neither sign works), runs the
+    model, prints the calibrated :math:`\chi^2`, the effective pole count and
+    the exact positivity certificate, and writes the *pole set* -- the grid-free
+    result -- alongside :math:`A(\omega)` on a convenience grid.
+
+``spevae finetune``
+    Stage 2 on your own cell: adapts a pretrained checkpoint to one dataset's
+    noise, with no ground truth needed.
+
+``spevae pretrain``
+    Stage 1 from scratch on the synthetic family generator.  ``--preset fast``
+    is a laptop-scale smoke run; ``--preset full`` is a real training run.
+
+``spevae info``
+    What a checkpoint is: architecture, pole count, residue mode, training
+    provenance.
+
+Everything the CLI does is a thin call into the library; nothing here is the
+only way to do anything.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+
+import numpy as np
+import torch
+
+
+def _load_measured(args, need_bins: bool = True):
+    """Shared --bins/--beta handling with the sum-rule gate."""
+    from .data import read_text_bins
+
+    if args.beta is None:
+        sys.exit("--bins requires --beta")
+    mg = read_text_bins(args.bins, args.beta, sign_flip=args.sign_flip,
+                        dtype=torch.float64)
+    print(mg.summary(getattr(args, "min_eigenvalue", 0.0)))
+    print()
+    sr = mg.check_sum_rule()
+    if not sr["ok"]:
+        sys.exit(f"G(0)+G(beta) = {sr['norm']:.6f}, expected 1. "
+                 f"Try --sign-flip, or check that tau runs 0 ... beta "
+                 f"inclusive. Refusing to continue: a wrong convention "
+                 f"produces a confident, wrong spectrum.")
+    return mg
+
+
+def _add_bins_args(ap: argparse.ArgumentParser) -> None:
+    ap.add_argument("--bins", required=True, metavar="FILE",
+                    help="whitespace-delimited (N_bins x L_tau) text file, "
+                         "tau = 0 ... beta inclusive")
+    ap.add_argument("--beta", type=float, required=True,
+                    help="inverse temperature of the simulation")
+    ap.add_argument("--sign-flip", dest="sign_flip", action="store_true",
+                    default=None,
+                    help="force G -> -G (default: detect from the sum rule)")
+    ap.add_argument("--no-sign-flip", dest="sign_flip", action="store_false",
+                    help="force no negation")
+
+
+def cmd_continue(args) -> None:
+    from . import RefineConfig, load_model, refine_latent
+
+    mg = _load_measured(args)
+    model = load_model(args.checkpoint)
+    print(f"model: {model.num_parameters():,} parameters, "
+          f"{model.num_poles} poles ({model.residue_mode} residues), "
+          f"latent {model.latent_dim}")
+
+    omega = torch.linspace(args.omega_min, args.omega_max, args.n_omega,
+                           dtype=torch.float32)
+    G_mean = mg.mean.unsqueeze(0).float()
+    sigma = mg.sigma_mean.unsqueeze(0).float()
+
+    if args.refine:
+        rr = refine_latent(model, mg, RefineConfig(
+            steps=args.refine_steps, min_eigenvalue=args.min_eigenvalue))
+        poles = rr.poles.to_physical(mg.beta)
+        A = rr.spectral(omega)
+        A_np, A_std = A[0].double().numpy(), None
+        G_recon = rr.G_recon
+        chi2, target = rr.chi2, rr.chi2_target
+        print(f"latent refinement: {rr.steps_run} steps, "
+              f"chi2 {rr.chi2_init:.4g} -> {rr.chi2:.4g} "
+              f"(calibrated target {target:.4g})"
+              + ("   [prior binding -- treat with care]" if rr.prior_is_binding
+                 else ""))
+    else:
+        out = model.continue_(G_mean, beta=mg.beta, tau=mg.tau.float(),
+                              sigma=sigma, omega=omega, n_samples=args.samples)
+        poles = out["poles"]
+        A_np = out["A"][0].double().numpy()
+        A_std = (out["A_std"][0].double().numpy() if "A_std" in out else None)
+        G_recon = out["G_recon"]
+        from .losses import chi2 as chi2_fn
+        cov = mg.covariance(args.min_eigenvalue)
+        chi2 = float(chi2_fn(G_recon.double(), G_mean.double(), sigma.double(),
+                             inv_sqrt_R=cov["inv_sqrt_R"],
+                             n_independent=cov["n_independent"]))
+        target = float(cov["chi2_target"])
+        print(f"chi2 = {chi2:.4g}  (calibrated perfect-fit target {target:.4g}, "
+              f"ratio {chi2 / max(target, 1e-300):.3g})")
+
+    from .physics.positivity import positivity_certificate
+    cert = positivity_certificate(poles[0:1])[0]
+    a_unit = poles.a[0] / poles.a[0].sum()
+    eff = float(1.0 / (a_unit**2).sum())
+    print(f"effective poles: {eff:.2f} of {poles.shape[1]}")
+    print(f"positivity: {cert}")
+
+    p = poles[0]
+    order = torch.argsort(p.eps)
+    print("\n  pole   omega        gamma        weight a     asym b")
+    for i in order.tolist():
+        print(f"  {i:>4}   {float(p.eps[i]):>+9.4f}   {float(p.gamma[i]):>9.4f}"
+              f"   {float(p.a[i]):>9.5f}   {float(p.b[i]):>+9.5f}")
+
+    if args.out:
+        np.savez(
+            args.out,
+            omega=omega.double().numpy(), A=A_np,
+            **({"A_std": A_std} if A_std is not None else {}),
+            poles_omega=p.eps.double().numpy(),
+            poles_gamma=p.gamma.double().numpy(),
+            residues_re=p.a.double().numpy(),
+            residues_im=p.b.double().numpy(),
+            G_recon=G_recon.squeeze(0).double().numpy(),
+            tau=mg.tau.double().numpy(),
+        )
+        with open(str(args.out) + ".json", "w") as f:
+            json.dump({"beta": mg.beta, "chi2": chi2, "chi2_target": target,
+                       "effective_poles": eff,
+                       "certified_positive": cert.is_positive,
+                       "min_A": cert.min_A,
+                       "negative_weight": cert.negative_weight,
+                       "checkpoint": args.checkpoint,
+                       "refined": bool(args.refine)}, f, indent=2)
+        print(f"\nsaved -> {args.out} (+.json)   "
+              f"[the pole set is the result; A(omega) is a convenience grid]")
+
+    if args.figure:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
+        w = omega.double().numpy()
+        ax1.plot(w, A_np, lw=1.5, label="spevae")
+        if A_std is not None:
+            ax1.fill_between(w, A_np - A_std, A_np + A_std, alpha=0.25,
+                             label="latent ensemble")
+        ax1.set_xlabel(r"$\omega$"); ax1.set_ylabel(r"$A(\omega)$")
+        ax1.legend(frameon=False)
+        t = mg.tau.double().numpy()
+        ax2.errorbar(t, mg.mean.double().numpy(),
+                     yerr=mg.sigma_mean.double().numpy(), fmt=".", ms=3,
+                     alpha=0.6, label="data (mean)")
+        ax2.plot(t, G_recon.squeeze(0).double().numpy(), lw=1.2,
+                 label="reconstruction")
+        ax2.set_xlabel(r"$\tau$"); ax2.set_ylabel(r"$G(\tau)$")
+        ax2.set_yscale("log"); ax2.legend(frameon=False)
+        fig.tight_layout(); fig.savefig(args.figure, dpi=150)
+        print(f"figure -> {args.figure}")
+
+
+def cmd_finetune(args) -> None:
+    from . import load_model, save_model
+    from .training import FinetuneConfig, finetune
+
+    mg = _load_measured(args)
+    model = load_model(args.checkpoint)
+    cfg = FinetuneConfig(steps=args.steps, batch_size=args.batch_size,
+                         lr=args.lr, train=args.train,
+                         min_eigenvalue=args.min_eigenvalue,
+                         eval_every=args.eval_every, seed=args.seed,
+                         device=args.device)
+
+    def cb(kind, step, rec):
+        if kind == "eval":
+            print(f"[eval @ {step}] chi2_ratio={rec['val_chi2_ratio']:.4g} "
+                  f"min_A={rec['val_min_A']:.2e} "
+                  f"eff_poles={rec['effective_poles']:.2f}")
+
+    hist = finetune(model, mg, cfg, callback=cb)
+    f = hist["final"]
+    print(f"\nbest step {hist['best_step']}: chi2_ratio "
+          f"{hist['best_val_chi2_ratio']:.4g}, "
+          f"{hist['skipped']} skipped batches"
+          + (f", stopped early ({hist['stopped_reason']})"
+             if hist["stopped_early"] else ""))
+    print(f"final: chi2={f['val_chi2']:.4g} target={f['val_chi2_target']:.4g} "
+          f"min_A={f['val_min_A']:.2e} eff_poles={f['effective_poles']:.2f}")
+    save_model(model, args.out, stage="finetune", source=args.checkpoint,
+               bins=args.bins, beta=mg.beta, history_eval=hist["eval"],
+               config=vars(cfg))
+    print(f"saved -> {args.out}")
+
+
+def cmd_pretrain(args) -> None:
+    from . import save_model
+    from .data.synthetic import SyntheticGenerator
+    from .models import SPEVAE
+    from .training import PretrainConfig, pretrain
+
+    presets = {
+        "fast": dict(steps=4_000, batch_size=128, d_model=96, enc_layers=2,
+                     beta_range=(6.0, 10.0)),
+        "full": dict(steps=25_000, batch_size=48, d_model=160, enc_layers=3,
+                     beta_range=(2.0, 20.0)),
+    }
+    p = presets[args.preset]
+    steps = args.steps or p["steps"]
+
+    torch.manual_seed(args.seed)
+    model = SPEVAE(latent_dim=args.latent_dim, num_poles=args.num_poles,
+                   omega_c=args.omega_c, d_model=p["d_model"],
+                   enc_layers=p["enc_layers"], residue_mode=args.residue_mode)
+    gen = SyntheticGenerator(omega_c=args.omega_c, beta_range=p["beta_range"],
+                             device=args.device)
+    cfg = PretrainConfig(steps=steps, batch_size=args.batch_size or p["batch_size"],
+                         lr=args.lr, eval_every=max(steps // 12, 1),
+                         eval_batches=8, seed=args.seed, device=args.device)
+    print(f"pretraining {model.num_parameters():,} parameters for {steps} steps "
+          f"({args.preset} preset, device={args.device})")
+
+    def cb(kind, step, rec):
+        if kind == "train":
+            print(f"[{step:>6}] total={rec['total']:.4g} chi2={rec['chi2']:.4g} "
+                  f"w1={rec['w1_omega']:.4g} kl={rec['kl']:.3g} "
+                  f"({rec['family']}, beta={rec['beta']:.3g})")
+        elif kind == "eval":
+            print(f"[eval @ {step}] w1_omega={rec['w1_omega']:.4f} "
+                  f"l2_rel={rec['l2_rel']:.4f} chi2_geo={rec.get('chi2_geo', 0):.4g} "
+                  f"AU={rec['active_units']:.2f}/{int(rec['latent_dim'])}")
+
+    hist = pretrain(model, gen, cfg, callback=cb)
+    save_model(model, args.out, stage="pretrain", preset=args.preset,
+               steps=steps, seed=args.seed,
+               final_eval=hist["eval"][-1] if hist["eval"] else {})
+    print(f"\nsaved -> {args.out}  (wall time {hist['wall_time']:.0f}s)")
+
+
+def cmd_info(args) -> None:
+    from . import load_checkpoint
+
+    ck = load_checkpoint(args.checkpoint)
+    print(f"format {ck.get('format')}  spevae {ck.get('spevae_version')}")
+    print("config:")
+    for k, v in ck.get("config", {}).items():
+        print(f"  {k:>22} = {v}")
+    meta = ck.get("meta", {})
+    if meta:
+        print("meta:")
+        for k, v in meta.items():
+            s = str(v)
+            print(f"  {k:>22} = {s[:100] + '...' if len(s) > 100 else s}")
+
+
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(
+        prog="spevae",
+        description="Analytic continuation of imaginary-time Green's functions "
+                    "via a physics-constrained pole-expansion VAE.")
+    sub = ap.add_subparsers(dest="command", required=True)
+
+    c = sub.add_parser("continue", help="continue G(tau) bins to A(omega)")
+    _add_bins_args(c)
+    c.add_argument("--checkpoint", required=True, help="trained model (.pt)")
+    c.add_argument("--samples", type=int, default=200,
+                   help="latent samples for the uncertainty band (0 = mean only)")
+    c.add_argument("--refine", action="store_true",
+                   help="refine the latent code against this dataset first")
+    c.add_argument("--refine-steps", type=int, default=2000)
+    c.add_argument("--omega-min", type=float, default=-10.0)
+    c.add_argument("--omega-max", type=float, default=10.0)
+    c.add_argument("--n-omega", type=int, default=801)
+    c.add_argument("--min-eigenvalue", type=float, default=0.0)
+    c.add_argument("--out", default=None, help="write result to this .npz")
+    c.add_argument("--figure", default=None, help="save A(omega) + G(tau) figure")
+    c.set_defaults(func=cmd_continue)
+
+    f = sub.add_parser("finetune", help="Stage 2: adapt a checkpoint to one cell")
+    _add_bins_args(f)
+    f.add_argument("--checkpoint", required=True)
+    f.add_argument("--out", required=True, help="where to save the tuned model")
+    f.add_argument("--steps", type=int, default=2000)
+    f.add_argument("--batch-size", type=int, default=32)
+    f.add_argument("--lr", type=float, default=1e-4)
+    f.add_argument("--train", default="encoder_only",
+                   choices=["encoder_only", "decoder_only", "all"])
+    f.add_argument("--min-eigenvalue", type=float, default=0.0)
+    f.add_argument("--eval-every", type=int, default=100)
+    f.add_argument("--seed", type=int, default=0)
+    f.add_argument("--device", default="cpu")
+    f.set_defaults(func=cmd_finetune)
+
+    p = sub.add_parser("pretrain", help="Stage 1: train on the synthetic families")
+    p.add_argument("--preset", default="fast", choices=["fast", "full"])
+    p.add_argument("--out", required=True)
+    p.add_argument("--steps", type=int, default=None)
+    p.add_argument("--batch-size", type=int, default=None)
+    p.add_argument("--lr", type=float, default=6e-4)
+    p.add_argument("--latent-dim", type=int, default=12)
+    p.add_argument("--num-poles", type=int, default=16)
+    p.add_argument("--omega-c", type=float, default=20.0)
+    p.add_argument("--residue-mode", default="complex",
+                   choices=["complex", "real"])
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--device", default="cpu")
+    p.set_defaults(func=cmd_pretrain)
+
+    i = sub.add_parser("info", help="describe a checkpoint")
+    i.add_argument("--checkpoint", required=True)
+    i.set_defaults(func=cmd_info)
+
+    args = ap.parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
