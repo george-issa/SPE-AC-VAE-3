@@ -44,6 +44,7 @@ the physics ranges are meaningful (a Hubbard gap is :math:`U`, not
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field
 
 import torch
@@ -134,9 +135,14 @@ def broaden(A_core: torch.Tensor, h: float, sigma: float) -> torch.Tensor:
                                            dtype=A_core.dtype)
     ker = torch.exp(-0.5 * (sigma * k) ** 2)
     pad = torch.nn.functional.pad(A_core, (0, n - M))
-    # dim=-1 on both transforms: without it torch infers the axis and emits a
-    # resize warning on every call, which buries a training log in noise.
-    conv = torch.fft.irfft(torch.fft.rfft(pad, dim=-1) * ker, n=n, dim=-1)
+    # The MPS backend emits a spurious output-resize UserWarning from inside
+    # irfft on every call -- even with dim= given explicitly -- which buries a
+    # training log under megabytes of noise.  Scoped suppression, not a global
+    # filter: any other warning from this code still surfaces.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*resized.*",
+                                category=UserWarning)
+        conv = torch.fft.irfft(torch.fft.rfft(pad, dim=-1) * ker, n=n, dim=-1)
     return conv[..., :M]
 
 

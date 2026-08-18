@@ -49,43 +49,69 @@ Consequences that matter in practice:
   far better-conditioned thing to ask a decoder to produce.
 - **Well-founded.** Pole representations are the modern high-accuracy approach to
   this problem: minimal pole representations converge systematically with data
-  quality ([Ying, PRB 110, 035154 (2024)][ying]), stochastic pole expansion
-  resolves sharp and smooth features together ([Huang, PRB 108, 235143
+  quality ([Zhang & Gull, PRB 110, 035154 (2024)][mpm]), stochastic pole expansion
+  resolves sharp and smooth features together ([Huang & Liang, PRB 108, 235143
   (2023)][spx]), and barycentric/AAA rational fits do the same very cheaply
-  ([Huang *et al.*, PRB 111, 125139 (2025)][aaa]).
+  ([Huang, PRB 111, 125139 (2025)][aaa]).  The same work carries a warning this
+  package inherits deliberately: real-axis error grows exponentially with the
+  Matsubara noise level, so the *recoverable* pole count is set by the data, not
+  by ambition — which is why $P$ is an upper bound softened by `softmax` weights
+  and the reported number is the participation ratio, not $P$.
 
 ### The residue-mode choice
 
-With $b_p \equiv 0$ (`residue_mode="real"`, the default) the expansion is a
-**positive mixture of Lorentzians**. That single choice delivers, simultaneously
-and by construction:
+`residue_mode="complex"` — the default — carries the full physics constraint
+set this project specifies:
 
 | requirement | how |
 |---|---|
 | causality | $\gamma_p > 0 \Rightarrow$ all poles in the lower half plane |
-| $A(\omega) \ge 0$ pointwise | positive combination of positive Lorentzians |
-| $\int A = 1$ | $\sum_p a_p = 1$ |
-| $\sum_p \operatorname{Im} r_p = 0$ | trivially, $b\equiv 0$ |
-| $A \sim c_2/\omega^2$, $c_2>0$ | follows from $\sum_p b_p = 0$ |
+| $\operatorname{Re} r_p > 0$ (weight interpretability) | `softmax` weights $a_p$ |
+| $\sum_p \operatorname{Re} r_p = 1$ (× measured norm) | `softmax` + norm rescaling |
+| $\sum_p \operatorname{Im} r_p = 0$, individually $\neq 0$ | $b_p = a_p(t_p - \langle t\rangle_a)$, $t = \tanh(u)/2$ |
+| bounded asymmetry | $\|b_p\| \le a_p$ from the same map |
+| $A \sim c_2/\omega^2$ | follows from $\sum_p b_p = 0$ |
+| width floor $\gamma_p \ge 0.1\pi/\beta$ | additive floor inside the `softplus` |
 
-This is the discrete analogue of the observation that respecting the Nevanlinna
-analytic structure yields intrinsically positive and normalised spectra
-([Fei, Yeh & Gull, PRL 126, 056402 (2021)][nevanlinna]).
-
-`residue_mode="complex"` frees $b_p$ subject to $\sum_p b_p = 0$ and
-$|b_p| \le a_p$. It buys asymmetric (Fano-like) line shapes at the cost of
-pointwise positivity: a single pole with $b_p\neq0$ has
+The nonzero $b_p$ are what buy **asymmetric (Fano-like) line shapes** — real
+spectra are "almost Lorentzian, but not exactly", and a symmetric-only basis
+pays for every asymmetry by stacking extra poles.  The price is that pointwise
+positivity stops being a per-term property: a single pole with $b_p\neq0$ has
 
 $$\min_\omega A_p = \frac{a_p - \sqrt{a_p^2+b_p^2}}{2\pi\gamma_p} < 0,$$
 
-diverging as $\gamma_p \to 0$. Positivity of the total then relies on cross-pole
-cancellation, which $\sum_p b_p = 0$ enforces only in the integral, not
-pointwise. **This was the dominant pathology of the first attempt**, where a
+diverging as $\gamma_p \to 0$, and positivity of the total relies on cross-pole
+cancellation. **This was the dominant pathology of the first attempt**, where a
 systematic audit found every divergent run had $\min_p\gamma_p < 0.06$ while
 every healthy run had $\gamma_p > 0.23$ — and no term in the loss could see it,
-because a near-delta pole still produces a perfectly smooth $G(\tau)$. Real
-residues remove the mechanism rather than penalising the symptom. Use the
-complex mode only for correlators that are genuinely not positive-definite.
+because a near-delta pole still produces a perfectly smooth $G(\tau)$.
+
+This package keeps the asymmetry and closes the pathology from four sides:
+
+1. the **width floor** removes the $\gamma \to 0$ divergence outright (with the
+   optional `width_barrier` as a soft standoff above it);
+2. the **$|b_p| \le a_p$ bound** ties every dispersive part to the weight of
+   its own pole, so a weightless pole is structurally inert;
+3. a **positivity penalty** in both spaces during training — spectral
+   $\int\mathrm{ReLU}(-A)^2$ on the quadrature, and the complete-monotonicity
+   penalties on $G, G'', G''''$ in data space (Stage 2);
+4. an **exact, grid-free certificate at inference**
+   (`spevae.physics.positivity`): $A \ge 0$ on all of $\mathbb{R}$ reduces to a
+   real-root count of the degree-$2P{-}2$ numerator polynomial, decided from
+   the pole parameters by a companion matrix; where $A$ does dip negative, the
+   dip is located and its total weight integrated in closed form.  The verdict
+   ships with every reported spectrum — positivity is *checked and stated*,
+   never assumed.
+
+With $b_p \equiv 0$ (`residue_mode="real"`) the expansion degenerates to a
+**positive mixture of Lorentzians**: $A \ge 0$ pointwise by construction — the
+discrete analogue of the observation that respecting the Nevanlinna analytic
+structure yields intrinsically positive and normalised spectra
+([Fei, Yeh & Gull, PRL 126, 056402 (2021)][nevanlinna]).  That mode remains one
+flag away for correlators where the structural guarantee outranks asymmetry;
+the measured trade on matched A/B runs: complex buys relative $L^2$
+(0.277 vs 0.323 overall, 0.280 vs 0.375 on gapped-only training) at a
+$\min_\omega A \sim -10^{-3}$ cost that the certificate quantifies per result.
 
 ---
 
@@ -260,20 +286,49 @@ The generator is infinite, so there is no fixed epoch and no overfitting to a
 finite training set: longer runs and larger models buy accuracy monotonically
 until the network saturates the information in the data.
 
-**Stage 2 — optional per-dataset fine-tuning** on the user's own bins and
-covariance, using $\chi^2$ alone. Useful when a dataset sits outside the training
-prior; it should be anchored to the pretrained weights, because unanchored
-$\chi^2$ minimisation is exactly the procedure Stage 1 exists to replace.
+**Stage 2 — per-dataset fine-tuning** (`spevae.training.finetune`) adapts the
+*weights* to one measured cell — its noise level, correlation structure and
+spectral family — with no ground truth: the self-supervision is the calibrated
+per-bin $\chi^2$, the free-bits KL, the consistency term applied to what bins
+really are (independent noise realisations of one spectrum), and the positivity
+structure in both spaces.  Three design points, each anchored to a measured
+failure:
+
+- **`train="encoder_only"` by default.** The first attempt measured what a free
+  $\chi^2$ fine-tune does to the pole budget Stage 1 installs: pole usage went
+  2.30 → 11.08 on identical inputs — surplus poles wake up to fit noise, which
+  is exactly the noise-budget warning from the minimal-pole literature
+  ([Zhang & Gull][mpm]).  Freezing the decoder keeps the latent → pole map and
+  its learned sparsity; the encoder adapts to the cell.  `"all"` and
+  `"decoder_only"` remain available and are recorded in the history.
+- **A two-phase divergence guard.**  Real bins contain outliers, and one bad
+  minibatch early in fine-tuning can throw a pretrained model somewhere it
+  never returns from.  A batch whose loss is non-finite or grossly out of
+  distribution — relative to an EMA of *accepted* losses, so a bad batch cannot
+  inflate its own threshold — is skipped before `backward()`; a non-finite
+  gradient norm is skipped after; a full epoch of skips stops the run and
+  restores the best checkpoint.
+- **The complete-monotonicity penalties.**  For $A \ge 0$ the fermionic kernel
+  makes $G$, $G''$ and $G''''$ all non-negative; the variance-weighted stencil
+  penalties (Ben Cohen-Stead's formulation, ported from the first attempt)
+  charge violations in data space, where the complex-residue mode is otherwise
+  free to buy $\chi^2$ with unphysical dips.
+
+**Stage 3 — per-input latent refinement** (`spevae.refine`) moves only $z$ with
+the weights frozen: the cheap, always-safe last mile for a single spectrum,
+stopping at the *calibrated* noise floor rather than at 1.  The three stages
+compose: pretrain once, fine-tune per dataset, refine per input.
 
 ### The objective
 
 | term | purpose |
 |---|---|
-| $\log(1+\chi^2)$ | data fit, covariance-whitened |
+| $\sqrt{\chi^2}$ | data fit, covariance-whitened |
 | $W_1(A_{\rm pred}, A_{\rm true})$ | **peak position** |
 | relative $L^2$ | peak heights and shape |
 | KL with free bits | latent regularisation without collapse |
 | symmetric-KL consistency | noise invariance |
+| $\int \mathrm{ReLU}(-A)^2$ | positivity pressure (complex mode) |
 
 Three choices deserve their reasons.
 
@@ -289,11 +344,16 @@ cheap on the quadrature grid. Reported in physical $\omega$ (i.e. $W_1/\beta$),
 so it reads directly as a typical peak-placement error and so that cold cells do
 not dominate the average.
 
-*$\log(1+\chi^2)$ rather than $\chi^2$.* The raw value spans five orders of
-magnitude between initialisation ($\sim10^5$) and convergence ($\sim1$); used
-directly it swamps every other term early and contributes nothing later. `log1p`
-is monotone — same minimiser — and its gradient $1/(1+\chi^2)$ is exactly the
-self-scaling needed.
+*$\sqrt{\chi^2}$ rather than $\chi^2$ — or $\log(1+\chi^2)$.* The raw value
+spans five orders of magnitude between initialisation ($\sim10^5$) and
+convergence; used directly it swamps every other term early.  All the candidate
+transforms are monotone (same minimiser), so only the gradient scale differs.
+`log1p` was the first choice and **over-corrects**: at $\chi^2 \sim 4000$ its
+gradient $1/(1+\chi^2)$ leaves the reconstruction contributing $3\times10^{-4}$
+— nothing — and training proceeds on the spectral terms alone.  The A/B run
+settled it: `sqrt` reached $W_1 = 0.594$ where `log1p` reached $0.723$ under
+identical budgets, and $\sqrt{\chi^2}$ is the residual *norm*, whose gradient
+$1/2\sqrt{\chi^2}$ compresses without silencing.
 
 *Free bits, not KL annealing.* Posterior collapse occurs when the decoder can fit
 the data mean from a constant code, making the encoder's marginal contribution
@@ -372,13 +432,13 @@ directly: *the answer is a property of the physics, not of the random seed*. It
 also gives the latent space a reason to represent signal and discard noise —
 the mechanism by which $\beta$-VAEs on Kondo spectra recovered $\log T_K$ and the
 particle–hole asymmetry as individual latent coordinates
-([Rigo & Mitchell, PRB 104, 235111 (2021)][kondo]).
+([Miles *et al.*, PRB 104, 235111 (2021)][kondo]).
 
 ### Training-set bias
 
 A supervised network inherits the prior of what it was trained on; this is the
 documented failure mode of the whole approach
-([Sim *et al.*, PRR 4, 043082 (2022)][bias]). A network trained on single
+([Zhang *et al.*, PRR 4, 043082 (2022)][bias]). A network trained on single
 Gaussians returns a single Gaussian for a gapped superconductor, with an
 excellent $\chi^2$. The response is breadth: nine qualitatively different
 families (smooth multi-peak, gapped, correlated metal with quasiparticle peak and
@@ -496,11 +556,12 @@ this ill-conditioned. Worth knowing before quoting a MaxEnt $\chi^2$ as evidence
 
 The pole/residue output ansatz with hardwired sum rule and zero-sum tail, the
 tangent-substituted Gauss–Legendre forward map, the covariance-whitened $\chi^2$
-calibrated to 1, and the two-stage pretrain/fine-tune protocol are due to
-**Benjamin Cohen-Stead** (UT-Knoxville), via the first attempt in
-`../SPE-AC-VAE`. This package keeps the ansatz and the calibration idea and
-replaces the quadrature, the encoder, the decoder, the loss and the training
-protocol for the reasons documented above.
+calibrated to 1, the variance-weighted $G/G''/G''''$ negativity penalties, and
+the two-stage pretrain/fine-tune protocol are due to **Benjamin Cohen-Stead**
+(UT-Knoxville), via the first attempt in `../SPE-AC-VAE`. This package keeps
+the ansatz, the calibration idea and the penalties, and replaces the
+quadrature, the encoder, the decoder, the loss and the training protocol for
+the reasons documented above.
 
 ---
 
@@ -509,7 +570,8 @@ protocol for the reasons documented above.
 [anacont]: https://doi.org/10.1016/j.cpc.2022.108519
 [fournier]: https://link.aps.org/doi/10.1103/PhysRevLett.124.056401
 [nevanlinna]: https://link.aps.org/doi/10.1103/PhysRevLett.126.056402
-[ying]: https://journals.aps.org/prb/abstract/10.1103/PhysRevB.110.035154
+[mpm]: https://journals.aps.org/prb/abstract/10.1103/PhysRevB.110.035154
+[pes]: https://journals.aps.org/prb/abstract/10.1103/PhysRevB.107.075151
 [spx]: https://journals.aps.org/prb/abstract/10.1103/PhysRevB.108.235143
 [aaa]: https://journals.aps.org/prb/abstract/10.1103/PhysRevB.111.125139
 [kondo]: https://link.aps.org/doi/10.1103/PhysRevB.104.235111
@@ -526,16 +588,27 @@ protocol for the reasons documented above.
   noise, ~1000× faster.
 - H. Yoon, J.-H. Sim, M. J. Han, *Analytic continuation via domain-knowledge free
   machine learning*, [PRB **98**, 245101 (2018)][yoon].
-- *Autoencoder-based analytic continuation method for strongly correlated quantum
-  systems*, [PRB **110**, 115119 (2024)][ae]. Unsupervised autoencoder; recovers
-  sharp features MaxEnt loses.
-- J.-H. Sim *et al.*, *Training biases in machine learning for the analytic
-  continuation of quantum many-body Green's functions*,
-  [PRR **4**, 043082 (2022)][bias]. **The** cautionary reference on prior
-  inheritance.
-- C. Rigo, A. K. Mitchell, *Machine learning of Kondo physics using variational
+- M. Kliczkowski, L. Keyes, S. Roy, T. Paiva, M. Randeria, N. Trivedi,
+  M. M. Maśka, *Autoencoder-based analytic continuation method for strongly
+  correlated quantum systems*, [PRB **110**, 115119 (2024)][ae]
+  (Editors' Suggestion). The closest published prior work: a **VAE-type
+  encoder** (its supplement is explicit — a `DenseVar(μ, σ)` bottleneck citing
+  Kingma–Welling) feeding a *fixed, non-trainable kernel-matrix decoder* on an
+  $\omega$ grid of 250–1000 points, trained by data-space $\chi^2$ + moment
+  regularisers at one fixed $\beta$ with $M = 40$ $\tau$-points. Equals or
+  beats MaxEnt, most clearly at high noise. This package differs in the
+  representation (a learned decoder emitting a grid-free pole set with the
+  constraints hardwired), variable $(\beta, \Delta\tau)$, the explicit ELBO
+  with free bits, and latent-ensemble uncertainty — to our knowledge no
+  published work combines a VAE with a pole-expansion decoder.
+- R. Zhang, M. E. Merkel, S. Beck, C. Ederer, *Training biases in machine
+  learning for the analytic continuation of quantum many-body Green's
+  functions*, [PRR **4**, 043082 (2022)][bias]. **The** cautionary reference on
+  prior inheritance; also the source of the MC-dropout uncertainty idea.
+- C. Miles, M. R. Carbone, E. J. Sturm, D. Lu, A. Weichselbaum, K. Barros,
+  R. M. Konik, *Machine learning of Kondo physics using variational
   autoencoders and symbolic regression*, [PRB **104**, 235111 (2021)][kondo].
-  $\beta$-VAE latent coordinates align with $\log T_K$ and particle–hole
+  VAE latent coordinates align with the Kondo temperature and particle–hole
   asymmetry.
 
 **Pole representations and analytic structure**
@@ -543,12 +616,19 @@ protocol for the reasons documented above.
 - J. Fei, C.-N. Yeh, E. Gull, *Nevanlinna Analytical Continuation*,
   [PRL **126**, 056402 (2021)][nevanlinna]. Respecting the analytic structure
   gives intrinsically positive, normalised spectra.
-- L. Ying, *Minimal pole representation and controlled analytic continuation of
-  Matsubara response functions*, [PRB **110**, 035154 (2024)][ying].
-- L. Huang, *Stochastic pole expansion method for analytic continuation of the
-  Green's function*, [PRB **108**, 235143 (2023)][spx].
-- L. Huang *et al.*, *Barycentric rational function approximation made simple*,
+- L. Zhang, E. Gull, *Minimal pole representation and controlled analytic
+  continuation of Matsubara response functions*,
+  [PRB **110**, 035154 (2024)][mpm]. Noise sets a hard budget on the
+  recoverable pole count; codes: MiniPole / PronyAC (Green-Phys).
+- L. Huang, S. Liang, *Stochastic pole expansion method for analytic
+  continuation of the Green's function*, [PRB **108**, 235143 (2023)][spx].
+- L. Huang, *Barycentric rational function approximation made simple*,
   [PRB **111**, 125139 (2025)][aaa].
+- Z. Huang, E. Gull, L. Lin, *Robust analytic continuation of Green's functions
+  via projection, pole estimation, and semidefinite relaxation*,
+  [PRB **107**, 075151 (2023)][pes]. "Denoise onto the causal manifold, then
+  fit poles" — the amortised encoder here is the learned version of that
+  projection.
 
 **Benchmarks**
 

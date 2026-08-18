@@ -54,7 +54,7 @@ space a reason to represent the signal and discard the noise, which is exactly
 the "meaningful latent representation" goal -- the same mechanism by which
 :math:`\beta`-VAEs on Kondo spectra recovered :math:`\log T_K` and the
 particle--hole asymmetry as individual latent coordinates
-(Rigo & Mitchell, *PRB* **104**, 235111 (2021)).
+(Miles *et al.*, *PRB* **104**, 235111 (2021)).
 """
 
 from __future__ import annotations
