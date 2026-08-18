@@ -169,7 +169,46 @@ def cmd_continue(args) -> None:
         ax2.set_xlabel(r"$\tau$"); ax2.set_ylabel(r"$G(\tau)$")
         ax2.set_yscale("log"); ax2.legend(frameon=False)
         fig.tight_layout(); fig.savefig(args.figure, dpi=150)
+        plt.close(fig)
         print(f"figure -> {args.figure}")
+
+        from pathlib import Path
+
+        from .figures import plot_latent_space, plot_pole_residue_plane
+        from .physics.poles import PoleSet as _PS
+        stem = Path(args.figure)
+
+        # Pole/residue planes with a latent-ensemble cloud when available.
+        cloud = poles[0:1]
+        if not args.refine:
+            with torch.no_grad():
+                mu1, lv1, norm1 = model.encode(G_mean, mg.x.float(), mg.beta,
+                                               sigma=sigma)
+            sets = []
+            with torch.no_grad():
+                for _ in range(min(max(args.samples, 1), 64)):
+                    z = model.reparameterise(mu1, lv1)
+                    sets.append(model.decode(z, norm1, mg.beta))
+            cloud = _PS(
+                eps=torch.cat([s.eps for s in sets]),
+                gamma=torch.cat([s.gamma for s in sets]),
+                a=torch.cat([s.a for s in sets]),
+                b=torch.cat([s.b for s in sets]),
+            ).to_physical(mg.beta)
+        pole_file = str(stem.with_name(stem.stem + "-poles" + stem.suffix))
+        plot_pole_residue_plane(cloud, bold=poles[0:1], path=pole_file,
+                                title=mg.label or "pole set")
+        print(f"figure -> {pole_file}")
+
+        # Latent diagnostics over every bin: the collapse check.
+        with torch.no_grad():
+            mu_all = model.encode(mg.bins.float(), mg.x.float(), mg.beta,
+                                  sigma=mg.sigma.unsqueeze(0)
+                                  .expand_as(mg.bins).float())[0]
+        latent_file = str(stem.with_name(stem.stem + "-latent" + stem.suffix))
+        plot_latent_space(mu_all, path=latent_file,
+                          title=f"{mg.label or 'dataset'}: {mg.n_bins} bins")
+        print(f"figure -> {latent_file}")
 
 
 def cmd_finetune(args) -> None:

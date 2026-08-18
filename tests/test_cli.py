@@ -31,11 +31,16 @@ def workspace(tmp_path_factory):
 
 
 def test_continue_writes_the_pole_set(workspace, capsys):
+    pytest.importorskip("matplotlib")
     out = workspace["dir"] / "result.npz"
+    fig = workspace["dir"] / "result.png"
     main(["continue", "--bins", str(workspace["bins"]),
           "--beta", str(workspace["beta"]),
           "--checkpoint", str(workspace["ckpt"]),
-          "--samples", "8", "--out", str(out)])
+          "--samples", "8", "--out", str(out), "--figure", str(fig)])
+    for f in (fig, workspace["dir"] / "result-poles.png",
+              workspace["dir"] / "result-latent.png"):
+        assert f.exists() and f.stat().st_size > 5_000, f
     text = capsys.readouterr().out
     assert "positivity:" in text and "effective poles:" in text
 
