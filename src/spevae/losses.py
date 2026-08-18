@@ -78,6 +78,8 @@ __all__ = [
     "width_barrier",
     "LossWeights",
     "pretrain_loss",
+    "negativity_stencil_weights",
+    "negativity_penalties",
 ]
 
 
@@ -252,10 +254,10 @@ def spectral_positivity(A_pred: torch.Tensor, quad: SpectralQuadrature,
                         relative: bool = True) -> torch.Tensor:
     r"""Penalty on negative excursions, :math:`\int \mathrm{ReLU}(-A)^2 d\nu`.
 
-    Needed **only** in ``residue_mode="complex"``, where a pole with
-    :math:`b_p \neq 0` has :math:`\min_\omega A_p < 0` and positivity of the
-    total relies on cross-pole cancellation.  In the real-residue mode the
-    integrand is identically zero and this term costs nothing but time.
+    Needed **only** in ``residue_mode="complex"`` (the default), where a pole
+    with :math:`b_p \neq 0` has :math:`\min_\omega A_p < 0` and positivity of
+    the total relies on cross-pole cancellation.  In the real-residue mode the
+    integrand is identically zero, and the callers skip it there.
 
     It is a penalty, not a guarantee -- that is the trade the complex mode makes,
     and the honest way to report it is to print :math:`\min_\omega A` next to
@@ -352,8 +354,8 @@ class LossWeights:
     nothing at all, and training proceeds on the spectral terms alone.
     ``"raw"`` applies no transform and lets it dominate.
 
-    ``positivity`` is only meaningful in ``residue_mode="complex"``; in the
-    default real mode the penalty is identically zero.
+    ``positivity`` is only meaningful in ``residue_mode="complex"`` (the
+    default); in the real mode the penalty is identically zero and is skipped.
     """
 
     chi2: float = 1.0
@@ -459,3 +461,69 @@ def pretrain_loss(
 
     parts["total"] = total.detach()
     return total, parts
+
+
+# --------------------------------------------------------------------------- #
+# Data-space positivity: the complete-monotonicity penalties (Stage 2)
+# --------------------------------------------------------------------------- #
+
+def negativity_stencil_weights(var0: torch.Tensor) -> dict[str, torch.Tensor]:
+    r"""Inverse-variance weights for the :math:`G, G'', G''''` penalties.
+
+    ``var0 = diag(C)`` is the per-slice, per-bin noise variance.  The stencil
+    variances propagate it through the finite-difference coefficients
+    (:math:`1,4,1` and :math:`1,16,36,16,1` are the squared stencil weights).
+    A stencil whose variance is exactly zero -- sum-rule-pinned endpoints in
+    particle-hole-symmetric bins -- gets weight zero: :math:`1/0` there would
+    be :math:`0/0`, and a noiseless point's positivity is already exact.
+
+    Due to Benjamin Cohen-Stead's reference formulation (see README).
+    """
+    v = var0.double()
+
+    def inv(x: torch.Tensor) -> torch.Tensor:
+        return torch.where(x > 0, 1.0 / torch.where(x > 0, x, torch.ones_like(x)),
+                           torch.zeros_like(x))
+
+    var2 = v[:-2] + 4.0 * v[1:-1] + v[2:]
+    var4 = v[:-4] + 16.0 * v[1:-3] + 36.0 * v[2:-2] + 16.0 * v[3:-1] + v[4:]
+    return {"inv_var0": inv(v).to(var0.dtype),
+            "inv_var2": inv(var2).to(var0.dtype),
+            "inv_var4": inv(var4).to(var0.dtype)}
+
+
+def negativity_penalties(
+    G_recon: torch.Tensor,
+    weights: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    r"""Variance-weighted penalties on :math:`G<0`, :math:`G''<0`, :math:`G''''<0`.
+
+    For a non-negative :math:`A`, the fermionic kernel makes :math:`G(\tau)`
+    completely monotone on :math:`(0, \beta)`: :math:`G \ge 0` and every even
+    :math:`\tau`-derivative is non-negative, since
+    :math:`\partial_\tau^{2k} G = \int A(\omega)\,\omega^{2k} K(\tau,\omega)
+    \,d\omega \ge 0`.  These are *data-space necessary conditions* of
+    positivity -- exactly the structure a :math:`\chi^2`-only fine-tune is free
+    to violate in the complex-residue mode, and the natural Stage-2 partner of
+    the spectral-side penalty :func:`spectral_positivity`.
+
+    .. math::
+        \mathcal{L}_0 = \Big\langle \tfrac{1}{L}\textstyle\sum_\tau
+            \mathrm{ReLU}(-G)^2 / \mathrm{var}_0 \Big\rangle_B, \qquad
+        \mathcal{L}_2, \mathcal{L}_4 \text{ likewise on the stencils.}
+
+    ``weights`` comes from :func:`negativity_stencil_weights`.
+    """
+    L = G_recon.shape[-1]
+    neg0 = torch.relu(-G_recon)
+    out = {"neg_G": (neg0.pow(2) * weights["inv_var0"]).sum(-1).mean() / L}
+    if L >= 3:
+        d2 = G_recon[:, 2:] - 2.0 * G_recon[:, 1:-1] + G_recon[:, :-2]
+        out["neg_G2"] = (torch.relu(-d2).pow(2)
+                         * weights["inv_var2"]).sum(-1).mean() / (L - 2)
+    if L >= 5:
+        d4 = (G_recon[:, 4:] - 4.0 * G_recon[:, 3:-1] + 6.0 * G_recon[:, 2:-2]
+              - 4.0 * G_recon[:, 1:-3] + G_recon[:, :-4])
+        out["neg_G4"] = (torch.relu(-d4).pow(2)
+                         * weights["inv_var4"]).sum(-1).mean() / (L - 4)
+    return out
