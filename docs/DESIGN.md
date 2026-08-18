@@ -545,22 +545,30 @@ block (`MeasuredGreens.statistical_slices`) and reported as an
 exact-constraint deviation instead.
 
 **Real site-Holstein cell** ($n{=}1$, $\Omega{=}1$, $\beta{=}10$), which ships a
-SmoQyDEAC reference:
+SmoQyDEAC reference (calibrated target 0.112):
 
 ```
-method        norm      min A       chi2   target    ratio
-maxent      0.9999  +1.71e-07      0.005   0.0867     0.05
-deac        1.0000  +2.34e-04      0.073   0.0867     0.85
-deac-ref    1.0000  +6.25e-05      0.086   0.0867     0.99
+method            norm      min A       chi2   target    ratio
+spevae          1.0009  -3.51e-05    169.371   0.1116  1517.8
+spevae-refined  0.9999  -2.09e-05      0.155   0.1116     1.39
+maxent          0.9999  +1.71e-07      0.026   0.1116     0.23
+deac            1.0000  +6.49e-05      0.072   0.1116     0.64
+deac-ref        1.0000  +6.25e-05      0.109   0.1116     0.98
 ```
 
-**The shipped reference sits at χ²/target = 0.99** — exactly on the calibrated
-noise floor. Against the naive target of 1 it would have looked like a 12×
+**The shipped reference sits at χ²/target = 0.98** — exactly on the calibrated
+noise floor. Against the naive target of 1 it would have looked like a 9×
 *overfit*, which is precisely the spurious "$\chi^2 < 1$ anomaly" the
 predecessor project carried as an open blocker. This is independent confirmation
 that `chi2_target` is the right reference value and 1 is not.
 
-MaxEnt at 0.05 is genuinely fitting below the floor here: it has ~800 grid
+The two spevae rows are the amortised/refined split in action: a phonon cell
+is far from the fast checkpoint's sweet spot (ratio 1518 in 0.3 s), and latent
+refinement — weights frozen, prior intact — walks it to **1.39, essentially at
+the noise floor**, with $\min A$ at the $10^{-5}$ level and agreement with the
+reference ($W_1 = 0.095$) comparable to MaxEnt's (0.061) and DEAC's (0.054).
+
+MaxEnt at 0.23 is genuinely fitting below the floor here: it has ~800 grid
 degrees of freedom against 100 time slices whose covariance is barely
 determined, and `chi2kink` does not protect against that when the whitener is
 this ill-conditioned. Worth knowing before quoting a MaxEnt $\chi^2$ as evidence.

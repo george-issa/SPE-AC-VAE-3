@@ -158,9 +158,10 @@ underdetermined *there*.
   consistent with the data at the noise level; the kernel maps a large family
   of spectra to indistinguishable G(τ).
 - **The perfect-fit χ² is not 1** under a shrunk covariance estimator —
-  `spevae.data.chi2_target` returns the calibrated value (measured 0.087 on a
-  real site-Holstein cell, where the shipped SmoQyDEAC reference lands at 0.99
-  of it). Comparing to 1 is how spurious "χ² < 1 anomalies" get manufactured.
+  `spevae.data.chi2_target` returns the calibrated value (measured 0.112 on a
+  real site-Holstein cell, where the shipped SmoQyDEAC reference lands at 0.98
+  of it and this package's refined result at 1.39). Comparing to 1 is how
+  spurious "χ² < 1 anomalies" get manufactured.
 - **`effective_poles`** (participation ratio) is the pole count to report;
   `num_poles` is an upper bound. Prediction quality should be flat-to-better
   as `num_poles` grows — surplus poles fade under the `softmax`, they don't
