@@ -149,8 +149,11 @@ def evaluate(
     all_l2 = [v[1] for vs in per_family.values() for v in vs]
     metrics["w1_omega"] = float(sum(all_w1) / len(all_w1))
     metrics["l2_rel"] = float(sum(all_l2) / len(all_l2))
+    # Stratify both spectral metrics: an aggregate hides exactly the failure
+    # that matters (strong on smooth families, useless on gapped ones).
     for fam, vs in sorted(per_family.items()):
         metrics[f"w1_omega/{fam}"] = float(sum(v[0] for v in vs) / len(vs))
+        metrics[f"l2_rel/{fam}"] = float(sum(v[1] for v in vs) / len(vs))
 
     if was_training:
         model.train()
