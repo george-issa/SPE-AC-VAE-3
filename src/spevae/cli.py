@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 
 import numpy as np
@@ -80,7 +81,11 @@ def cmd_continue(args) -> None:
     omega = torch.linspace(args.omega_min, args.omega_max, args.n_omega,
                            dtype=torch.float32)
     G_mean = mg.mean.unsqueeze(0).float()
+    # raw sigma for chi^2 (pinned slices are excluded there); floored sigma as
+    # the encoder's noise channel (pinned slices would sit ~30 logs out of
+    # distribution otherwise)
     sigma = mg.sigma_mean.unsqueeze(0).float()
+    sigma_enc = (mg.sigma_encoder / math.sqrt(mg.n_bins)).unsqueeze(0).float()
 
     if args.refine:
         rr = refine_latent(model, mg, RefineConfig(
@@ -97,7 +102,7 @@ def cmd_continue(args) -> None:
                  else ""))
     else:
         out = model.continue_(G_mean, beta=mg.beta, tau=mg.tau.float(),
-                              sigma=sigma, omega=omega, n_samples=args.samples)
+                              sigma=sigma_enc, omega=omega, n_samples=args.samples)
         poles = out["poles"]
         A_np = out["A"][0].double().numpy()
         A_std = (out["A_std"][0].double().numpy() if "A_std" in out else None)
@@ -106,10 +111,13 @@ def cmd_continue(args) -> None:
         cov = mg.covariance(args.min_eigenvalue)
         chi2 = float(chi2_fn(G_recon.double(), G_mean.double(), sigma.double(),
                              inv_sqrt_R=cov["inv_sqrt_R"],
-                             n_independent=cov["n_independent"]))
+                             slices=cov["slices"]))
         target = float(cov["chi2_target"])
         print(f"chi2 = {chi2:.4g}  (calibrated perfect-fit target {target:.4g}, "
               f"ratio {chi2 / max(target, 1e-300):.3g})")
+        pin = mg.pinned_deviation(G_recon.double())
+        if pin > 0.0:
+            print(f"exactly-pinned slices (PH symmetry): max deviation {pin:.2e}")
 
     from .physics.positivity import positivity_certificate
     cert = positivity_certificate(poles[0:1])[0]
@@ -183,7 +191,7 @@ def cmd_continue(args) -> None:
         if not args.refine:
             with torch.no_grad():
                 mu1, lv1, norm1 = model.encode(G_mean, mg.x.float(), mg.beta,
-                                               sigma=sigma)
+                                               sigma=sigma_enc)
             sets = []
             with torch.no_grad():
                 for _ in range(min(max(args.samples, 1), 64)):

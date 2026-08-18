@@ -122,6 +122,20 @@ class MeasuredGreens:
         return self.sigma / math.sqrt(self.n_bins)
 
     @property
+    def sigma_encoder(self) -> torch.Tensor:
+        r"""Per-slice noise as the *encoder input*: floored at
+        :math:`10^{-6}\max\sigma`.
+
+        On PH-symmetric data the pinned endpoints have
+        :math:`\sigma \sim 10^{-17}`, and the encoder's relative
+        log-:math:`\sigma` channel would see a value ~30 natural logs outside
+        anything in its training distribution.  The floor only touches pinned
+        slices; use the raw :attr:`sigma`/:attr:`sigma_mean` for any
+        :math:`\chi^2` (which excludes those slices instead).
+        """
+        return self.sigma.clamp_min(1e-6 * float(self.sigma.max()))
+
+    @property
     def n_independent(self) -> int:
         r"""Time slices to whiten with.
 
@@ -130,6 +144,35 @@ class MeasuredGreens:
         covariance singular; drop it.
         """
         return self.n_tau - 1 if self.includes_endpoints else self.n_tau
+
+    @property
+    def statistical_slices(self) -> torch.Tensor:
+        r"""Indices of the slices that actually carry statistical noise.
+
+        Beyond the :math:`\tau=\beta` redundancy, a slice whose bin variance is
+        *numerically zero* is an exact constraint, not a measurement -- on
+        particle-hole-symmetric data :math:`G(0) = G(\beta) = 1/2` is pinned to
+        machine precision by the algorithm itself.  Dividing a residual by that
+        :math:`\sigma \sim 10^{-17}` turns :math:`\chi^2` into
+        :math:`10^{27}` of numerical noise, so pinned slices are excluded from
+        the whitened block (their content already enters through the measured
+        norm), and deviations there are an exact-constraint check, not a
+        statistics one -- see :meth:`pinned_deviation`.
+        """
+        s = self.sigma[: self.n_independent]
+        keep = s > 1e-8 * float(s.max())
+        return torch.nonzero(keep).flatten()
+
+    def pinned_deviation(self, G_recon: torch.Tensor) -> float:
+        r"""Largest violation of the exactly-pinned slices, if any exist."""
+        n = self.n_independent
+        s = self.sigma[:n]
+        pinned = torch.nonzero(s <= 1e-8 * float(s.max())).flatten()
+        if pinned.numel() == 0:
+            return 0.0
+        g = G_recon.reshape(-1, self.n_tau)[:, :n]
+        ref = self.mean[:n].to(g.dtype)
+        return float((g[:, pinned] - ref[pinned]).abs().max())
 
     # -- noise model --------------------------------------------------------- #
 
@@ -155,12 +198,13 @@ class MeasuredGreens:
         key = float(min_eigenvalue)
         cache = self._cov or {}
         if key not in cache:
-            n = self.n_independent
-            b = self.bins[:, :n]
+            slices = self.statistical_slices
+            b = self.bins[:, slices]
             sigma, R_lw, rho = ledoit_wolf_correlation(b, min_eigenvalue=key)
             Z = (b - b.mean(0, keepdim=True)) / sigma
             R_sample = (Z.T @ Z) / b.shape[0]
             cache[key] = {
+                "slices": slices,
                 "sigma": sigma,
                 # Both R and its inverse square root are kept.  A consumer that
                 # needs the covariance (ana_cont takes one) must not have to
@@ -170,7 +214,11 @@ class MeasuredGreens:
                 "inv_sqrt_R": whitener(R_lw),
                 "rho": rho,
                 "chi2_target": chi2_target(R_lw, R_sample),
-                "n_independent": n,
+                # Count of whitened degrees of freedom.  Equal to the leading
+                # block length when no slice is exactly pinned; smaller on
+                # PH-symmetric data.  chi2 consumers should select columns
+                # with "slices" rather than truncating to the leading n.
+                "n_independent": int(slices.numel()),
                 "min_eigenvalue": key,
             }
             object.__setattr__(self, "_cov", cache)

@@ -78,13 +78,14 @@ def reconstruction_chi2(
     """
     cov = mg.covariance(min_eigenvalue)
     n = cov["n_independent"]
+    sl = cov["slices"]
     sigma = cov["sigma"]
     if against == "mean":
         sigma = sigma / math.sqrt(mg.n_bins)
     elif against != "bin":
         raise ValueError(f"against must be 'mean' or 'bin', got {against!r}")
-    d = (torch.as_tensor(G_pred, dtype=torch.float64)[:n]
-         - mg.mean.double()[:n]) / sigma.double()
+    d = (torch.as_tensor(G_pred, dtype=torch.float64)[sl]
+         - mg.mean.double()[sl]) / sigma.double()
     d = d @ cov["inv_sqrt_R"].double().T
     return float((d * d).sum() / n)
 

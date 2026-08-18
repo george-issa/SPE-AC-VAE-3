@@ -134,12 +134,13 @@ def _validate(model: SPEVAE, mg: MeasuredGreens, cov: dict, device) -> dict:
     dtype = next(model.parameters()).dtype
     G_mean = mg.mean.unsqueeze(0).to(device, dtype)
     sigma = mg.sigma_mean.unsqueeze(0).to(device, dtype)
+    sigma_enc = (mg.sigma_encoder / math.sqrt(mg.n_bins)) \
+        .unsqueeze(0).to(device, dtype)
     x = mg.x.to(device, dtype)
-    out = model(G_mean, x, mg.beta, sigma=sigma, deterministic=True)
-    n = cov["n_independent"]
+    out = model(G_mean, x, mg.beta, sigma=sigma_enc, deterministic=True)
     c = float(chi2_loss(out.G_recon, G_mean, sigma,
                         inv_sqrt_R=cov["inv_sqrt_R"].to(device, G_mean.dtype),
-                        n_independent=n))
+                        slices=cov["slices"].to(device)))
     # The residual is divided by sigma_mean and the mean's correlation matrix
     # is the same R as a single bin's, so the sqrt(N) factors cancel: the
     # perfect-fit expectation for the mean is chi2_target itself.
@@ -191,10 +192,14 @@ def finetune(
         raise ValueError("nothing left to train")
 
     cov = mg.covariance(cfg.min_eigenvalue)
-    n_ind = cov["n_independent"]
+    slices = cov["slices"].to(device)
     dtype = torch.float32
     bins = mg.bins.to(device, dtype)
     sigma_bin = mg.sigma.unsqueeze(0).to(device, dtype)        # (1, L) broadcasts
+    # Encoder input only: pinned-slice sigmas floored so the noise channel
+    # stays inside the training distribution; chi^2 keeps the raw sigma and
+    # excludes those slices via cov["slices"].
+    sigma_enc = mg.sigma_encoder.unsqueeze(0).to(device, dtype)
     inv_sqrt_R = cov["inv_sqrt_R"].to(device, dtype)
     x = mg.x.to(device, dtype)
     stencils = {k: v.to(device, dtype)
@@ -224,10 +229,10 @@ def finetune(
             group["lr"] = _lr_at(step, cfg)
 
         G = draw(min(cfg.batch_size, mg.n_bins))
-        out = model(G, x, mg.beta, sigma=sigma_bin.expand_as(G))
+        out = model(G, x, mg.beta, sigma=sigma_enc.expand_as(G))
 
         raw_chi2 = chi2_loss(out.G_recon, G, sigma_bin,
-                             inv_sqrt_R=inv_sqrt_R, n_independent=n_ind)
+                             inv_sqrt_R=inv_sqrt_R, slices=slices)
         if cfg.chi2_transform == "sqrt":
             L_chi2 = torch.sqrt(raw_chi2.clamp_min(1e-12))
         elif cfg.chi2_transform == "log1p":
@@ -244,7 +249,7 @@ def finetune(
         if cfg.w_consistency > 0.0 and mg.n_bins >= 2 * cfg.batch_size:
             G2 = draw(min(cfg.batch_size, mg.n_bins))
             mu2, lv2 = model.encode(G2, x, mg.beta,
-                                    sigma=sigma_bin.expand_as(G2))[:2]
+                                    sigma=sigma_enc.expand_as(G2))[:2]
             L_cons = noise_consistency(out.mu, out.logvar, mu2, lv2)
             total = total + cfg.w_consistency * L_cons
             parts["consistency"] = L_cons.detach()

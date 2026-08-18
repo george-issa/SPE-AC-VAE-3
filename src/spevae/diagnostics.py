@@ -108,6 +108,7 @@ def ansatz_chi2_floor(
 
     cov = mg.covariance(min_eigenvalue)
     n = cov["n_independent"]
+    sl = cov["slices"]
     W = cov["inv_sqrt_R"].to(dtype)
     sigma = (cov["sigma"] / math.sqrt(mg.n_bins)).to(dtype)
     G_obs = mg.mean.to(dtype).unsqueeze(0)
@@ -127,7 +128,7 @@ def ansatz_chi2_floor(
     for _ in range(steps):
         poles = con(u[0], u[1], u[2], u[3] if n_heads == 4 else None)
         G = fwd(poles, x, kernel_matrix=K)
-        d = ((G - G_obs)[:, :n] / sigma) @ W.transpose(-1, -2)
+        d = ((G - G_obs)[:, sl] / sigma) @ W.transpose(-1, -2)
         chi2 = (d * d).sum(-1).mean() / n
         best = min(best, float(chi2))
         opt.zero_grad(set_to_none=True)

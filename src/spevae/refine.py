@@ -204,17 +204,19 @@ def refine_latent(
 
     cov = mg.covariance(cfg.min_eigenvalue)
     n = cov["n_independent"]
+    sl = cov["slices"].to(device)
     inv_sqrt_R = cov["inv_sqrt_R"].to(device=device, dtype=dtype)
 
     # Two different sigmas, and mixing them up is a shape error at best and a
     # silent miscalibration at worst.  The encoder needs one value per time
-    # slice (length L); the chi^2 uses only the linearly-independent block
-    # (length n = L-1 on an endpoint-inclusive grid, since tau = beta is fixed
-    # by the sum rule).
+    # slice (length L); the chi^2 uses only the statistical slices (tau = beta
+    # is fixed by the sum rule; exactly-pinned PH-symmetric endpoints carry no
+    # noise to divide by).
     scale = 1.0 if cfg.per_bin else 1.0 / math.sqrt(mg.n_bins)
     G = (mg.bins if cfg.per_bin else mg.mean.unsqueeze(0)).to(device=device,
                                                               dtype=dtype)
-    sigma_full = (mg.sigma * scale).to(device=device, dtype=dtype)
+    # Encoder input: pinned-slice sigmas floored (see MeasuredGreens.sigma_encoder).
+    sigma_full = (mg.sigma_encoder * scale).to(device=device, dtype=dtype)
     sigma_full = sigma_full.unsqueeze(0).expand(G.shape[0], -1)
     sigma_fit = (cov["sigma"] * scale).to(device=device, dtype=dtype)
     x = mg.x.to(device=device, dtype=dtype)
@@ -240,7 +242,7 @@ def refine_latent(
         def chi2_of(z_):
             poles = model.decode(z_, norm, mg.beta)
             G_rec = fwd(poles, x, kernel_matrix=K)
-            d = ((G_rec - G)[:, :n] / sigma_fit) @ inv_sqrt_R.transpose(-1, -2)
+            d = ((G_rec - G)[:, sl] / sigma_fit) @ inv_sqrt_R.transpose(-1, -2)
             return (d * d).sum(-1).mean() / n, poles, G_rec
 
         with torch.no_grad():

@@ -284,7 +284,14 @@ noise, three orders of magnitude faster.
 
 The generator is infinite, so there is no fixed epoch and no overfitting to a
 finite training set: longer runs and larger models buy accuracy monotonically
-until the network saturates the information in the data.
+until the network saturates the information in the data.  Measured, on a
+genuinely frozen held-out stream (the evaluation batches are pinned by
+`fixed_scalars`, so these numbers are comparable across checkpoints — the
+predecessor's eval stream drifted with training, and $\chi^2$ once "improved"
+3.5× between two evaluations of the same weights): over a 27-minute
+`fast`-preset run of 6000 steps, every metric improved at every one of twelve
+evaluations — $W_1$: 1.05 → 0.35, relative $L^2$: 0.38 → 0.19, geometric-mean
+$\chi^2$: 785 → 71 — with active units steady at 11.75/12 (no collapse).
 
 **Stage 2 — per-dataset fine-tuning** (`spevae.training.finetune`) adapts the
 *weights* to one measured cell — its noise level, correlation structure and
@@ -503,19 +510,39 @@ answer and should not be hidden.
 
 ### Measured
 
-**Synthetic, two Lorentzians, known answer** ($\beta=10$, 800 bins, 81 slices):
+**Synthetic, two Lorentzians, known answer** ($\beta=10$, 800 bins, 81 slices;
+spevae = the 27-minute `fast`-preset checkpoint, complex residues, scored
+through its own exact forward map):
 
 ```
-method       L2 rel     Linf       W1   peak dw   peak dh   chi2/target
-spevae       0.4922   0.2420   0.3020    0.1450    0.3887      9447
-maxent       0.2184   0.1184   0.2363    0.0350    0.0921        17.5
-deac         0.3829   0.4446   0.2969    0.0100    0.0589        58.3
+method           L2 rel     Linf       W1   peak dw   peak dh   chi2/target
+spevae           0.4978   0.2148   0.3187    0.0500    0.3393      4554
+spevae-refined   0.5586   0.3511   0.1589    0.1700    0.1350       197
+maxent           0.2184   0.1184   0.2363    0.0350    0.0921      17.5
+deac             0.3861   0.3706   0.3416    0.1100    0.0694      54.1
 ```
 
-Exactly the expected division of labour: DEAC places peaks best (Δω = 0.01) and
-gets heights right (6%); MaxEnt is smoothest and wins on $L^2$/$L^\infty$;
-`spevae` at this checkpoint is a 9-minute smoke model and is honestly the worst
-of the three, with a $\chi^2$ ratio saying so out loud.
+All four rows agree on the structure (2 peaks, no gap, at resolution
+$\pi/\beta$). The division of labour: MaxEnt is smoothest and wins
+$L^2$/$L^\infty$; DEAC gets heights right; the amortised spevae pass (0.2 s)
+places peaks well ($\Delta\omega = 0.05$) but underfits at this training
+budget, and **latent refinement takes the best $W_1$ of any method** (0.159)
+while pulling $\chi^2$/target from 4554 to 197. A note on bookkeeping: the
+previous edition of this table charged spevae through a truncating grid
+back-transform the package itself calls unfair; this one is scored through the
+exact forward map, like every number the benchmark now emits.
+
+**Real half-filled Hubbard** ($U=6$, $\beta=10$, $L=4$; 800 bins, 201 slices,
+calibrated target 0.390): the same checkpoint, zero per-dataset work, returns a
+Mott-gapped spectrum with Hubbard bands centred near $\pm U/2$, certified
+$A \ge 0$ with genuinely complex residues, effective poles 12.7/16, and
+$\chi^2 = 194$ — the honest signature of an amortised model that has not yet
+been fine-tuned to this cell. This dataset is also what surfaced the
+pinned-slice trap: PH symmetry fixes $G(0) = G(\beta) = 1/2$ to machine
+precision ($\sigma \sim 10^{-17}$), and dividing by that "noise" produced
+$\chi^2 \sim 10^{27}$ until pinned slices were excluded from the whitened
+block (`MeasuredGreens.statistical_slices`) and reported as an
+exact-constraint deviation instead.
 
 **Real site-Holstein cell** ($n{=}1$, $\Omega{=}1$, $\beta{=}10$), which ships a
 SmoQyDEAC reference:

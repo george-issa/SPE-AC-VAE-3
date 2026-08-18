@@ -151,3 +151,43 @@ def test_sign_convention_is_detected_by_default():
     # An explicit choice still wins over detection.
     forced = from_bins(-bins, beta, tau=tau, sign_flip=False, dtype=torch.float64)
     assert not forced.check_sum_rule()["ok"]
+
+
+def test_ph_symmetric_pinned_slices_do_not_poison_chi2():
+    """PH-symmetric DQMC pins G(0) = G(beta) = 1/2 to machine precision.
+
+    Dividing a residual by that sigma ~ 1e-17 turned chi^2 into 1e27 on the
+    real half-filled Hubbard dataset.  Pinned slices must be excluded from the
+    whitened block, reported via pinned_deviation instead, and zero-weighted
+    in the negativity stencils.
+    """
+    bins, tau, beta = synthetic_bins(n_bins=300, n_tau=41)
+    # pin the endpoints exactly, as the algorithm does at half filling
+    bins = bins.clone()
+    bins[:, 0] = 0.5
+    bins[:, -1] = 0.5
+    mg = from_bins(bins, beta, tau=tau, dtype=torch.float64)
+
+    sl = mg.statistical_slices
+    assert 0 not in sl.tolist(), "pinned tau=0 slice must be excluded"
+    assert mg.n_tau - 1 not in sl.tolist()
+    cov = mg.covariance()
+    assert cov["inv_sqrt_R"].shape == (sl.numel(), sl.numel())
+    assert cov["n_independent"] == sl.numel()
+
+    from spevae.losses import chi2, negativity_stencil_weights
+    G_pred = mg.mean.unsqueeze(0) + 1e-4      # imperfect but sane fit
+    c = float(chi2(G_pred, mg.mean.unsqueeze(0), mg.sigma_mean.unsqueeze(0),
+                   inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"]))
+    assert c < 1e6, f"chi2 blew up on pinned data: {c}"
+
+    dev = mg.pinned_deviation(G_pred)
+    assert dev == pytest.approx(1e-4, rel=1e-6)
+
+    w = negativity_stencil_weights(mg.sigma.pow(2))
+    assert float(w["inv_var0"][0]) == 0.0 and float(w["inv_var0"][-1]) == 0.0
+    assert float(w["inv_var0"][mg.n_tau // 2]) > 0.0
+
+    # encoder-facing sigma is floored, raw sigma untouched
+    assert float(mg.sigma_encoder[0]) >= 1e-6 * float(mg.sigma.max())
+    assert float(mg.sigma[0]) < 1e-12

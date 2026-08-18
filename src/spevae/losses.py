@@ -102,6 +102,7 @@ def chi2(
     sigma: torch.Tensor,
     inv_sqrt_R: torch.Tensor | None = None,
     n_independent: int | None = None,
+    slices: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Covariance-whitened reconstruction loss, calibrated to 1 at the noise floor.
 
@@ -127,7 +128,24 @@ def chi2(
         whitener of any other size raises, because slicing
         :math:`R^{-1/2}` is not the whitener of the sliced block.  Synthetic
         batches need neither: their noise is full-rank over all ``L`` slices.
+    slices
+        Explicit column indices to score -- what
+        :meth:`spevae.data.MeasuredGreens.covariance` returns as ``"slices"``.
+        Takes precedence over ``n_independent``, and is the correct choice on
+        measured data, where exactly-pinned slices (PH-symmetric endpoints)
+        must be excluded rather than divided by their zero variance.
     """
+    if slices is not None:
+        if inv_sqrt_R is not None and inv_sqrt_R.shape[-1] != slices.numel():
+            raise ValueError(
+                f"inv_sqrt_R is {tuple(inv_sqrt_R.shape)} but {slices.numel()} "
+                f"slices were selected; the whitener must be computed on "
+                f"exactly those columns.")
+        d = (G_pred[..., slices] - G_obs[..., slices]) / sigma[..., slices]
+        if inv_sqrt_R is not None:
+            d = d @ inv_sqrt_R.transpose(-1, -2)
+        return (d * d).sum(-1).mean() / d.shape[-1]
+
     d = (G_pred - G_obs) / sigma
     if n_independent is not None:
         d = d[:, :n_independent]
@@ -473,16 +491,22 @@ def negativity_stencil_weights(var0: torch.Tensor) -> dict[str, torch.Tensor]:
     ``var0 = diag(C)`` is the per-slice, per-bin noise variance.  The stencil
     variances propagate it through the finite-difference coefficients
     (:math:`1,4,1` and :math:`1,16,36,16,1` are the squared stencil weights).
-    A stencil whose variance is exactly zero -- sum-rule-pinned endpoints in
-    particle-hole-symmetric bins -- gets weight zero: :math:`1/0` there would
-    be :math:`0/0`, and a noiseless point's positivity is already exact.
+    A stencil whose variance is *numerically* zero -- sum-rule-pinned endpoints
+    in particle-hole-symmetric bins, where the algorithm fixes
+    :math:`G(0) = G(\beta) = 1/2` to machine precision (measured variance
+    :math:`\sim 10^{-33}`, not an exact 0) -- gets weight zero: dividing by it
+    would hand two slices a :math:`10^{33}` weight, and a noiseless point's
+    positivity is already exact.  The threshold is therefore relative to the
+    largest variance, not a comparison with literal zero.
 
     Due to Benjamin Cohen-Stead's reference formulation (see README).
     """
     v = var0.double()
+    floor = 1e-16 * float(v.max())
 
     def inv(x: torch.Tensor) -> torch.Tensor:
-        return torch.where(x > 0, 1.0 / torch.where(x > 0, x, torch.ones_like(x)),
+        ok = x > floor
+        return torch.where(ok, 1.0 / torch.where(ok, x, torch.ones_like(x)),
                            torch.zeros_like(x))
 
     var2 = v[:-2] + 4.0 * v[1:-1] + v[2:]
