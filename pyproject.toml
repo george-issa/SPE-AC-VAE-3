@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spevae"
+version = "0.1.0"
+description = "Physics-constrained VAE for analytic continuation of imaginary-time Green's functions via a simple pole expansion."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "torch>=2.1",
+    "h5py",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib"]
+dev = ["pytest", "pytest-xdist", "matplotlib"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# The maximum-entropy comparator is vendored (ana_cont is not on PyPI) and the
+# SmoQyDEAC comparator is driven by a Julia script; both must ship with the
+# package or the benchmark harness silently loses a baseline after `pip install`.
+"spevae._vendor.ana_cont" = ["LICENSE", "VENDORED.md"]
+"spevae.benchmark" = ["*.jl"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
