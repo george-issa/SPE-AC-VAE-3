@@ -135,15 +135,20 @@ def main() -> None:
         for start in (rr.poles, det["poles"]):
             for mult in (1.0, 2.0):
                 merged_s, _ = consolidate_poles(start, mult * res_scale)
-                _, c0, _ = refit_poles_to_greens(
+                # Two phases: converge on pure chi2, then add positivity
+                # scaled to the CONVERGED chi2.  Scaling it to the starting
+                # chi2 (previous version) handed bad starts a penalty in the
+                # tens of thousands, deforming exactly the low-pole
+                # candidates the parsimony rule then favours.
+                p1, _, c1 = refit_poles_to_greens(
                     merged_s, mg.beta, mg.x, mg.mean, mg.sigma_mean,
                     inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"],
-                    steps=0)
+                    steps=args.refit_steps)
                 cand, _, c_s = refit_poles_to_greens(
-                    merged_s, mg.beta, mg.x, mg.mean, mg.sigma_mean,
+                    p1, mg.beta, mg.x, mg.mean, mg.sigma_mean,
                     inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"],
-                    steps=args.refit_steps,
-                    positivity_weight=max(1.0, 0.02 * c0))
+                    steps=args.refit_steps // 2,
+                    positivity_weight=max(1.0, 0.05 * c1))
                 n_live = int((cand.a[0] > 1e-5 * float(cand.a[0].sum())).sum())
                 cands.append((cand, c_s, n_live))
         c_min = min(c_s for _, c_s, _ in cands)
