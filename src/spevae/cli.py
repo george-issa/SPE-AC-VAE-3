@@ -340,6 +340,10 @@ def cmd_pretrain(args) -> None:
             print(f"[eval @ {step}] w1_omega={rec['w1_omega']:.4f} "
                   f"l2_rel={rec['l2_rel']:.4f} chi2_geo={rec.get('chi2_geo', 0):.4g} "
                   f"AU={rec['active_units']:.2f}/{int(rec['latent_dim'])}")
+            # Rolling crash-recovery checkpoint (raw weights, not the EMA):
+            # a multi-hour run must not be losable to one stray kill.
+            save_model(model, args.out + ".partial", stage="pretrain-partial",
+                       step=step, eval_metrics=rec)
 
     hist = pretrain(model, gen, cfg, callback=cb)
     save_model(model, args.out, stage="pretrain", preset=args.preset,
