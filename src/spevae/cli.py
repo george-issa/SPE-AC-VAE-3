@@ -439,7 +439,7 @@ def main(argv=None) -> None:
                    help="weight-entropy penalty (minimal-pole pressure)")
     p.add_argument("--w-multiscale", type=float, default=0.0,
                    help="broadened-envelope multiscale L2 weight")
-    p.add_argument("--w-highpass", type=float, default=0.0,
+    p.add_argument("--w-highpass", type=float, default=3.0,
                    help="sub-thermal mismatch weight (anti-pole-comb)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")

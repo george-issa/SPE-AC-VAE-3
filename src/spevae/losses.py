@@ -466,7 +466,9 @@ class LossWeights:
     sparsity: float = 0.0          # weight-entropy penalty (minimal-pole prior)
     multiscale: float = 0.0        # broadened-envelope L2 alongside the plain one
     multiscale_scales: tuple = (1.0, 8.0, 32.0)
-    highpass: float = 0.0          # sub-thermal mismatch (anti-pole-comb)
+    highpass: float = 3.0          # sub-thermal mismatch (anti-pole-comb);
+                                   # validated by arm E (-17% ripple, no cost)
+                                   # and the 24k run
     chi2_transform: str = "sqrt"
 
 
