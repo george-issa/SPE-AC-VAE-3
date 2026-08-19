@@ -125,15 +125,30 @@ def main() -> None:
         # is the cheap insurance.
         det = model.continue_(mg.mean.unsqueeze(0).float(), beta=mg.beta,
                               tau=mg.tau.float(), sigma=sig_enc, n_samples=0)
-        final, c = None, float("inf")
+        # Resolution sweep x start diversity.  Selection is the parsimony
+        # elbow, NOT argmin-chi2: measured on gaussian_double, the finer
+        # resolution won chi2 (93 vs 133) while losing against the truth
+        # (l2 0.36 vs 0.23) -- pure-chi2 selection over-resolves, which is
+        # the ill-posedness reappearing at the model-selection level.  Rule:
+        # fewest live poles among candidates within 1.5x of the best chi2.
+        cands = []
         for start in (rr.poles, det["poles"]):
-            merged_s, _ = consolidate_poles(start, 2.0 * res_scale)
-            cand, _, c_s = refit_poles_to_greens(
-                merged_s, mg.beta, mg.x, mg.mean, mg.sigma_mean,
-                inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"],
-                steps=args.refit_steps, positivity_weight=1.0)
-            if c_s < c:
-                final, c = cand, c_s
+            for mult in (1.0, 2.0):
+                merged_s, _ = consolidate_poles(start, mult * res_scale)
+                _, c0, _ = refit_poles_to_greens(
+                    merged_s, mg.beta, mg.x, mg.mean, mg.sigma_mean,
+                    inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"],
+                    steps=0)
+                cand, _, c_s = refit_poles_to_greens(
+                    merged_s, mg.beta, mg.x, mg.mean, mg.sigma_mean,
+                    inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"],
+                    steps=args.refit_steps,
+                    positivity_weight=max(1.0, 0.02 * c0))
+                n_live = int((cand.a[0] > 1e-5 * float(cand.a[0].sum())).sum())
+                cands.append((cand, c_s, n_live))
+        c_min = min(c_s for _, c_s, _ in cands)
+        ok = [t for t in cands if t[1] <= 1.5 * c_min]
+        final, c, _ = min(ok, key=lambda t: (t[2], t[1]))
         cert = positivity_certificate(final[0:1])[0]
         rows["consolidated"] = (final.spectral(wt)[0].double().numpy(), c / tgt)
         n_poles = int((final.a[0] > 1e-5 * float(final.a[0].sum())).sum())
