@@ -361,10 +361,16 @@ $L^2$ pressure is the lever that works: arm A′ cuts ripple 27% and improves
 aggregate $L^2$ at control-level $W_1$ and $\chi^2$, so ``l2 = 1.0`` is now
 the default. The width barrier and the weight-entropy sparsity term did
 nothing at the tested weights — recorded as negative results so they are not
-re-tried blindly. The residual comb at this budget is training time: the
-6000-step trajectories were still improving monotonically at cutoff, and the
-ensemble mean (the default reported spectrum) averages a further fraction of
-the ripple away.
+re-tried blindly.
+
+Confirmed at matched full budget (6000 steps, same frozen stream): ripple
+0.135 vs 0.178 (−24%), relative $L^2$ 0.147 vs 0.159, $W_1$ and $\chi^2$ at
+parity. The residual comb is training time — the trajectories were still
+improving monotonically at cutoff — and the ensemble mean (the default
+reported spectrum) averages a further fraction away.  A footnote for anyone
+timing runs: suppressing the spurious per-batch MPS `irfft` warning nearly
+*doubled* training throughput (832 s vs 1622 s for identical work) — the
+warning machinery and log I/O were a real cost, not just noise.
 
 **Stage 2 — per-dataset fine-tuning** (`spevae.training.finetune`) adapts the
 *weights* to one measured cell — its noise level, correlation structure and
