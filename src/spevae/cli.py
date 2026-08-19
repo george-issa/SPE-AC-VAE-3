@@ -373,7 +373,7 @@ def main(argv=None) -> None:
                         "PH-symmetric data only")
     p.add_argument("--w-w1", type=float, default=3.0,
                    help="peak-position (Wasserstein) loss weight")
-    p.add_argument("--w-l2", type=float, default=0.3,
+    p.add_argument("--w-l2", type=float, default=1.0,
                    help="shape/height (relative L2) loss weight")
     p.add_argument("--w-barrier", type=float, default=0.0,
                    help="soft width barrier above gamma_min")

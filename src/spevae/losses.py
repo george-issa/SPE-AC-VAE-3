@@ -400,6 +400,13 @@ class LossWeights:
 
     * ``w1`` carries peak *position*, which is the quantity classical methods
       get wrong and the one users notice.
+    * ``l2`` carries peak *heights and smoothness* -- it is the only term that
+      can see the pole-comb ("ripple") artefact, which lives in the kernel's
+      null space (invisible to ``chi2``) and cancels in the ``w1`` CDF.  The
+      controlled A/B sweep measured: raising it 0.3 -> 1.0 at fixed ``w1``
+      cut the ripple metric 27% and improved aggregate ``l2`` with no
+      :math:`W_1` or :math:`\chi^2` cost, while a width barrier (5e-3) and a
+      weight-entropy sparsity term (0.03) did nothing at those weights.
     * ``chi2`` keeps the model honest against the data it will actually see at
       inference; it is the only term that survives into fine-tuning.
 
@@ -417,7 +424,7 @@ class LossWeights:
 
     chi2: float = 1.0
     w1: float = 3.0
-    l2: float = 0.3
+    l2: float = 1.0                # raised from 0.3 by the ripple experiment
     kl: float = 1.0
     free_bits: float = 0.05
     consistency: float = 0.1

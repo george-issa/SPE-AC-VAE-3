@@ -330,6 +330,42 @@ One caution: refinement quality at fixed $P$ (a single MAP restart of a
 non-convex optimisation) is *not* a pole-count measurement; conclusions about
 $P$ belong to the amortised, frozen-stream comparison above.
 
+### Measured: the ripple (pole-comb) experiment
+
+The visible artefact of a fast checkpoint is a comb of narrow Lorentzians
+tiling what should be a smooth band. Anatomy: ripple lives at the sub-thermal
+scale, which is the kernel's null space — $\chi^2$ *cannot* see it (that is
+the ill-posedness), and it cancels in $W_1$'s CDF; only the $L^2$ term sees
+it, and it carried weight 0.3 against $W_1$'s 3.0. It is not a representation
+limit (two poles reproduce a two-Lorentzian truth exactly) and not the
+constraint layer.
+
+Because the losses cannot report what they cannot see, `spectral_ripple`
+measures it directly — sub-thermal oscillation content
+$\int|A - \tilde A_\pi|/\int A$, logged next to the target's own value in
+every evaluation (sharp families carry *real* sub-thermal structure; the
+artefact is the excess).
+
+Five 3000-step arms at fixed seed, preset and frozen eval stream:
+
+```
+arm                      W1agg    l2agg   rippleAgg
+D control               0.4275   0.2159      0.1809
+A  (w1 1.5, l2 1.0)     0.4941   0.2200      0.1317
+A' (w1 3.0, l2 1.0)     0.4380   0.2053      0.1337
+B  width barrier 5e-3   0.4380   0.2226      0.1864
+C  sparsity 0.03        0.4492   0.2312      0.1960
+```
+
+$L^2$ pressure is the lever that works: arm A′ cuts ripple 27% and improves
+aggregate $L^2$ at control-level $W_1$ and $\chi^2$, so ``l2 = 1.0`` is now
+the default. The width barrier and the weight-entropy sparsity term did
+nothing at the tested weights — recorded as negative results so they are not
+re-tried blindly. The residual comb at this budget is training time: the
+6000-step trajectories were still improving monotonically at cutoff, and the
+ensemble mean (the default reported spectrum) averages a further fraction of
+the ripple away.
+
 **Stage 2 — per-dataset fine-tuning** (`spevae.training.finetune`) adapts the
 *weights* to one measured cell — its noise level, correlation structure and
 spectral family — with no ground truth: the self-supervision is the calibrated
