@@ -70,8 +70,17 @@ def load_dataset(name: str, noise: str = "s1e-04_xi0.5"):
     tau = torch.arange(bins.shape[1], dtype=torch.float64) * dtau
     mg = from_bins(bins, beta, tau=tau, includes_endpoints=False,
                    label=name, dtype=torch.float64)
-    w = np.linspace(meta["omega_min"], meta["omega_max"], int(meta["n_omega"]))
     A_true = np.loadtxt(d / "spectral_input.csv")
+    if "omega_min" in meta:
+        w = np.linspace(meta["omega_min"], meta["omega_max"],
+                        int(meta["n_omega"]))
+    else:
+        # Some datasets predate the [spectral_input] table; the documented
+        # legacy grid is [-5, 5].  Loud, because a silently wrong grid once
+        # misplaced a ground truth (the inputs-13 incident).
+        w = np.linspace(-5.0, 5.0, A_true.size)
+        print(f"  [{name}] WARNING: metadata carries no spectral grid; "
+              f"assuming the legacy [-5, 5]", flush=True)
     return mg, w, A_true
 
 
@@ -108,11 +117,23 @@ def main() -> None:
         rows["refined"] = (rr.spectral(wt)[0].double().numpy(),
                            rr.chi2 / tgt)
 
-        merged, (rep,) = consolidate_poles(rr.poles, 2.0 * res_scale)
-        final, _, c = refit_poles_to_greens(
-            merged, mg.beta, mg.x, mg.mean, mg.sigma_mean,
-            inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"],
-            steps=args.refit_steps, positivity_weight=1.0)
+        # Two refit starts -- the refined poles and the amortised ones -- and
+        # keep the chi2-better result.  At the tightest noise floors the
+        # latent refinement can stall (measured on gapped_mott: not
+        # prior-binding, a plain non-convex stall), and a data-anchored refit
+        # from a mangled start inherits the damage; initialisation diversity
+        # is the cheap insurance.
+        det = model.continue_(mg.mean.unsqueeze(0).float(), beta=mg.beta,
+                              tau=mg.tau.float(), sigma=sig_enc, n_samples=0)
+        final, c = None, float("inf")
+        for start in (rr.poles, det["poles"]):
+            merged_s, _ = consolidate_poles(start, 2.0 * res_scale)
+            cand, _, c_s = refit_poles_to_greens(
+                merged_s, mg.beta, mg.x, mg.mean, mg.sigma_mean,
+                inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"],
+                steps=args.refit_steps, positivity_weight=1.0)
+            if c_s < c:
+                final, c = cand, c_s
         cert = positivity_certificate(final[0:1])[0]
         rows["consolidated"] = (final.spectral(wt)[0].double().numpy(), c / tgt)
         n_poles = int((final.a[0] > 1e-5 * float(final.a[0].sum())).sum())
