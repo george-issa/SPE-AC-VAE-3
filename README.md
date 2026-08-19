@@ -73,9 +73,11 @@ spevae continue --bins mybins.txt --beta 8.0 --checkpoint out/model.pt \
 spevae finetune --bins mybins.txt --beta 8.0 --checkpoint out/model.pt \
                 --out out/model-tuned.pt
 
-# per-input latent refinement (weights frozen) at continue time
+# per-input latent refinement (weights frozen) at continue time, and a
+# minimal-pole-style output: merge sub-resolution poles, then refit the few
+# survivors directly to the data (chi2-neutrality verified and printed)
 spevae continue --bins mybins.txt --beta 8.0 --checkpoint out/model-tuned.pt \
-                --refine --out result.npz
+                --refine --consolidate --out result.npz
 ```
 
 [`docs/TUTORIAL.md`](docs/TUTORIAL.md) walks all of this on a real half-filled

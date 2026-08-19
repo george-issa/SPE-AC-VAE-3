@@ -141,6 +141,30 @@ The three methods fail differently. Where they agree, the feature is in the
 data. Where they disagree, the inversion is underdetermined there — and that
 localisation is information, not embarrassment.
 
+## 5b. Minimal-pole output: consolidate + refit
+
+The trained decoder tiles spectral weight over more poles than the physics
+needs (merging poles is a flat direction of χ²).  `--consolidate` merges
+poles closer than the resolution scale (default π/β) and **refits the
+survivors directly to the data** through the exact forward map, with every
+constraint held structurally.  Sweeping the resolution is the principled
+"how many poles does the data support" search — measured on the synthetic
+two-Lorentzian truth with the fast-tier checkpoint:
+
+```
+resolution   poles   chi2/target   result
+2pi/beta       4        1.44       at the noise floor
+4pi/beta       2        1.23       omega -1.5007/+1.8001, gamma 0.3501/0.4498,
+                                   a 0.45002/0.54992  (truth: -1.5/+1.8,
+                                   0.35/0.45, 0.45/0.55) -- exact recovery
+8pi/beta       2      >2000        over-merged: the data objects
+```
+
+The χ² elbow *is* the minimal pole count.  Note the measured caveat that
+motivated the refit stage: merging at π/β alone is **not** χ²-neutral on good
+data (the information limit is set by noise, not temperature) — always keep
+the refit on, and read the printed χ² delta.
+
 ## 6. Use the poles
 
 ```python

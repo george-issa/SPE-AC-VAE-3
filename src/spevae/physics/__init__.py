@@ -23,6 +23,11 @@ from .poles import (
     tail_coefficients,
     windowed_moments,
 )
+from .consolidate import (
+    ConsolidationReport,
+    consolidate_poles,
+    refit_poles_to_greens,
+)
 from .positivity import PositivityReport, certify, positivity_certificate
 
 __all__ = [
@@ -46,4 +51,7 @@ __all__ = [
     "PositivityReport",
     "certify",
     "positivity_certificate",
+    "ConsolidationReport",
+    "consolidate_poles",
+    "refit_poles_to_greens",
 ]

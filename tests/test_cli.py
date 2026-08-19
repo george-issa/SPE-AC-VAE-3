@@ -100,3 +100,24 @@ def test_continue_refine_reports_physical_units(workspace):
     floor = 0.1 * math.pi / workspace["beta"]
     assert (z["poles_gamma"] >= floor - 1e-9).all(), (
         z["poles_gamma"].min(), floor)
+
+
+def test_continue_consolidate_ships_a_minimal_pole_set(workspace):
+    """--consolidate must shrink the shipped pole set, keep both sum rules,
+    stash the raw set alongside, and record the chi2-neutrality evidence."""
+    out = workspace["dir"] / "minimal.npz"
+    main(["continue", "--bins", str(workspace["bins"]),
+          "--beta", str(workspace["beta"]),
+          "--checkpoint", str(workspace["ckpt"]),
+          "--samples", "4", "--consolidate", "--out", str(out)])
+    z = np.load(out)
+    live = z["residues_re"] > 0
+    assert live.sum() < len(z["raw_residues_re"]), "nothing was consolidated"
+    assert z["residues_re"][live].sum() == pytest.approx(
+        z["raw_residues_re"].sum(), rel=1e-4)
+    assert abs(z["residues_im"].sum()) < 1e-6
+    with open(str(out) + ".json") as f:
+        meta = json.load(f)
+    c = meta["consolidation"]
+    assert c["n_out"] <= c["n_in"]
+    assert c["matsubara_err"] < 0.05

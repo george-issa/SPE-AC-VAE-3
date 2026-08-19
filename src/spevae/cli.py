@@ -119,9 +119,38 @@ def cmd_continue(args) -> None:
         if pin > 0.0:
             print(f"exactly-pinned slices (PH symmetry): max deviation {pin:.2e}")
 
+    raw_poles = poles
+    consolidation = None
+    if args.consolidate:
+        from .physics import consolidate_poles
+        res = args.resolution if args.resolution else math.pi / mg.beta
+        merged, (crep,) = consolidate_poles(poles[0:1], res)
+        # chi2-neutrality is measured, not assumed: push the consolidated set
+        # through the exact forward map against the same whitened covariance.
+        x = mg.x.float()
+        K = model.kernel_matrix(mg.beta, x)
+        fwd = model.forward_map(mg.beta, x.device, x.dtype)
+        G_cons = fwd(merged.to_dimensionless(mg.beta).to(torch.float32), x,
+                     kernel_matrix=K)
+        from .losses import chi2 as _chi2_fn
+        cov_c = mg.covariance(args.min_eigenvalue)
+        chi2_cons = float(_chi2_fn(
+            G_cons.double(), mg.mean.unsqueeze(0).double(),
+            mg.sigma_mean.unsqueeze(0).double(),
+            inv_sqrt_R=cov_c["inv_sqrt_R"], slices=cov_c["slices"]))
+        print(f"consolidation: {crep}")
+        print(f"  chi2 {chi2:.4g} -> {chi2_cons:.4g}  "
+              f"(delta {chi2_cons - chi2:+.3g}; the data "
+              f"{'cannot tell them apart' if abs(chi2_cons - chi2) < 0.1 * max(chi2, 1.0) else 'CAN tell -- inspect'})")
+        consolidation = {"resolution": res, "n_in": crep.n_in,
+                         "n_out": crep.n_out, "chi2_consolidated": chi2_cons,
+                         "matsubara_err": crep.matsubara_err_polished}
+        poles = merged
+        A_np = poles.spectral(omega)[0].double().numpy()
+
     from .physics.positivity import positivity_certificate
     cert = positivity_certificate(poles[0:1])[0]
-    a_unit = poles.a[0] / poles.a[0].sum()
+    a_unit = poles.a[0] / poles.a[0].sum().clamp_min(1e-30)
     eff = float(1.0 / (a_unit**2).sum())
     print(f"effective poles: {eff:.2f} of {poles.shape[1]}")
     print(f"positivity: {cert}")
@@ -130,6 +159,8 @@ def cmd_continue(args) -> None:
     order = torch.argsort(p.eps)
     print("\n  pole   omega        gamma        weight a     asym b")
     for i in order.tolist():
+        if float(p.a[i]) == 0.0:
+            continue                        # consolidation padding: inert
         print(f"  {i:>4}   {float(p.eps[i]):>+9.4f}   {float(p.gamma[i]):>9.4f}"
               f"   {float(p.a[i]):>9.5f}   {float(p.b[i]):>+9.5f}")
 
@@ -144,6 +175,11 @@ def cmd_continue(args) -> None:
             residues_im=p.b.double().numpy(),
             G_recon=G_recon.squeeze(0).double().numpy(),
             tau=mg.tau.double().numpy(),
+            **({"raw_poles_omega": raw_poles.eps[0].double().numpy(),
+                "raw_poles_gamma": raw_poles.gamma[0].double().numpy(),
+                "raw_residues_re": raw_poles.a[0].double().numpy(),
+                "raw_residues_im": raw_poles.b[0].double().numpy()}
+               if consolidation is not None else {}),
         )
         with open(str(args.out) + ".json", "w") as f:
             json.dump({"beta": mg.beta, "chi2": chi2, "chi2_target": target,
@@ -152,7 +188,8 @@ def cmd_continue(args) -> None:
                        "min_A": cert.min_A,
                        "negative_weight": cert.negative_weight,
                        "checkpoint": args.checkpoint,
-                       "refined": bool(args.refine)}, f, indent=2)
+                       "refined": bool(args.refine),
+                       "consolidation": consolidation}, f, indent=2)
         print(f"\nsaved -> {args.out} (+.json)   "
               f"[the pole set is the result; A(omega) is a convenience grid]")
 
@@ -334,6 +371,11 @@ def main(argv=None) -> None:
     c.add_argument("--refine", action="store_true",
                    help="refine the latent code against this dataset first")
     c.add_argument("--refine-steps", type=int, default=2000)
+    c.add_argument("--consolidate", action="store_true",
+                   help="merge sub-resolution poles into a minimal-pole-style "
+                        "set (chi2-neutrality verified and printed)")
+    c.add_argument("--resolution", type=float, default=None,
+                   help="merge scale in physical omega (default pi/beta)")
     c.add_argument("--omega-min", type=float, default=-10.0)
     c.add_argument("--omega-max", type=float, default=10.0)
     c.add_argument("--n-omega", type=int, default=801)
