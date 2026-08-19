@@ -154,6 +154,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--datasets", nargs="*", default=DEFAULT_SETS)
+    ap.add_argument("--regen-noise", type=float, default=1e-4)
+    ap.add_argument("--regen-bins", type=int, default=1000)
     ap.add_argument("--source", default="library",
                     choices=["library", "regen"],
                     help="library = v1-era Gbins (measured inconsistent); regen = consistent-by-construction")
@@ -169,7 +171,8 @@ def main() -> None:
 
     for name in args.datasets:
         if args.source == "regen":
-            mg, w, A_true = regen_dataset(name)
+            mg, w, A_true = regen_dataset(
+                name, noise=args.regen_noise, n_bins=args.regen_bins)
         else:
             mg, w, A_true = load_dataset(name)
         cov = mg.covariance()
