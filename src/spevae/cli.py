@@ -255,6 +255,7 @@ def cmd_finetune(args) -> None:
 def cmd_pretrain(args) -> None:
     from . import save_model
     from .data.synthetic import SyntheticGenerator
+    from .losses import LossWeights
     from .models import SPEVAE
     from .training import PretrainConfig, pretrain
 
@@ -270,12 +271,17 @@ def cmd_pretrain(args) -> None:
     torch.manual_seed(args.seed)
     model = SPEVAE(latent_dim=args.latent_dim, num_poles=args.num_poles,
                    omega_c=args.omega_c, d_model=p["d_model"],
-                   enc_layers=p["enc_layers"], residue_mode=args.residue_mode)
+                   enc_layers=p["enc_layers"], residue_mode=args.residue_mode,
+                   ph_symmetric=args.ph_symmetric)
     gen = SyntheticGenerator(omega_c=args.omega_c, beta_range=p["beta_range"],
+                             ph_symmetric=args.ph_symmetric,
                              device=args.device)
+    weights = LossWeights(w1=args.w_w1, l2=args.w_l2, barrier=args.w_barrier,
+                          sparsity=args.w_sparsity, multiscale=args.w_multiscale)
     cfg = PretrainConfig(steps=steps, batch_size=args.batch_size or p["batch_size"],
                          lr=args.lr, eval_every=max(steps // 12, 1),
-                         eval_batches=8, seed=args.seed, device=args.device)
+                         eval_batches=8, seed=args.seed, device=args.device,
+                         weights=weights)
     print(f"pretraining {model.num_parameters():,} parameters for {steps} steps "
           f"({args.preset} preset, device={args.device})")
 
@@ -361,6 +367,20 @@ def main(argv=None) -> None:
     p.add_argument("--omega-c", type=float, default=20.0)
     p.add_argument("--residue-mode", default="complex",
                    choices=["complex", "real"])
+    p.add_argument("--ph-symmetric", action="store_true",
+                   help="mirror-paired decoder: A(w) = A(-w) by construction, "
+                        "trained on PH-symmetrised targets; for half-filled / "
+                        "PH-symmetric data only")
+    p.add_argument("--w-w1", type=float, default=3.0,
+                   help="peak-position (Wasserstein) loss weight")
+    p.add_argument("--w-l2", type=float, default=0.3,
+                   help="shape/height (relative L2) loss weight")
+    p.add_argument("--w-barrier", type=float, default=0.0,
+                   help="soft width barrier above gamma_min")
+    p.add_argument("--w-sparsity", type=float, default=0.0,
+                   help="weight-entropy penalty (minimal-pole pressure)")
+    p.add_argument("--w-multiscale", type=float, default=0.0,
+                   help="broadened-envelope multiscale L2 weight")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
     p.set_defaults(func=cmd_pretrain)

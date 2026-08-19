@@ -118,6 +118,7 @@ class PoleConstraints(nn.Module):
         gamma_scale: float = MATSUBARA_NU0,
         nu_max: float = 240.0,
         eps_scale: float = MATSUBARA_NU0,
+        ph_symmetric: bool = False,
     ) -> None:
         super().__init__()
         if residue_mode not in ("real", "complex"):
@@ -129,6 +130,7 @@ class PoleConstraints(nn.Module):
         self.gamma_scale = float(gamma_scale)
         self.nu_max = float(nu_max)
         self.eps_scale = float(eps_scale)
+        self.ph_symmetric = bool(ph_symmetric)
 
     def forward(
         self,
@@ -191,6 +193,19 @@ class PoleConstraints(nn.Module):
             #   |t_p - <t>_a| <= 1  =>  |b_p| <= a_p, bounding the dispersive dip
             t = 0.5 * torch.tanh(u_b)
             b = a * (t - (a * t).sum(dim=-1, keepdim=True))
+
+        if self.ph_symmetric:
+            # Mirror every pole: (eps, gamma, a, b) |-> also (-eps, gamma, a, -b),
+            # each half carrying half the weight.  The pair's spectral density
+            # satisfies A(omega) = A(-omega) *identically* -- particle-hole
+            # symmetry as architecture, for data where it is exact -- and every
+            # other constraint survives the doubling: the pair sums preserve
+            # sum a = 1, force sum b = 0 pairwise (not just globally), and
+            # |b/2| <= a/2 keeps the asymmetry bound.
+            eps = torch.cat([eps, -eps], dim=-1)
+            gamma = torch.cat([gamma, gamma], dim=-1)
+            a = 0.5 * torch.cat([a, a], dim=-1)
+            b = 0.5 * torch.cat([b, -b], dim=-1)
 
         if norm is not None:
             scale = norm.reshape(-1, 1).to(a.dtype)

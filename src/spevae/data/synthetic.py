@@ -102,6 +102,7 @@ class SyntheticGenerator:
         quad_nodes_per_width: float = 3.5,
         quad_tail_nodes: int = 32,
         cache_limit: int = 4,
+        ph_symmetric: bool = False,
         device=None,
         dtype: torch.dtype = torch.float32,
     ) -> None:
@@ -117,6 +118,12 @@ class SyntheticGenerator:
         self.quad_h = float(gamma_min) / float(quad_nodes_per_width)
         self.quad_tail_nodes = int(quad_tail_nodes)
         self.cache_limit = max(int(cache_limit), 1)
+        # Particle-hole symmetrise every target: A(nu) -> [A(nu) + A(-nu)]/2,
+        # exact through the quadrature's reflection permutation.  For training
+        # a ph_symmetric decoder: the generic families are asymmetric on
+        # purpose, and a mirrored decoder cannot fit what it structurally
+        # excludes.
+        self.ph_symmetric = bool(ph_symmetric)
         self.device = device
         self.dtype = dtype
         self._quad_cache: dict[float, SpectralQuadrature] = {}
@@ -191,9 +198,15 @@ class SyntheticGenerator:
             omega_bandwidth=self.omega_bandwidth, gamma_min=self.gamma_min,
             device=self.device, dtype=self.dtype, crng=self._cpu_rng,
         )
+        A_true = spec.A
+        poles_true = spec.poles
+        if self.ph_symmetric:
+            pi = quad.reflection_index().to(A_true.device)
+            A_true = 0.5 * (A_true + A_true[:, pi])
+            poles_true = None            # the labels no longer describe A_true
 
         K = PoleGreens(quad).kernel_matrix(x)                       # (M, L)
-        G_clean = (spec.A * quad.weights.to(spec.A.dtype)) @ K       # (B, L)
+        G_clean = (A_true * quad.weights.to(A_true.dtype)) @ K       # (B, L)
 
         model = NoiseModel.sample(self._cpu_rng,
                                   scale_range=self.noise_scale_range,
@@ -211,9 +224,10 @@ class SyntheticGenerator:
             inv_sqrt_R=whitener(R),
             x=x,
             beta=beta,
-            A_true=spec.A,
+            A_true=A_true,
             quad=quad,
             family=spec.family,
-            poles_true=spec.poles,
-            meta={"noise": model, "correlation": kind, **spec.meta},
+            poles_true=poles_true,
+            meta={"noise": model, "correlation": kind,
+                  "ph_symmetric": self.ph_symmetric, **spec.meta},
         )

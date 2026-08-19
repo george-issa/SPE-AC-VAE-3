@@ -115,6 +115,10 @@ class SpectralQuadrature(nn.Module):
 
         n_core = int(round(2.0 * nu_c / h))
         core = np.linspace(-nu_c, nu_c, n_core + 1)
+        # linspace is symmetric only to the ulp; enforce exact antisymmetry
+        # (a <= 1 ulp nudge, five orders below the rule's own error) so that
+        # frequency reflection is exactly a reindexing -- see reflection_index.
+        core = 0.5 * (core - core[::-1])
         h_eff = float(core[1] - core[0])
         w_core = np.full(n_core + 1, h_eff)
         w_core[0] = w_core[-1] = 0.5 * h_eff                 # trapezoid
@@ -183,6 +187,26 @@ class SpectralQuadrature(nn.Module):
     def integrate(self, f_nodes: torch.Tensor) -> torch.Tensor:
         """Integrate values sampled at :attr:`nodes`; ``f_nodes`` is ``(..., M)``."""
         return (f_nodes * self.weights).sum(-1)
+
+    def reflection_index(self) -> torch.Tensor:
+        r"""Permutation :math:`\pi` with ``nodes[pi] == -nodes`` **exactly**.
+
+        Both panels are built symmetrically -- the core is a symmetric
+        ``linspace`` and the two reciprocal tails are elementwise negatives of
+        each other in the same order -- so frequency reflection is a pure
+        reindexing, with ``weights[pi] == weights``.  This is what makes
+        particle-hole symmetrisation of a sampled spectrum exact rather than
+        an interpolation.
+        """
+        if getattr(self, "_refl", None) is None:
+            nc, nt = self.n_core, self.n_tail
+            idx = torch.cat([
+                torch.arange(nc - 1, -1, -1),          # core, reversed
+                torch.arange(nc + nt, nc + 2 * nt),    # -hi = lo, same order
+                torch.arange(nc, nc + nt),             # -lo = hi, same order
+            ])
+            self._refl = idx.to(self.nodes.device)
+        return self._refl
 
     def extra_repr(self) -> str:
         return (f"nu_c={self.nu_c:g}, h={self.h:g}, "

@@ -80,12 +80,21 @@ class PoleDecoder(nn.Module):
         nu_max: float = 240.0,
         eps_scale: float = math.pi,
         eps_init_span: float = 3.0,
+        ph_symmetric: bool = False,
     ) -> None:
         super().__init__()
         self.num_poles = int(num_poles)
         self.n_context = int(n_context)
+        self.ph_symmetric = bool(ph_symmetric)
+        if self.ph_symmetric and num_poles % 2:
+            raise ValueError("ph_symmetric=True needs an even num_poles: poles "
+                             "come in mirror pairs")
+        # In the symmetric mode the network emits half the poles and the
+        # constraint layer mirrors them, so queries and per-pole biases are
+        # sized to the emitted half.
+        self.n_emit = self.num_poles // 2 if self.ph_symmetric else self.num_poles
 
-        self.queries = nn.Parameter(torch.randn(num_poles, d_model) * 0.02)
+        self.queries = nn.Parameter(torch.randn(self.n_emit, d_model) * 0.02)
         self.context = nn.Linear(latent_dim, n_context * d_model)
         self.d_model = d_model
 
@@ -107,6 +116,7 @@ class PoleDecoder(nn.Module):
         self.constraints = PoleConstraints(
             residue_mode=residue_mode, gamma_min=gamma_min,
             gamma_scale=gamma_scale, nu_max=nu_max, eps_scale=eps_scale,
+            ph_symmetric=ph_symmetric,
         )
         self._init_heads(eps_init_span)
 
@@ -126,12 +136,19 @@ class PoleDecoder(nn.Module):
         # A shared Linear head gives every pole the same bias, so the per-pole
         # offsets live in their own parameters.  Spreading the position offsets
         # is what stops the queries from starting degenerate: identical queries
-        # get identical gradients and never separate.
-        self.eps_bias = nn.Parameter(torch.linspace(-span, span, self.num_poles))
-        self.gamma_bias = nn.Parameter(torch.zeros(self.num_poles))
-        self.a_bias = nn.Parameter(torch.zeros(self.num_poles))
+        # get identical gradients and never separate.  In the symmetric mode
+        # the emitted half starts on one side of the band: its mirrors cover
+        # the other, and two emitted poles representing the same feature and
+        # its reflection would be pure redundancy.
+        if self.ph_symmetric:
+            self.eps_bias = nn.Parameter(
+                torch.linspace(0.1 * span, span, self.n_emit))
+        else:
+            self.eps_bias = nn.Parameter(torch.linspace(-span, span, self.n_emit))
+        self.gamma_bias = nn.Parameter(torch.zeros(self.n_emit))
+        self.a_bias = nn.Parameter(torch.zeros(self.n_emit))
         if self.head_b is not None:
-            self.b_bias = nn.Parameter(torch.zeros(self.num_poles))
+            self.b_bias = nn.Parameter(torch.zeros(self.n_emit))
         else:
             self.register_parameter("b_bias", None)
 

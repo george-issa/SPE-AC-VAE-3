@@ -129,6 +129,15 @@ class SPEVAE(nn.Module):
         heights.  The cost is that :math:`A(\omega) \ge 0` is no longer
         structural -- it becomes a penalty plus a reported ``min_A`` -- so print
         that number with any spectrum.  ``"real"`` restores the guarantee.
+    ph_symmetric
+        Mirror-paired decoder: the network emits ``num_poles/2`` poles and the
+        constraint layer adds :math:`(-\varepsilon_p, \gamma_p, a_p/2, -b_p/2)`
+        for each, making :math:`A(\omega) = A(-\omega)` **identical in the
+        weights** -- particle-hole symmetry as architecture.  Use only for
+        data where the symmetry is exact (e.g. half filling); train with a
+        ``SyntheticGenerator(ph_symmetric=True)`` so the targets respect what
+        the decoder enforces.  On asymmetric data a symmetric decoder is a
+        structurally wrong prior, not a regulariser.
     """
 
     def __init__(
@@ -137,6 +146,7 @@ class SPEVAE(nn.Module):
         num_poles: int = 12,
         omega_c: float = 20.0,
         residue_mode: str = "complex",
+        ph_symmetric: bool = False,
         gamma_min: float = DEFAULT_GAMMA_MIN,
         d_model: int = 128,
         enc_layers: int = 4,
@@ -159,6 +169,7 @@ class SPEVAE(nn.Module):
         self.config = dict(
             latent_dim=int(latent_dim), num_poles=int(num_poles),
             omega_c=float(omega_c), residue_mode=str(residue_mode),
+            ph_symmetric=bool(ph_symmetric),
             gamma_min=float(gamma_min), d_model=int(d_model),
             enc_layers=int(enc_layers), dec_layers=int(dec_layers),
             n_heads=int(n_heads), d_ff=int(d_ff),
@@ -172,6 +183,7 @@ class SPEVAE(nn.Module):
         self.omega_c = float(omega_c)
         self.gamma_min = float(gamma_min)
         self.residue_mode = residue_mode
+        self.ph_symmetric = bool(ph_symmetric)
         self._quad_h = float(gamma_min) / float(quad_nodes_per_width)
         self._quad_tail_nodes = int(quad_tail_nodes)
         self._max_quad_nodes = int(max_quad_nodes)
@@ -185,6 +197,7 @@ class SPEVAE(nn.Module):
             latent_dim=latent_dim, num_poles=num_poles, d_model=d_model,
             n_layers=dec_layers, n_heads=n_heads, d_ff=d_ff, dropout=dropout,
             residue_mode=residue_mode, gamma_min=gamma_min,
+            ph_symmetric=ph_symmetric,
         )
         self._quad_cache: dict[tuple, PoleGreens] = {}
         self._kernel_cache: dict[tuple, torch.Tensor] = {}

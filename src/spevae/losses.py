@@ -73,6 +73,8 @@ __all__ = [
     "spectral_l2",
     "spectral_multiscale_l2",
     "spectral_positivity",
+    "spectral_ripple",
+    "weight_entropy",
     "kl_divergence",
     "noise_consistency",
     "width_barrier",
@@ -268,6 +270,43 @@ def spectral_multiscale_l2(
 # Latent-space terms
 # --------------------------------------------------------------------------- #
 
+def spectral_ripple(A: torch.Tensor, quad: SpectralQuadrature,
+                    sigma: float = 3.141592653589793) -> torch.Tensor:
+    r"""Sub-thermal oscillation content: :math:`\int |A - \tilde A_\sigma| d\nu / \int A d\nu`.
+
+    :math:`\tilde A_\sigma` is :math:`A` Gaussian-broadened at the first
+    Matsubara scale :math:`\sigma = \pi` (dimensionless), the finest structure
+    :math:`\tau`-data at temperature :math:`1/\beta` can resolve.  A smooth
+    band scores near zero; a comb of narrow poles tiling that band scores its
+    oscillation fraction.  This is the *diagnostic* for the pole-comb artefact
+    ("ripple"): structure at this scale is almost invisible to :math:`\chi^2`
+    (the kernel suppresses it exponentially -- that is the ill-posedness) and
+    largely cancels in the :math:`W_1` CDF, so it must be measured directly or
+    it will not be seen at all.
+    """
+    from .data.spectra import broaden
+
+    n = quad.n_core
+    core = A[:, :n]
+    smooth = broaden(core, quad.h, sigma)
+    w = quad.weights[:n]
+    num = ((core - smooth).abs() * w).sum(-1)
+    den = (core.abs() * w).sum(-1).clamp_min(1e-30)
+    return (num / den).mean()
+
+
+def weight_entropy(a: torch.Tensor) -> torch.Tensor:
+    r"""Shannon entropy of the unit-normalised pole weights, batch-averaged.
+
+    :math:`H = -\sum_p \hat a_p \ln \hat a_p` with :math:`\hat a = a/\sum a`.
+    As a penalty this is mild pressure toward spending *few* poles -- the
+    minimal-pole philosophy (Zhang & Gull) as a soft prior rather than a hard
+    truncation.  :math:`H` ranges from 0 (one pole) to :math:`\ln P`.
+    """
+    a_unit = a / a.sum(-1, keepdim=True).clamp_min(1e-30)
+    return -(a_unit * a_unit.clamp_min(1e-12).log()).sum(-1).mean()
+
+
 def spectral_positivity(A_pred: torch.Tensor, quad: SpectralQuadrature,
                         relative: bool = True) -> torch.Tensor:
     r"""Penalty on negative excursions, :math:`\int \mathrm{ReLU}(-A)^2 d\nu`.
@@ -384,6 +423,9 @@ class LossWeights:
     consistency: float = 0.1
     barrier: float = 0.0
     positivity: float = 1.0
+    sparsity: float = 0.0          # weight-entropy penalty (minimal-pole prior)
+    multiscale: float = 0.0        # broadened-envelope L2 alongside the plain one
+    multiscale_scales: tuple = (1.0, 8.0, 32.0)
     chi2_transform: str = "sqrt"
 
 
@@ -476,6 +518,17 @@ def pretrain_loss(
         L_bar = width_barrier(result.poles.gamma, model.gamma_min)
         total = total + weights.barrier * L_bar
         parts["barrier"] = L_bar.detach()
+
+    if weights.sparsity > 0.0:
+        L_sp = weight_entropy(result.poles.a)
+        total = total + weights.sparsity * L_sp
+        parts["sparsity"] = L_sp.detach()
+
+    if weights.multiscale > 0.0:
+        L_ms = spectral_multiscale_l2(A_pred, batch.A_true, quad,
+                                      scales=weights.multiscale_scales)
+        total = total + weights.multiscale * L_ms
+        parts["multiscale"] = L_ms.detach()
 
     parts["total"] = total.detach()
     return total, parts

@@ -112,12 +112,18 @@ def evaluate(
     with generator.fixed_scalars(seed):
         eval_batches = [generator.batch(batch_size, rng) for _ in range(n_batches)]
 
+    from ..losses import spectral_ripple
+    ripple_pred, ripple_true = [], []
     for batch in eval_batches:
         out = model(batch.G, batch.x, batch.beta, sigma=batch.sigma,
                     deterministic=True)
         A = out.poles.spectral(batch.quad.nodes.to(out.poles.eps.dtype))
         w1 = float(spectral_w1(A, batch.A_true, batch.quad, beta=batch.beta))
         l2 = float(spectral_l2(A, batch.A_true, batch.quad, relative=True))
+        ripple_pred.append(float(spectral_ripple(A, batch.quad)))
+        # The target's own ripple is the reference point: sharp families (BCS,
+        # boxes) carry real sub-thermal structure, so "excess" is the artefact.
+        ripple_true.append(float(spectral_ripple(batch.A_true, batch.quad)))
         from ..losses import chi2 as _chi2
         # All L slices: synthetic noise is drawn independently at every slice,
         # so nothing is redundant and batch.inv_sqrt_R whitens the full grid.
@@ -140,6 +146,12 @@ def evaluate(
         "chi2_geo": float(math.exp(sum(math.log(max(c, 1e-12))
                                        for c in chi2s) / len(chi2s))),
         "active_units": float(sum(aus) / len(aus)),
+        # Excess sub-thermal oscillation over what the targets themselves
+        # carry: the pole-comb ("ripple") artefact, measured directly because
+        # chi^2 and W1 are both nearly blind to it.
+        "ripple": float(sum(ripple_pred) / len(ripple_pred)),
+        "ripple_excess": float((sum(ripple_pred) - sum(ripple_true))
+                               / len(ripple_pred)),
         # Identically 0 with real residues; strictly negative excursions are the
         # price the complex mode pays, so it must be visible in every eval.
         "min_A": float(min(min_As)),
