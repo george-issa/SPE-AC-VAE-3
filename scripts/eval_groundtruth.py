@@ -84,10 +84,79 @@ def load_dataset(name: str, noise: str = "s1e-04_xi0.5"):
     return mg, w, A_true
 
 
+
+
+# --------------------------------------------------------------------------- #
+# Regenerated evaluation sets: the library's formulas, this package's verified
+# forward map.  The v1-era Gbins were measured inconsistent with their own
+# shipped truths (up to ~500 sigma at s=1e-4); these are consistent by
+# construction, asserted at generation time.
+# --------------------------------------------------------------------------- #
+
+def _N(w, mu, s):
+    return np.exp(-0.5 * ((w - mu) / s) ** 2) / (s * np.sqrt(2 * np.pi))
+
+
+def _semicircle(w, c, r):
+    d = np.clip(1.0 - ((w - c) / r) ** 2, 0.0, None)
+    return 2.0 / (np.pi * r) * np.sqrt(d)
+
+
+FORMULAS = {
+    "gaussian_double": lambda w: 0.6 * _N(w, 0.0, 0.5) + 0.4 * _N(w, 2.0, 0.5),
+    "gapped_mott": lambda w: 0.5 * _N(w, -2.0, 0.4) + 0.5 * _N(w, 2.0, 0.4),
+    "gapped_semicircle": lambda w: 0.5 * _semicircle(w, -2.5, 1.5)
+    + 0.5 * _semicircle(w, 2.5, 1.5),
+    "pseudogap": lambda w: np.sqrt(np.abs(w)) * np.exp(-w**2 / (2 * 1.5**2)),
+    "three_peak_hubbard": lambda w: 0.2 * _N(w, -2.5, 0.3)
+    + 0.6 * _N(w, 0.0, 0.2) + 0.2 * _N(w, 2.5, 0.3),
+    "asymmetric_three_peak": lambda w: 0.15 * _N(w, -3.0, 0.4)
+    + 0.55 * _N(w, -0.3, 0.25) + 0.3 * _N(w, 1.8, 0.6),
+    "fano": lambda w: (2.0 + w / 0.5) ** 2 / (1.0 + (w / 0.5) ** 2)
+    * _N(w, 0.0, 2.0),
+    "two_close_peaks": lambda w: 0.5 * _N(w, -0.4, 0.2) + 0.5 * _N(w, 0.4, 0.2),
+}
+
+
+def regen_dataset(name: str, beta: float = 10.0, n_tau: int = 201,
+                  n_bins: int = 1000, noise: float = 1e-4, seed: int = 0):
+    from spevae.physics import PoleGreens, SpectralQuadrature
+
+    quad = SpectralQuadrature.for_beta(beta, dtype=torch.float64)
+    nu = quad.nodes.numpy()
+    A_nodes = FORMULAS[name](nu / beta)
+    A_nodes = A_nodes / float((torch.tensor(A_nodes) * quad.weights).sum())
+    A_dimless = torch.tensor(A_nodes, dtype=torch.float64)
+
+    tau = torch.linspace(0.0, beta, n_tau, dtype=torch.float64)
+    K = PoleGreens(quad).kernel_matrix(tau / beta)
+    G_clean = (A_dimless * quad.weights) @ K
+
+    g = torch.Generator().manual_seed(seed)
+    d = (tau.reshape(-1, 1) - tau.reshape(1, -1)).abs() / beta
+    R = 0.8 * torch.exp(-d / 0.05) + 0.2 * torch.eye(n_tau, dtype=torch.float64)
+    eta = torch.randn(n_bins, n_tau, generator=g, dtype=torch.float64)         @ torch.linalg.cholesky(R).T
+    bins = G_clean.unsqueeze(0) + eta * noise
+    mg = from_bins(bins, beta, tau=tau, includes_endpoints=True,
+                   label=name, dtype=torch.float64)
+    # consistency by construction, asserted rather than trusted
+    dev = float((mg.mean - G_clean).abs().max())
+    sem = float(mg.sigma_mean.max())
+    assert dev < 6 * sem, (name, dev, sem)
+
+    w = np.linspace(-8.0, 8.0, 1600)
+    A_true = FORMULAS[name](w)
+    A_true = A_true / np.trapezoid(A_true, w)
+    return mg, w, A_true
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--datasets", nargs="*", default=DEFAULT_SETS)
+    ap.add_argument("--source", default="library",
+                    choices=["library", "regen"],
+                    help="library = v1-era Gbins (measured inconsistent); regen = consistent-by-construction")
     ap.add_argument("--refine-steps", type=int, default=8000)
     ap.add_argument("--refit-steps", type=int, default=4000)
     ap.add_argument("--figure", default=None)
@@ -99,7 +168,10 @@ def main() -> None:
     curves = {}
 
     for name in args.datasets:
-        mg, w, A_true = load_dataset(name)
+        if args.source == "regen":
+            mg, w, A_true = regen_dataset(name)
+        else:
+            mg, w, A_true = load_dataset(name)
         cov = mg.covariance()
         tgt = float(cov["chi2_target"])
         res_scale = math.pi / mg.beta
