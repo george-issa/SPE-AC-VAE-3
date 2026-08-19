@@ -74,6 +74,7 @@ __all__ = [
     "spectral_multiscale_l2",
     "spectral_positivity",
     "spectral_ripple",
+    "spectral_highpass_l2",
     "weight_entropy",
     "kl_divergence",
     "noise_consistency",
@@ -295,6 +296,38 @@ def spectral_ripple(A: torch.Tensor, quad: SpectralQuadrature,
     return (num / den).mean()
 
 
+def spectral_highpass_l2(
+    A_pred: torch.Tensor,
+    A_true: torch.Tensor,
+    quad: SpectralQuadrature,
+    sigma: float = 3.141592653589793,
+) -> torch.Tensor:
+    r"""Supervised penalty on *sub-thermal* structure mismatch.
+
+    .. math::
+        \int \big[(A_{\rm pred} - \tilde A_{\rm pred})
+                 -(A_{\rm true} - \tilde A_{\rm true})\big]^2 d\nu
+        \;\Big/\; \int A_{\rm true}^2\, d\nu ,
+
+    with :math:`\tilde A` the :math:`\sigma = \pi` (first-Matsubara)
+    broadening.  This is the loss aimed squarely at the pole-comb artefact:
+    the plain :math:`L^2` spends most of its gradient on the envelope, while
+    this term sees *only* the band-pass residual where the comb lives.  It is
+    supervised -- a BCS edge or a box target keeps its real sub-thermal
+    structure, because the penalty compares against the target's own high-pass
+    component rather than demanding smoothness outright.
+    """
+    from .data.spectra import broaden
+
+    n = quad.n_core
+    p, t = A_pred[:, :n], A_true[:, :n]
+    hp = (p - broaden(p, quad.h, sigma)) - (t - broaden(t, quad.h, sigma))
+    w = quad.weights[:n]
+    num = ((hp * hp) * w).sum(-1)
+    den = quad.integrate(A_true * A_true).clamp_min(1e-30)
+    return (num / den).mean()
+
+
 def weight_entropy(a: torch.Tensor) -> torch.Tensor:
     r"""Shannon entropy of the unit-normalised pole weights, batch-averaged.
 
@@ -433,6 +466,7 @@ class LossWeights:
     sparsity: float = 0.0          # weight-entropy penalty (minimal-pole prior)
     multiscale: float = 0.0        # broadened-envelope L2 alongside the plain one
     multiscale_scales: tuple = (1.0, 8.0, 32.0)
+    highpass: float = 0.0          # sub-thermal mismatch (anti-pole-comb)
     chi2_transform: str = "sqrt"
 
 
@@ -536,6 +570,11 @@ def pretrain_loss(
                                       scales=weights.multiscale_scales)
         total = total + weights.multiscale * L_ms
         parts["multiscale"] = L_ms.detach()
+
+    if weights.highpass > 0.0:
+        L_hp = spectral_highpass_l2(A_pred, batch.A_true, quad)
+        total = total + weights.highpass * L_hp
+        parts["highpass"] = L_hp.detach()
 
     parts["total"] = total.detach()
     return total, parts

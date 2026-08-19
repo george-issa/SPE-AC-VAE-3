@@ -277,7 +277,8 @@ def cmd_pretrain(args) -> None:
                              ph_symmetric=args.ph_symmetric,
                              device=args.device)
     weights = LossWeights(w1=args.w_w1, l2=args.w_l2, barrier=args.w_barrier,
-                          sparsity=args.w_sparsity, multiscale=args.w_multiscale)
+                          sparsity=args.w_sparsity, multiscale=args.w_multiscale,
+                          highpass=args.w_highpass)
     cfg = PretrainConfig(steps=steps, batch_size=args.batch_size or p["batch_size"],
                          lr=args.lr, eval_every=max(steps // 12, 1),
                          eval_batches=8, seed=args.seed, device=args.device,
@@ -381,6 +382,8 @@ def main(argv=None) -> None:
                    help="weight-entropy penalty (minimal-pole pressure)")
     p.add_argument("--w-multiscale", type=float, default=0.0,
                    help="broadened-envelope multiscale L2 weight")
+    p.add_argument("--w-highpass", type=float, default=0.0,
+                   help="sub-thermal mismatch weight (anti-pole-comb)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
     p.set_defaults(func=cmd_pretrain)
