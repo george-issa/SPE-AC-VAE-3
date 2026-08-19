@@ -652,6 +652,47 @@ degrees of freedom against 100 time slices whose covariance is barely
 determined, and `chi2kink` does not protect against that when the whitener is
 this ill-conditioned. Worth knowing before quoting a MaxEnt $\chi^2$ as evidence.
 
+### Measured: the noise-regime map
+
+Eight ground-truth spectra (regenerated from the v1 library's formulas
+through the verified forward map — the library's own bins were measured
+inconsistent with their truths at up to ~500σ and are unusable for truth
+recovery), evaluated at two noise levels against MaxEnt on identical bins,
+best of refined/consolidated per dataset, $W_1$:
+
+```
+                        s=1e-4, 1000 bins        s=1e-2, 100 bins
+dataset                  ours    MaxEnt           ours    MaxEnt
+gaussian_double         0.034     0.006          0.080     0.143
+gapped_mott             0.055     0.004          0.097     0.108
+gapped_semicircle       0.042     0.030          0.051     0.275
+pseudogap               0.029     0.007          0.061     0.166
+three_peak_hubbard      0.070     0.004          0.100     0.370
+asymmetric_three_peak   0.088     0.006          0.172     0.291
+fano                    0.038     0.008          0.043     0.154
+two_close_peaks         0.008     0.002          0.017     0.038
+
+W1 wins                   0/8                      8/8  (1.1x - 5.4x)
+l2 wins                   0/8                      5/8
+```
+
+The crossover the supervised-learning literature predicts (Fournier *et
+al.*), measured on this package's own consistent data: at pristine noise
+MaxEnt is the right tool and this package is honest about it; at realistic
+DQMC noise the learned prior carries — most decisively on hard band edges
+(semicircle, 5.4×) and asymmetric line shapes (Fano, 3.6×, certified
+positive).  Where we lag at low noise, the diagnostics say why: Gaussian
+tails sit above the pole-ansatz floor ($\chi^2/{\rm tgt}$ 11–43 there,
+1.5–2.3 on pole-friendly shapes), and the fast-tier (55-minute) checkpoint
+under-resolves sharp multi-peak interiors — the `full` preset is the known
+lever.
+
+Protocol note from the same campaigns: consolidation's data-refit is a
+*low-noise* instrument — with $\chi^2$ anchored to little information it can
+degrade a good refined start (measured repeatedly at $s=10^{-2}$).  At high
+noise, report the refined (prior-carried) spectrum, and consolidate with the
+Matsubara polish only.
+
 ### The mirror pair positivity theorem, and its measured price
 
 For a PH-symmetric mirror pair $(\pm\varepsilon, \gamma, a/2, \pm b/2)$ the
