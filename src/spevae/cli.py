@@ -314,10 +314,16 @@ def cmd_pretrain(args) -> None:
     steps = args.steps or p["steps"]
 
     torch.manual_seed(args.seed)
-    model = SPEVAE(latent_dim=args.latent_dim, num_poles=args.num_poles,
-                   omega_c=args.omega_c, d_model=p["d_model"],
-                   enc_layers=p["enc_layers"], residue_mode=args.residue_mode,
-                   ph_symmetric=args.ph_symmetric)
+    if args.init_from:
+        from . import load_model as _lm
+        model = _lm(args.init_from)
+        print(f"warm start from {args.init_from} "
+              f"({model.num_parameters():,} params)")
+    else:
+        model = SPEVAE(latent_dim=args.latent_dim, num_poles=args.num_poles,
+                       omega_c=args.omega_c, d_model=p["d_model"],
+                       enc_layers=p["enc_layers"], residue_mode=args.residue_mode,
+                       ph_symmetric=args.ph_symmetric)
     gen = SyntheticGenerator(omega_c=args.omega_c, beta_range=p["beta_range"],
                              ph_symmetric=args.ph_symmetric,
                              device=args.device)
@@ -447,6 +453,10 @@ def main(argv=None) -> None:
                    help="sub-thermal mismatch weight (anti-pole-comb)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
+    p.add_argument("--init-from", default=None,
+                   help="warm-start weights from a checkpoint (e.g. a .partial "
+                        "rescued from a killed run); architecture comes from "
+                        "the checkpoint, --latent-dim/--num-poles are ignored")
     p.set_defaults(func=cmd_pretrain)
 
     i = sub.add_parser("info", help="describe a checkpoint")
