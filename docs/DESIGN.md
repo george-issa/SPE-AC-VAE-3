@@ -293,6 +293,43 @@ predecessor's eval stream drifted with training, and $\chi^2$ once "improved"
 evaluations — $W_1$: 1.05 → 0.35, relative $L^2$: 0.38 → 0.19, geometric-mean
 $\chi^2$: 785 → 71 — with active units steady at 11.75/12 (no collapse).
 
+### Measured: the pole-count sweep
+
+Three runs at $P \in \{8, 16, 24\}$, identical seed, preset and frozen eval
+stream (`scripts/pole_count_report.py`, `scripts/plot_pole_count.py`,
+`scripts/plot_pole_count_spectra.py`):
+
+```
+P    params       W1    l2rel   chi2geo   eff mean   eff p90
+ 8  812,188   0.2859   0.1867     303.8       6.36      7.45
+16  812,988   0.2734   0.1592     306.8      13.63     15.39
+24  813,788   0.2787   0.1598     300.2      19.10     22.76
+```
+
+Two directions, two different answers:
+
+- **Up (16 → 24): free.** Every accuracy metric is tied within noise; the
+  eval trajectories overlap point by point from step 500 to the end. Surplus
+  poles spread the same spectral weight more finely (effective count grows
+  with the budget at roughly constant ~80–85% utilisation) instead of
+  misbehaving — "prediction gets equally good or better with more poles"
+  holds as *equally good*, at this training budget and noise level.
+- **Down (16 → 8): starvation, and it is shape-selective.** $W_1$ (peak
+  positions) stays within ~4%, but relative $L^2$ (shapes and heights) is 17%
+  worse and the gap *widens* over training — eight poles can place features
+  but run out of basis functions to refine them, exactly the deficit the
+  first attempt hit with 3 Lorentzians against two Gaussians. On a
+  PH-symmetric coupling-resolved Holstein cell ($\lambda{=}0.35$, $n{=}1$,
+  $\Omega{=}1$, $\beta{=}10$), starvation also shows as **symmetry
+  violation**: the model does not hardwire $A(\omega) = A(-\omega)$, so the
+  integrated asymmetry is a learned-quality diagnostic — 0.54 at $P=8$ versus
+  0.21–0.25 at $P \ge 16$ (shipped DEAC reference: 0.065). Too few poles
+  cannot tile two symmetric bands consistently.
+
+One caution: refinement quality at fixed $P$ (a single MAP restart of a
+non-convex optimisation) is *not* a pole-count measurement; conclusions about
+$P$ belong to the amortised, frozen-stream comparison above.
+
 **Stage 2 — per-dataset fine-tuning** (`spevae.training.finetune`) adapts the
 *weights* to one measured cell — its noise level, correlation structure and
 spectral family — with no ground truth: the self-supervision is the calibrated
