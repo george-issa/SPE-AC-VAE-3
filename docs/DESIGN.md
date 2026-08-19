@@ -652,6 +652,36 @@ degrees of freedom against 100 time slices whose covariance is barely
 determined, and `chi2kink` does not protect against that when the whitener is
 this ill-conditioned. Worth knowing before quoting a MaxEnt $\chi^2$ as evidence.
 
+### The mirror pair positivity theorem, and its measured price
+
+For a PH-symmetric mirror pair $(\pm\varepsilon, \gamma, a/2, \pm b/2)$ the
+numerator polynomial of the pair's spectral density collapses to the even
+quadratic
+
+$$\mathcal{N}(\omega) = (a\gamma - b\varepsilon)\,\omega^2
+  + (\varepsilon^2+\gamma^2)(a\gamma + b\varepsilon),$$
+
+so the pair is non-negative on **all** of $\mathbb{R}$ **iff**
+$|b| \le a\gamma/\varepsilon$ — exact and closed-form.  Imposing the smooth
+sufficient bound $|b| \le a\gamma/\sqrt{\gamma^2+\varepsilon^2}$ inside the
+mirror-constrained refit (`pair_bound=True`) makes every pair — hence the
+total — **certified $A \ge 0$ by construction**, with the gap floor coming
+out flat and strictly positive.
+
+The price is measured, not hidden: on the gIssa Holstein cell the
+$\chi^2$-optimal fit genuinely wants per-pair asymmetries far beyond the
+bound ($|b| \sim 0.5a$ against a cap of a few percent of $a$ at
+$\varepsilon/\gamma \sim 3$), staying globally positive through *cross-pair*
+cancellation instead — per-pair positivity is sufficient but not necessary.
+Measured at $\pi/\beta$: unconstrained mirror refit reaches
+$\chi^2/{\rm tgt} = 0.77$ with a $-1.3\times10^{-3}$ dip; the pair-bounded
+one reaches $12.6$ ($\chi^2$/dof $\approx 2.4$ in absolute terms) with a
+flat $[+4\times10^{-4}, +2\times10^{-3}]$ gap floor.  Penalty-based
+positivity sits in between and barely moves the dip across five decades of
+weight — the dip is $\chi^2$-preferred, not a tuning accident.  All three
+modes ship; the certificate and the $\chi^2$ ratio quantify the trade per
+dataset, and the physics judgement of which to report belongs to the user.
+
 ## 9. What is *not* claimed
 
 - **$\chi^2 \approx 1$ does not imply a correct $A(\omega)$.** It means the fit is

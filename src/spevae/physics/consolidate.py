@@ -261,6 +261,10 @@ def refit_poles_to_greens(
     gamma_floor: float | None = None,
     steps: int = 2000,
     lr: float = 0.02,
+    ph_symmetric: bool = False,
+    fold_tolerance: float = 0.0,
+    positivity_weight: float = 0.0,
+    pair_bound: bool = False,
 ) -> tuple[PoleSet, float, float]:
     r"""Refit a (physical-unit) pole set directly to measured :math:`G(\tau)`.
 
@@ -275,8 +279,42 @@ def refit_poles_to_greens(
     :math:`b = a\,(t - \langle t\rangle_a)`, :math:`t = \tanh(u)/2`
     (:math:`\sum b = 0` exact, :math:`|b| \le a`).
 
+    Parameters beyond the plain fit
+    -------------------------------
+    ph_symmetric
+        Mirror-constrained refit for particle-hole-symmetric data: the input
+        is folded onto the positive half-line (:math:`\varepsilon \to
+        |\varepsilon|`, :math:`b \to \mathrm{sign}(\varepsilon)\,b`), half
+        the poles are optimised, and the full set is their exact mirror
+        expansion :math:`(\pm\varepsilon, \gamma, a/2, \pm b/2)`.
+        :math:`A(\omega) = A(-\omega)` and :math:`\sum b = 0` then hold
+        *identically*, and the free parameter count halves.
+    fold_tolerance
+        Physical-frequency scale for merging folded half-poles that land on
+        top of each other (a :math:`\pm\varepsilon` pair from the
+        unconstrained stage folds to two coincident half-poles).  0 keeps
+        every fold separate.
+    positivity_weight
+        Weight of :math:`\int \mathrm{ReLU}(-A)^2 / \int A^2` on the
+        quadrature -- the same penalty training uses, previously absent from
+        this stage, which is exactly where in-gap negative dips came from.
+    pair_bound
+        Mirror mode only: **structural** positivity.  A mirror pair's
+        numerator polynomial is the even quadratic
+        :math:`(a\gamma - b\varepsilon)\,\omega^2 +
+        (\varepsilon^2+\gamma^2)(a\gamma + b\varepsilon)`, so the pair is
+        non-negative on all of :math:`\mathbb{R}` **iff**
+        :math:`|b| \le a\gamma/\varepsilon` -- exact and closed-form.  The
+        smooth sufficient bound
+        :math:`|b| \le a\gamma/\sqrt{\gamma^2+\varepsilon^2}` is imposed in
+        the parametrisation, making every pair -- hence the total --
+        certified :math:`A \ge 0` *by construction*, with asymmetry retained
+        up to the bound.  This is the guarantee a penalty cannot give.
+
     Returns ``(refit_poles, chi2_before, chi2_after)`` with poles in the
-    input's physical units.  Zero-weight padding poles are dropped first.
+    input's physical units; the reported values are pure :math:`\chi^2`
+    (the positivity penalty steers, it is not smuggled into the score).
+    Zero-weight padding poles are dropped first.
     """
     from .forward import PoleGreens, SpectralQuadrature
 
@@ -286,6 +324,31 @@ def refit_poles_to_greens(
     a0 = poles.a[0][live].double()
     b0 = poles.b[0][live].double()
     A_tot = a0.sum()
+
+    if ph_symmetric:
+        # Fold onto the positive half-line.  sign(0) = 0 zeroes b for an
+        # on-axis pole, which the mirror expansion would cancel anyway.
+        sgn = torch.sign(eps0)
+        sgn = torch.where(sgn == 0, torch.ones_like(sgn), sgn)
+        eps0, b0 = eps0.abs(), sgn * b0
+        if fold_tolerance > 0.0:
+            tol = float(fold_tolerance) * float(beta)
+            clusters = _cluster(eps0, a0, tol)
+            e_m, g_m, a_m, b_m = [], [], [], []
+            for cl in clusters:
+                idx = torch.tensor(cl)
+                ac = a0[idx]
+                A = ac.sum()
+                e_new = float((ac * eps0[idx]).sum() / A)
+                mad = float((ac * (eps0[idx] - e_new).abs()).sum() / A)
+                e_m.append(e_new)
+                g_m.append(float((ac * gam0[idx]).sum() / A) + mad)
+                a_m.append(float(A))
+                b_m.append(float(b0[idx].sum()))
+            eps0 = torch.tensor(e_m, dtype=torch.float64)
+            gam0 = torch.tensor(g_m, dtype=torch.float64)
+            a0 = torch.tensor(a_m, dtype=torch.float64)
+            b0 = torch.tensor(b_m, dtype=torch.float64)
     # The width floor is the *physics* resolution limit (the decoder's own
     # 0.1 pi), never an accident of the input: a merged pole is broader than
     # its members by construction, and flooring at the merged minimum would
@@ -310,6 +373,18 @@ def refit_poles_to_greens(
             d = d @ W.transpose(-1, -2)
         return (d * d).sum(-1).mean() / d.shape[-1]
 
+    wq = quad.weights
+    nodes = quad.nodes
+
+    def objective_of(ps_dimless):
+        loss = chi2_of(ps_dimless)
+        if positivity_weight > 0.0:
+            A = ps_dimless.spectral(nodes)
+            neg = torch.relu(-A)
+            pen = ((neg * neg) * wq).sum() / ((A * A) * wq).sum().clamp_min(1e-300)
+            loss = loss + positivity_weight * pen
+        return loss
+
     u_e = eps0.clone().requires_grad_(True)
     u_g = torch.log(torch.expm1((gam0 - floor).clamp_min(1e-6))).requires_grad_(True)
     u_a = torch.log(a0.clamp_min(1e-12)).requires_grad_(True)
@@ -320,31 +395,48 @@ def refit_poles_to_greens(
         g = floor + torch.nn.functional.softplus(u_g)
         a = A_tot * torch.softmax(u_a, dim=-1)
         t = 0.5 * torch.tanh(u_b)
+        if ph_symmetric:
+            # exact mirror expansion; no b-centering needed -- the mirror IS
+            # the zero-sum mechanism, and centering would steal a half-set DOF
+            if pair_bound:
+                # |b| <= a*gamma/sqrt(gamma^2+eps^2) <= min(a, a*gamma/|eps|):
+                # every pair non-negative everywhere, structurally
+                b = a * (g / torch.sqrt(g * g + u_e * u_e)) * torch.tanh(u_b)
+            else:
+                b = a * t
+            return PoleSet(
+                eps=torch.cat([u_e, -u_e]).unsqueeze(0),
+                gamma=torch.cat([g, g]).unsqueeze(0),
+                a=0.5 * torch.cat([a, a]).unsqueeze(0),
+                b=0.5 * torch.cat([b, -b]).unsqueeze(0),
+            )
         b = a * (t - (a * t).sum() / A_tot)
         return PoleSet(eps=u_e.unsqueeze(0), gamma=g.unsqueeze(0),
                        a=a.unsqueeze(0), b=b.unsqueeze(0))
 
     with torch.no_grad():
-        chi2_before = float(chi2_of(assemble()))
-    best_loss, best = chi2_before, None
+        first = assemble()
+        chi2_before = float(chi2_of(first))
+        best_obj = float(objective_of(first))
+    best = PoleSet(*(t.detach().clone()
+                     for t in (first.eps, first.gamma, first.a, first.b)))
     opt = torch.optim.Adam([u_e, u_g, u_a, u_b], lr=lr)
     for _ in range(steps):
         ps = assemble()
-        loss = chi2_of(ps)
+        loss = objective_of(ps)
         val = float(loss.detach())
-        if val < best_loss:
-            best_loss = val
+        if val < best_obj:
+            best_obj = val
             best = PoleSet(*(t.detach().clone()
                              for t in (ps.eps, ps.gamma, ps.a, ps.b)))
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
 
-    if best is None:
-        best = PoleSet(*(t.detach() for t in
-                         (lambda p: (p.eps, p.gamma, p.a, p.b))(assemble())))
+    with torch.no_grad():
+        chi2_after = float(chi2_of(best))
     out = PoleSet(eps=(best.eps / beta).to(poles.eps.dtype),
                   gamma=(best.gamma / beta).to(poles.eps.dtype),
                   a=best.a.to(poles.eps.dtype),
                   b=best.b.to(poles.eps.dtype))
-    return out, chi2_before, best_loss
+    return out, chi2_before, chi2_after

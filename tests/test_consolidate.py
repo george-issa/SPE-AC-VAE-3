@@ -175,3 +175,140 @@ def test_refit_recovers_a_two_pole_truth_from_a_comb():
     assert float(final.a[0][order][1]) == pytest.approx(0.55, abs=0.03)
     assert float(final.a[0].sum()) == pytest.approx(1.0, rel=1e-5)
     assert float(final.b[0].sum()) == pytest.approx(0.0, abs=1e-7)
+
+
+def test_mirror_refit_is_exactly_symmetric_and_recovers_a_symmetric_truth():
+    """PH-symmetric truth (poles at +-2 with opposite b), bins generated from
+    it; the mirror-constrained refit must recover it with A(w) = A(-w)
+    holding identically, not approximately."""
+    from spevae.data import from_bins
+    from spevae.physics import refit_poles_to_greens
+
+    truth = PoleSet(eps=torch.tensor([[-2.0, 2.0]]),
+                    gamma=torch.tensor([[0.4, 0.4]]),
+                    a=torch.tensor([[0.5, 0.5]]),
+                    b=torch.tensor([[0.1, -0.1]]))
+    quad = SpectralQuadrature(nu_c=BETA * 20.0, h=0.09, dtype=torch.float64)
+    tau = torch.linspace(0, BETA, 81, dtype=torch.float64)
+    clean = PoleGreens(quad)(truth.to_dimensionless(BETA).to(torch.float64),
+                             tau / BETA)[0]
+    g = torch.Generator().manual_seed(11)
+    noise = torch.randn(400, 81, generator=g, dtype=torch.float64) * 1e-4
+    mg = from_bins(clean.unsqueeze(0) + noise, BETA, tau=tau,
+                   dtype=torch.float64)
+    cov = mg.covariance()
+
+    # deliberately asymmetric comb init: the fold must handle it
+    init = as_set(comb(centre=-2.1, half_span=0.3, n=5, gamma=0.5, weight=0.48),
+                  comb(centre=+1.9, half_span=0.3, n=5, gamma=0.5, weight=0.52))
+    merged, _ = consolidate_poles(init, 4.0 * RES)
+    final, before, after = refit_poles_to_greens(
+        merged, BETA, mg.x, mg.mean, mg.sigma_mean,
+        inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"], steps=2500,
+        ph_symmetric=True, fold_tolerance=4.0 * RES)
+    assert after < before and after < 100.0, (before, after)
+
+    w = torch.linspace(-30.0, 30.0, 4001, dtype=final.eps.dtype)
+    A = final.spectral(w)
+    assert torch.allclose(A, A.flip(-1), atol=1e-7), "A(w) != A(-w)"
+    assert float(final.b.sum()) == pytest.approx(0.0, abs=1e-12)
+    assert float(final.a.sum()) == pytest.approx(1.0, rel=1e-6)
+    # the mirror pair structure is explicit
+    h = final.shape[1] // 2
+    assert torch.allclose(final.eps[0][:h], -final.eps[0][h:])
+    assert torch.allclose(final.b[0][:h], -final.b[0][h:])
+    # and the recovered feature sits where the truth put it
+    i = int(torch.argmax(final.a[0][:h]))
+    assert abs(float(final.eps[0][:h][i])) == pytest.approx(2.0, abs=0.1)
+
+
+def test_positivity_weight_removes_the_in_gap_dip():
+    """A pole set constructed to dip negative in its gap: the refit with
+    positivity pressure must fix the dip without leaving the noise floor."""
+    from spevae.data import from_bins
+    from spevae.physics import refit_poles_to_greens
+
+    truth = PoleSet(eps=torch.tensor([[-2.0, 2.0]]),
+                    gamma=torch.tensor([[0.5, 0.5]]),
+                    a=torch.tensor([[0.5, 0.5]]),
+                    b=torch.zeros(1, 2))
+    quad = SpectralQuadrature(nu_c=BETA * 20.0, h=0.09, dtype=torch.float64)
+    tau = torch.linspace(0, BETA, 81, dtype=torch.float64)
+    clean = PoleGreens(quad)(truth.to_dimensionless(BETA).to(torch.float64),
+                             tau / BETA)[0]
+    g = torch.Generator().manual_seed(13)
+    noise = torch.randn(300, 81, generator=g, dtype=torch.float64) * 3e-4
+    mg = from_bins(clean.unsqueeze(0) + noise, BETA, tau=tau,
+                   dtype=torch.float64)
+    cov = mg.covariance()
+
+    # init whose strong opposite dispersive parts dip negative between peaks
+    init = PoleSet(eps=torch.tensor([[-2.0, 2.0]]),
+                   gamma=torch.tensor([[0.5, 0.5]]),
+                   a=torch.tensor([[0.5, 0.5]]),
+                   b=torch.tensor([[0.24, -0.24]]))
+    final, _, after = refit_poles_to_greens(
+        init, BETA, mg.x, mg.mean, mg.sigma_mean,
+        inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"], steps=4000,
+        positivity_weight=30.0)
+    cert = positivity_certificate(final[0:1])[0]
+    assert cert.is_positive or cert.min_A > -1e-6, cert
+    assert after < 100.0, f"positivity pressure destroyed the fit: {after}"
+
+
+def test_pair_positivity_condition_is_exact():
+    """The derived closed form: a mirror pair is non-negative everywhere iff
+    |b| <= a*gamma/eps.  Checked at and just beyond the boundary."""
+    import numpy as np
+    rng = np.random.default_rng(4)
+    w = np.linspace(-400, 400, 800001)
+    for _ in range(200):
+        eps = rng.uniform(0.1, 8.0); gam = rng.uniform(0.05, 3.0); a = 1.0
+        for frac, expect_nonneg in ((0.999, True), (1.02, False)):
+            b = frac * a * gam / eps * (1 if rng.random() < 0.5 else -1)
+            t1 = (a/2*gam - b/2*(w-eps)) / ((w-eps)**2 + gam**2)
+            t2 = (a/2*gam + b/2*(w+eps)) / ((w+eps)**2 + gam**2)
+            A = (t1 + t2) / np.pi
+            if expect_nonneg:
+                assert A.min() > -1e-12, (eps, gam, b, A.min())
+            else:
+                assert A.min() < 0, (eps, gam, b)
+
+
+def test_pair_bound_refit_is_certified_positive_by_construction():
+    """Mirror refit with the structural pair bound: certificate must pass for
+    the result, whatever the data wanted."""
+    from spevae.data import from_bins
+    from spevae.physics import refit_poles_to_greens
+
+    truth = PoleSet(eps=torch.tensor([[-2.0, 2.0]]),
+                    gamma=torch.tensor([[0.4, 0.4]]),
+                    a=torch.tensor([[0.5, 0.5]]),
+                    b=torch.tensor([[0.15, -0.15]]))
+    quad = SpectralQuadrature(nu_c=BETA * 20.0, h=0.09, dtype=torch.float64)
+    tau = torch.linspace(0, BETA, 81, dtype=torch.float64)
+    clean = PoleGreens(quad)(truth.to_dimensionless(BETA).to(torch.float64),
+                             tau / BETA)[0]
+    g = torch.Generator().manual_seed(17)
+    noise = torch.randn(300, 81, generator=g, dtype=torch.float64) * 2e-4
+    mg = from_bins(clean.unsqueeze(0) + noise, BETA, tau=tau,
+                   dtype=torch.float64)
+    cov = mg.covariance()
+    init = as_set(comb(centre=-2.0, half_span=0.2, n=4, gamma=0.5, weight=0.5),
+                  comb(centre=+2.0, half_span=0.2, n=4, gamma=0.5, weight=0.5))
+    merged, _ = consolidate_poles(init, 4.0 * RES)
+    final, before, after = refit_poles_to_greens(
+        merged, BETA, mg.x, mg.mean, mg.sigma_mean,
+        inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"], steps=3000,
+        ph_symmetric=True, fold_tolerance=4.0 * RES, pair_bound=True)
+    assert after < before
+    cert = positivity_certificate(final[0:1])[0]
+    assert cert.is_positive, cert
+    # the bound holds pole by pole
+    e, gm, a, b = final.eps[0], final.gamma[0], final.a[0], final.b[0]
+    live = a > 0
+    assert (b[live].abs() <= a[live] * gm[live] / e[live].abs() + 1e-9).all()
+    # symmetry still exact
+    w = torch.linspace(-30, 30, 3001, dtype=final.eps.dtype)
+    A = final.spectral(w)
+    assert torch.allclose(A, A.flip(-1), atol=1e-7)

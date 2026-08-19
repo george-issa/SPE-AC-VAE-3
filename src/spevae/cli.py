@@ -122,9 +122,17 @@ def cmd_continue(args) -> None:
     raw_poles = poles
     consolidation = None
     if args.consolidate:
-        from .physics import consolidate_poles
+        from .physics import consolidate_poles, refit_poles_to_greens
         res = args.resolution if args.resolution else math.pi / mg.beta
-        merged, (crep,) = consolidate_poles(poles[0:1], res)
+        merged0, (crep,) = consolidate_poles(poles[0:1], res)
+        cov0 = mg.covariance(args.min_eigenvalue)
+        merged, _, _ = refit_poles_to_greens(
+            merged0, mg.beta, mg.x, mg.mean, mg.sigma_mean,
+            inv_sqrt_R=cov0["inv_sqrt_R"], slices=cov0["slices"],
+            steps=args.refit_steps, ph_symmetric=args.ph_symmetric,
+            fold_tolerance=res if args.ph_symmetric else 0.0,
+            positivity_weight=args.refit_positivity,
+            pair_bound=args.ph_symmetric)   # structural A>=0 comes free there
         # chi2-neutrality is measured, not assumed: push the consolidated set
         # through the exact forward map against the same whitened covariance.
         x = mg.x.float()
@@ -372,10 +380,17 @@ def main(argv=None) -> None:
                    help="refine the latent code against this dataset first")
     c.add_argument("--refine-steps", type=int, default=2000)
     c.add_argument("--consolidate", action="store_true",
-                   help="merge sub-resolution poles into a minimal-pole-style "
-                        "set (chi2-neutrality verified and printed)")
+                   help="merge sub-resolution poles and refit the survivors "
+                        "directly to the data (chi2 delta printed)")
     c.add_argument("--resolution", type=float, default=None,
                    help="merge scale in physical omega (default pi/beta)")
+    c.add_argument("--refit-steps", type=int, default=4000)
+    c.add_argument("--refit-positivity", type=float, default=1.0,
+                   help="positivity pressure in the consolidation refit "
+                        "(0 disables)")
+    c.add_argument("--ph-symmetric", action="store_true",
+                   help="mirror-constrained refit: A(w) = A(-w) identically; "
+                        "for half-filled / PH-symmetric data only")
     c.add_argument("--omega-min", type=float, default=-10.0)
     c.add_argument("--omega-max", type=float, default=10.0)
     c.add_argument("--n-omega", type=int, default=801)
