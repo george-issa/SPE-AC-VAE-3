@@ -732,6 +732,33 @@ convention follows: the honest-resolution curve is the default display, and
 the verdict promotes specific sharp features to data-backed claims where the
 ratio says so.
 
+### Measured: the per-feature ledger, and the SNR-aware display scale
+
+``feature_ledger`` runs both hypothesis tests per live pole (existence:
+remove-and-refit; sharpness: floor *this pole's* width at :math:`\pi/\beta`,
+free the rest -- per-pole floors in the refit make this possible), at matched
+budgets against the converged baseline.  On the two contested truths:
+
+```
+gapped_semicircle (11 poles): 5 sharp DATA-DEMANDED -- and every one is an
+  edge pole (inner edges +-1: eps -1.39/-1.09/+1.40; outer edges +-4:
+  eps -3.58/+3.53; n*dchi2 +18 to +375) -- while all 6 band-interior poles
+  come back sharpness-undecidable (-12 to -0.4).  The ledger separates the
+  band-top ripple from the genuine discontinuities pole by pole, with no
+  human judgement in the loop.
+pseudogap (10 poles): zero sharp-demanded (8 resolution-broad,
+  2 undecidable) -- all visible structure is envelope, as the global
+  verdict predicted.
+```
+
+Display scale: :math:`\pi/\beta` is the SNR-independent safe default, but the
+effective resolution improves logarithmically with precision,
+:math:`\Delta\omega_{\rm eff} \approx \pi^2/(\beta \ln \mathrm{SNR})`
+(from the suppression law) -- 0.09 at this dataset's SNR, so a
+:math:`\pi/2\beta` display is still conservative there.  The convention:
+show the finest scale the noise floor justifies, with the ledger labelling
+which visible features are measurements and which are the prior's assertions.
+
 ### The mirror pair positivity theorem, and its measured price
 
 For a PH-symmetric mirror pair $(\pm\varepsilon, \gamma, a/2, \pm b/2)$ the
