@@ -312,3 +312,44 @@ def test_pair_bound_refit_is_certified_positive_by_construction():
     w = torch.linspace(-30, 30, 3001, dtype=final.eps.dtype)
     A = final.spectral(w)
     assert torch.allclose(A, A.flip(-1), atol=1e-7)
+
+
+def test_sharpness_verdict_discriminates():
+    """A genuinely narrow pole at high SNR must be declared data-demanded;
+    a broad structure must come back undecidable."""
+    from spevae.data import from_bins
+    from spevae.physics import sharpness_verdict
+
+    quad = SpectralQuadrature(nu_c=BETA * 20.0, h=0.05, dtype=torch.float64)
+    tau = torch.linspace(0, BETA, 101, dtype=torch.float64)
+    g = torch.Generator().manual_seed(23)
+
+    def bins_from(truth, noise):
+        clean = PoleGreens(quad)(truth.to_dimensionless(BETA).to(torch.float64),
+                                 tau / BETA)[0]
+        eta = torch.randn(400, 101, generator=g, dtype=torch.float64) * noise
+        return from_bins(clean.unsqueeze(0) + eta, BETA, tau=tau,
+                         dtype=torch.float64)
+
+    # narrow pole (gamma far below pi/beta) at tiny noise: smearing must be
+    # violently rejected by the data
+    narrow = PoleSet(eps=torch.tensor([[-1.0, 1.0]]),
+                     gamma=torch.tensor([[0.05, 0.05]]),
+                     a=torch.tensor([[0.5, 0.5]]), b=torch.zeros(1, 2))
+    mg = bins_from(narrow, 1e-5)
+    cov = mg.covariance()
+    v = sharpness_verdict(narrow, BETA, mg.x, mg.mean, mg.sigma_mean,
+                          inv_sqrt_R=cov["inv_sqrt_R"], slices=cov["slices"],
+                          steps=1200)
+    assert v["data_demanded"], v["n_dchi2"]
+
+    # broad structure: floor at pi/beta binds nothing; undecidable
+    broad = PoleSet(eps=torch.tensor([[-1.0, 1.0]]),
+                    gamma=torch.tensor([[0.8, 0.8]]),
+                    a=torch.tensor([[0.5, 0.5]]), b=torch.zeros(1, 2))
+    mg2 = bins_from(broad, 1e-4)
+    cov2 = mg2.covariance()
+    v2 = sharpness_verdict(broad, BETA, mg2.x, mg2.mean, mg2.sigma_mean,
+                           inv_sqrt_R=cov2["inv_sqrt_R"], slices=cov2["slices"],
+                           steps=1200)
+    assert not v2["data_demanded"], v2["n_dchi2"]

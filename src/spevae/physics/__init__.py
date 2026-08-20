@@ -30,6 +30,7 @@ from .consolidate import (
     minimal_pole_fixed_point,
     pole_significance_table,
     refit_poles_to_greens,
+    sharpness_verdict,
 )
 from .positivity import PositivityReport, certify, positivity_certificate
 
@@ -60,4 +61,5 @@ __all__ = [
     "minimal_pole_fixed_point",
     "FixedPointTrace",
     "pole_significance_table",
+    "sharpness_verdict",
 ]

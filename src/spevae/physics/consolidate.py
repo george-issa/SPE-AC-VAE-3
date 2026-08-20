@@ -39,7 +39,7 @@ from .poles import PoleSet
 
 __all__ = ["ConsolidationReport", "consolidate_poles",
            "refit_poles_to_greens", "minimal_pole_fixed_point",
-           "FixedPointTrace", "pole_significance_table"]
+           "FixedPointTrace", "pole_significance_table", "sharpness_verdict"]
 
 
 @dataclass
@@ -351,12 +351,16 @@ def refit_poles_to_greens(
             gam0 = torch.tensor(g_m, dtype=torch.float64)
             a0 = torch.tensor(a_m, dtype=torch.float64)
             b0 = torch.tensor(b_m, dtype=torch.float64)
-    # The width floor is the *physics* resolution limit (the decoder's own
-    # 0.1 pi), never an accident of the input: a merged pole is broader than
-    # its members by construction, and flooring at the merged minimum would
-    # lock the refit above the widths the data actually wants.
-    floor = 0.1 * math.pi if gamma_floor is None else float(gamma_floor) * float(beta)
-    floor = min(floor, float(gam0.min()) * 0.999)
+    # Default floor: the physics resolution limit (the decoder's own 0.1 pi),
+    # capped below the input's own minimum so a merged start is never locked
+    # above the widths the data wants.  An EXPLICIT gamma_floor is honored
+    # exactly and never capped -- it is a hypothesis (e.g. the smeared arm of
+    # a sharpness test), and silently weakening it once turned that test into
+    # a comparison of two identical constraints.
+    if gamma_floor is None:
+        floor = min(0.1 * math.pi, float(gam0.min()) * 0.999)
+    else:
+        floor = float(gamma_floor) * float(beta)
 
     quad = SpectralQuadrature.for_beta(float(beta), dtype=torch.float64)
     fwd = PoleGreens(quad)
@@ -570,8 +574,19 @@ def minimal_pole_fixed_point(
         if not changed:
             break
 
-    # final long refit at the fixed-point count
+    # Final refit, iterated to convergence: a fixed budget was measured to
+    # leave up to ~0.9 chi2/dof on the table (semicircle: 2.68 -> 1.76 with
+    # more steps), which then contaminates any comparison made against the
+    # fixed point.  Chunks continue until the relative improvement stalls.
     current, _, chi2_cur = refit(current, refit_steps)
+    for _ in range(5):
+        cand, _, c2 = refit(current, refit_steps // 2)
+        if c2 >= chi2_cur * (1.0 - 1e-2):
+            if c2 < chi2_cur:
+                current, chi2_cur = cand, c2
+            break
+        events.append(f"convergence polish: chi2 {chi2_cur:.4g} -> {c2:.4g}")
+        current, chi2_cur = cand, c2
     trace = FixedPointTrace(events=events, n_iterations=it,
                             n_final=live_count(current),
                             chi2_final=chi2_cur,
@@ -649,3 +664,57 @@ def pole_significance_table(
                 row["dA_res"] = float(torch.trapezoid((A_c - A_base).abs(), w)) / norm
         rows.append(row)
     return rows
+
+
+def sharpness_verdict(
+    poles: PoleSet,
+    beta: float,
+    x: torch.Tensor,
+    G_obs: torch.Tensor,
+    sigma: torch.Tensor,
+    inv_sqrt_R: torch.Tensor | None = None,
+    slices: torch.Tensor | None = None,
+    resolution: float | None = None,
+    steps: int = 8000,
+    threshold: float = 9.5,
+    positivity_weight: float = 1.0,
+) -> dict:
+    r"""Is the sub-resolution sharpness of a pole set data-demanded?
+
+    Likelihood-ratio test at matched optimisation budgets: the given set is
+    refit twice from the same start -- once unconstrained ("sharp"), once
+    with every width floored at the resolution scale ("smeared", the most
+    resolution-limited configuration with the same pole structure).  The
+    statistic :math:`n\,\Delta\chi^2 = n(\chi^2_{
+m smeared} -
+    \chi^2_{
+m sharp})` decides:
+
+    * above ``threshold``: the sharp structure is **data-demanded** -- a
+      parametric feature pinned below the naive :math:`\pi/eta` limit, the
+      way a line centre is located to a fraction of its width;
+    * within :math:`\pm`\ ``threshold``: **undecidable** -- a measured flat
+      direction of :math:`\chi^2`; whatever sharpness the reported curve
+      shows there is the prior's assertion, and should be labelled as such.
+
+    Matched budgets matter: the asymmetric version of this test produced a
+    reversed verdict from convergence artifacts alone.
+    """
+    res = float(resolution) if resolution is not None else math.pi / float(beta)
+    n_dof = int(slices.numel()) if slices is not None else int(x.numel())
+    sharp, _, c_sharp = refit_poles_to_greens(
+        poles, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R, slices=slices,
+        steps=steps, positivity_weight=positivity_weight)
+    smeared, _, c_sm = refit_poles_to_greens(
+        poles, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R, slices=slices,
+        steps=steps, positivity_weight=positivity_weight, gamma_floor=res)
+    d = n_dof * (c_sm - c_sharp)
+    return {
+        "chi2_sharp": c_sharp, "chi2_smeared": c_sm, "n_dchi2": d,
+        "data_demanded": bool(d > threshold),
+        "verdict": ("sharp structure DATA-DEMANDED" if d > threshold else
+                    "sharpness undecidable at this beta (prior assertion)"),
+        "min_gamma_sharp": float(sharp.gamma[0][sharp.a[0] > 1e-6].min()),
+        "resolution": res,
+        "sharp": sharp, "smeared": smeared,
+    }
