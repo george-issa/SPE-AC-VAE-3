@@ -27,6 +27,7 @@ from .consolidate import (
     ConsolidationReport,
     FixedPointTrace,
     consolidate_poles,
+    feature_ledger,
     minimal_pole_fixed_point,
     pole_significance_table,
     refit_poles_to_greens,
@@ -62,4 +63,5 @@ __all__ = [
     "FixedPointTrace",
     "pole_significance_table",
     "sharpness_verdict",
+    "feature_ledger",
 ]

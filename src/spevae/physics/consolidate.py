@@ -39,7 +39,8 @@ from .poles import PoleSet
 
 __all__ = ["ConsolidationReport", "consolidate_poles",
            "refit_poles_to_greens", "minimal_pole_fixed_point",
-           "FixedPointTrace", "pole_significance_table", "sharpness_verdict"]
+           "FixedPointTrace", "pole_significance_table", "sharpness_verdict",
+           "feature_ledger"]
 
 
 @dataclass
@@ -356,9 +357,13 @@ def refit_poles_to_greens(
     # above the widths the data wants.  An EXPLICIT gamma_floor is honored
     # exactly and never capped -- it is a hypothesis (e.g. the smeared arm of
     # a sharpness test), and silently weakening it once turned that test into
-    # a comparison of two identical constraints.
+    # a comparison of two identical constraints.  A tensor gamma_floor gives a
+    # PER-POLE floor (physical units, length = live pole count), which is what
+    # per-feature hypothesis tests need: constrain one pole, free the rest.
     if gamma_floor is None:
         floor = min(0.1 * math.pi, float(gam0.min()) * 0.999)
+    elif torch.is_tensor(gamma_floor):
+        floor = (gamma_floor.double() * float(beta)).clamp_min(1e-6)
     else:
         floor = float(gamma_floor) * float(beta)
 
@@ -718,3 +723,80 @@ m sharp})` decides:
         "resolution": res,
         "sharp": sharp, "smeared": smeared,
     }
+
+
+def feature_ledger(
+    poles: PoleSet,
+    beta: float,
+    x: torch.Tensor,
+    G_obs: torch.Tensor,
+    sigma: torch.Tensor,
+    inv_sqrt_R: torch.Tensor | None = None,
+    slices: torch.Tensor | None = None,
+    resolution: float | None = None,
+    steps: int = 6000,
+    threshold: float = 9.5,
+    positivity_weight: float = 1.0,
+) -> list[dict]:
+    r"""Per-feature hypothesis tests: the evidence ledger of a pole set.
+
+    For every live pole, two matched-budget likelihood-ratio tests against
+    the converged baseline:
+
+    * **existence** -- remove the pole, refit everything else:
+      :math:`n\,\Delta\chi^2_{\rm exist}`.  Below ``threshold``: the pole is
+      unsupported (the pruner's question, answered per feature).
+    * **sharpness** -- only for poles narrower than the resolution: floor
+      *this pole's* width at the resolution scale, free everything else:
+      :math:`n\,\Delta\chi^2_{\rm sharp}`.  Above ``threshold``: the
+      sub-resolution width is data-demanded for this specific feature
+      (parametric superresolution); below: the sharpness there is the
+      prior's assertion.
+
+    The verdict per pole is one of ``"spurious"``, ``"sharp (data-demanded)"``,
+    ``"sharpness undecidable"``, or ``"resolution-broad"`` (no sharpness
+    question arises).
+    """
+    res = float(resolution) if resolution is not None else math.pi / float(beta)
+    n_dof = int(slices.numel()) if slices is not None else int(x.numel())
+
+    base, _, chi2_base = refit_poles_to_greens(
+        poles, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R, slices=slices,
+        steps=steps, positivity_weight=positivity_weight)
+    live = [i for i in range(base.shape[1]) if float(base.a[0][i]) > 1e-6]
+
+    def sub(keep):
+        return PoleSet(eps=base.eps[:, keep], gamma=base.gamma[:, keep],
+                       a=base.a[:, keep], b=base.b[:, keep])
+
+    rows = []
+    for j in live:
+        row = {"eps": float(base.eps[0][j]), "gamma": float(base.gamma[0][j]),
+               "a": float(base.a[0][j]), "b": float(base.b[0][j])}
+        _, _, c_wo = refit_poles_to_greens(
+            sub([i for i in live if i != j]), beta, x, G_obs, sigma,
+            inv_sqrt_R=inv_sqrt_R, slices=slices, steps=steps,
+            positivity_weight=positivity_weight)
+        row["n_dchi2_exist"] = n_dof * (c_wo - chi2_base)
+
+        if row["gamma"] < res:
+            floors = base.gamma[0][live].clone().double() * 0.0 + 1e-9
+            floors[live.index(j)] = res
+            _, _, c_sm = refit_poles_to_greens(
+                sub(live), beta, x, G_obs, sigma,
+                inv_sqrt_R=inv_sqrt_R, slices=slices, steps=steps,
+                positivity_weight=positivity_weight, gamma_floor=floors)
+            row["n_dchi2_sharp"] = n_dof * (c_sm - chi2_base)
+        else:
+            row["n_dchi2_sharp"] = None
+
+        if row["n_dchi2_exist"] < threshold:
+            row["verdict"] = "spurious"
+        elif row["n_dchi2_sharp"] is None:
+            row["verdict"] = "resolution-broad"
+        elif row["n_dchi2_sharp"] > threshold:
+            row["verdict"] = "sharp (data-demanded)"
+        else:
+            row["verdict"] = "sharpness undecidable"
+        rows.append(row)
+    return rows
