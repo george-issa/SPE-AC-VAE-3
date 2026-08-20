@@ -172,10 +172,22 @@ def cmd_continue(args) -> None:
         print(f"  {i:>4}   {float(p.eps[i]):>+9.4f}   {float(p.gamma[i]):>9.4f}"
               f"   {float(p.a[i]):>9.5f}   {float(p.b[i]):>+9.5f}")
 
+    # pi/beta-broadened spectrum: the honest reporting scale (structure finer
+    # than the first Matsubara frequency is not supportable by tau-data).
+    w_np = omega.double().numpy()
+    _res = math.pi / mg.beta
+    _h = float(w_np[1] - w_np[0])
+    _n = int(4 * _res / _h) + 1
+    _k = np.arange(-_n, _n + 1) * _h
+    _ker = np.exp(-0.5 * (_k / _res) ** 2)
+    _ker /= _ker.sum()
+    A_sm = np.convolve(A_np, _ker, mode="same")
+
     if args.out:
         np.savez(
             args.out,
-            omega=omega.double().numpy(), A=A_np,
+            omega=w_np, A=A_np,
+            A_smoothed=A_sm,
             **({"A_std": A_std} if A_std is not None else {}),
             poles_omega=p.eps.double().numpy(),
             poles_gamma=p.gamma.double().numpy(),
@@ -206,8 +218,9 @@ def cmd_continue(args) -> None:
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
-        w = omega.double().numpy()
-        ax1.plot(w, A_np, lw=1.5, label="spevae")
+        w = w_np
+        ax1.plot(w, A_np, lw=1.0, alpha=0.55, label="spevae (full resolution)")
+        ax1.plot(w, A_sm, lw=1.8, label=r"spevae @ $\pi/\beta$ (honest scale)")
         if A_std is not None:
             ax1.fill_between(w, A_np - A_std, A_np + A_std, alpha=0.25,
                              label="latent ensemble")

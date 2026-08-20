@@ -39,7 +39,7 @@ from .poles import PoleSet
 
 __all__ = ["ConsolidationReport", "consolidate_poles",
            "refit_poles_to_greens", "minimal_pole_fixed_point",
-           "FixedPointTrace"]
+           "FixedPointTrace", "pole_significance_table"]
 
 
 @dataclass
@@ -546,6 +546,15 @@ def minimal_pole_fixed_point(
             for j in order:
                 cand, _, chi2_new = refit(drop(current, j), trial_steps)
                 d_total = n_dof * (chi2_new - chi2_cur)
+                # Gray zone: the short trial's statistic is inflated by
+                # under-convergence (measured 3-30% relative), so a
+                # near-threshold verdict gets the full budget before it
+                # counts.  Far-from-threshold verdicts (the common case by
+                # orders of magnitude) keep the cheap trial.
+                if prune_quantile / 4 < d_total < 4 * prune_quantile \
+                        and trial_steps < refit_steps:
+                    cand, _, chi2_new = refit(drop(current, j), refit_steps)
+                    d_total = n_dof * (chi2_new - chi2_cur)
                 if d_total < prune_quantile:
                     events.append(
                         f"iter {it}: prune eps={float(current.eps[0][j]):+.3f} "
@@ -569,3 +578,74 @@ def minimal_pole_fixed_point(
                             pruned_total=pruned_total,
                             merged_total=merged_total)
     return current, trace
+
+
+def _smoothed_A(ps: PoleSet, w: torch.Tensor, res: float) -> torch.Tensor:
+    """A(w) Gaussian-broadened at the resolution scale, on a uniform grid."""
+    A = ps.spectral(w)[0]
+    h = float(w[1] - w[0])
+    n = int(4 * res / h) + 1
+    k = torch.arange(-n, n + 1, dtype=A.dtype) * h
+    ker = torch.exp(-0.5 * (k / res) ** 2)
+    ker = ker / ker.sum()
+    return torch.nn.functional.conv1d(
+        A.reshape(1, 1, -1), ker.reshape(1, 1, -1), padding=n).reshape(-1)
+
+
+def pole_significance_table(
+    poles: PoleSet,
+    beta: float,
+    x: torch.Tensor,
+    G_obs: torch.Tensor,
+    sigma: torch.Tensor,
+    inv_sqrt_R: torch.Tensor | None = None,
+    slices: torch.Tensor | None = None,
+    resolution: float | None = None,
+    trial_budgets: tuple[int, ...] = (1500, 6000),
+    positivity_weight: float = 1.0,
+) -> list[dict]:
+    r"""Per-pole evidence: what removing each pole costs, two ways.
+
+    For every live pole: remove it, refit (at each trial budget), and report
+
+    * ``n_dchi2``: the likelihood-ratio statistic :math:`n\,\Delta\chi^2`
+      per budget -- comparing budgets measures the *pruner bias*: an
+      under-converged trial refit inflates the statistic and over-protects
+      poles;
+    * ``dA_res``: the relative change of the resolution-broadened spectrum,
+      :math:`\int|\tilde A_{\rm without} - \tilde A_{\rm with}| /
+      \int \tilde A` -- whether the pole matters *at the honest reporting
+      scale*, or is sub-resolution decoration the ansatz uses to shape an
+      envelope.
+    """
+    res = float(resolution) if resolution is not None else math.pi / float(beta)
+    n_dof = int(slices.numel()) if slices is not None else int(x.numel())
+    span = float(poles.eps[0].abs().max()) + 5.0 * res + \
+        3.0 * float(poles.gamma[0].max())
+    w = torch.linspace(-span, span, 4001, dtype=torch.float64)
+
+    base, _, chi2_base = refit_poles_to_greens(
+        poles, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R, slices=slices,
+        steps=max(trial_budgets), positivity_weight=positivity_weight)
+    A_base = _smoothed_A(base.to(torch.float64), w, res)
+    norm = float(torch.trapezoid(A_base.abs(), w))
+
+    live = [i for i in range(base.shape[1]) if float(base.a[0][i]) > 1e-6]
+    rows = []
+    for j in live:
+        keep = [i for i in live if i != j]
+        cand0 = PoleSet(eps=base.eps[:, keep], gamma=base.gamma[:, keep],
+                        a=base.a[:, keep], b=base.b[:, keep])
+        row = {"eps": float(base.eps[0][j]), "gamma": float(base.gamma[0][j]),
+               "a": float(base.a[0][j]), "n_dchi2": {}}
+        for budget in trial_budgets:
+            cand, _, c = refit_poles_to_greens(
+                cand0, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R,
+                slices=slices, steps=budget,
+                positivity_weight=positivity_weight)
+            row["n_dchi2"][budget] = n_dof * (c - chi2_base)
+            if budget == max(trial_budgets):
+                A_c = _smoothed_A(cand.to(torch.float64), w, res)
+                row["dA_res"] = float(torch.trapezoid((A_c - A_base).abs(), w)) / norm
+        rows.append(row)
+    return rows
