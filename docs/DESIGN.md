@@ -687,6 +687,16 @@ tails sit above the pole-ansatz floor ($\chi^2/{\rm tgt}$ 11–43 there,
 under-resolves sharp multi-peak interiors — the `full` preset is the known
 lever.
 
+**Full-preset model, same battery** (β-universal: frozen-stream $W_1$
+0.245 on β ∈ [2,20] vs the fast tier's 0.561 — flat across the range at a
+~5% cost on the fast tier's home window; trained 25.7k steps total through
+a kill-and-warm-restart, EMA final): the regime map is preserved and
+sharpened — high-noise $W_1$ 8/8 vs MaxEnt with the largest margin grown to
+6.9× (semicircle, refined 0.040 vs 0.275), and the two prior refinement
+stalls (gapped_mott) healed (low-noise refined 0.055 → 0.025, χ²/tgt 1.85).
+Per-dataset, the full model beats the fast-24k on 4/8 (low) and 5/8 (high) —
+its real purchase is uniformity over β, not the β=10 benchmark row.
+
 Protocol note from the same campaigns: consolidation's data-refit is a
 *low-noise* instrument — with $\chi^2$ anchored to little information it can
 degrade a good refined start (measured repeatedly at $s=10^{-2}$).  At high
