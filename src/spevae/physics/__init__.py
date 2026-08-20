@@ -25,7 +25,9 @@ from .poles import (
 )
 from .consolidate import (
     ConsolidationReport,
+    FixedPointTrace,
     consolidate_poles,
+    minimal_pole_fixed_point,
     refit_poles_to_greens,
 )
 from .positivity import PositivityReport, certify, positivity_certificate
@@ -54,4 +56,6 @@ __all__ = [
     "ConsolidationReport",
     "consolidate_poles",
     "refit_poles_to_greens",
+    "minimal_pole_fixed_point",
+    "FixedPointTrace",
 ]

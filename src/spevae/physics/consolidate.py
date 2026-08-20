@@ -37,7 +37,9 @@ import torch
 
 from .poles import PoleSet
 
-__all__ = ["ConsolidationReport", "consolidate_poles", "refit_poles_to_greens"]
+__all__ = ["ConsolidationReport", "consolidate_poles",
+           "refit_poles_to_greens", "minimal_pole_fixed_point",
+           "FixedPointTrace"]
 
 
 @dataclass
@@ -440,3 +442,130 @@ def refit_poles_to_greens(
                   a=best.a.to(poles.eps.dtype),
                   b=best.b.to(poles.eps.dtype))
     return out, chi2_before, chi2_after
+
+
+@dataclass
+class FixedPointTrace:
+    """What one fixed-point consolidation did, iteration by iteration."""
+
+    events: list                  #: strings: "merge 16->9", "prune eps=+1.2 (dchi2 0.3)", ...
+    n_iterations: int
+    n_final: int
+    chi2_final: float             #: per-dof, whitened
+    pruned_total: int
+    merged_total: int
+
+    def __str__(self) -> str:
+        return (f"fixed point in {self.n_iterations} iterations: "
+                f"{self.n_final} poles, chi2 {self.chi2_final:.4g} "
+                f"({self.merged_total} merged, {self.pruned_total} pruned)\n  "
+                + "\n  ".join(self.events))
+
+
+def minimal_pole_fixed_point(
+    poles: PoleSet,
+    beta: float,
+    x: torch.Tensor,
+    G_obs: torch.Tensor,
+    sigma: torch.Tensor,
+    inv_sqrt_R: torch.Tensor | None = None,
+    slices: torch.Tensor | None = None,
+    resolution: float | None = None,
+    refit_steps: int = 6000,
+    trial_steps: int = 1500,
+    prune_quantile: float = 9.5,
+    positivity_weight: float = 1.0,
+    max_iterations: int = 10,
+) -> tuple[PoleSet, FixedPointTrace]:
+    r"""Merge / refit / prune to a fixed point: the operational minimal pole set.
+
+    The loop alternates three moves until a full pass changes nothing:
+
+    * **merge** poles within ``resolution`` (default :math:`\pi/\beta`) of a
+      weighted centroid -- redundancy removal, weight conserved exactly;
+    * **refit** the survivors to the data through the exact forward map,
+      every constraint structural;
+    * **prune** by likelihood ratio: remove one pole (weakest first), refit
+      briefly, and accept the removal iff the *total* whitened
+      :math:`\chi^2` rises by less than ``prune_quantile`` (default 9.5,
+      the 95% point of :math:`\chi^2_4` -- one pole = four parameters).
+      A pole whose deletion the data cannot detect at that level is
+      unsupported structure.
+
+    Merging asks "are these two distinguishable from one?"; pruning asks
+    "is this one distinguishable from nothing?".  Both are required: a merge
+    can never remove an isolated spurious pole, and a prune can never tidy a
+    comb of significant but redundant ones.
+
+    Returns the fixed-point :class:`PoleSet` (physical units, batch of 1)
+    and a :class:`FixedPointTrace` documenting every accepted move.
+    """
+    res = float(resolution) if resolution is not None else math.pi / float(beta)
+    n_dof = int(slices.numel()) if slices is not None else int(x.numel())
+
+    def live_count(ps):
+        return int((ps.a[0] > 1e-6 * float(ps.a[0].sum())).sum())
+
+    def refit(ps, steps):
+        return refit_poles_to_greens(
+            ps, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R, slices=slices,
+            steps=steps, positivity_weight=positivity_weight)
+
+    def drop(ps, j):
+        keep = [i for i in range(ps.shape[1]) if i != j
+                and float(ps.a[0][i]) > 0]
+        return PoleSet(eps=ps.eps[:, keep], gamma=ps.gamma[:, keep],
+                       a=ps.a[:, keep], b=ps.b[:, keep])
+
+    events: list[str] = []
+    merged_total = pruned_total = 0
+
+    current, _, chi2_cur = refit(poles, refit_steps)
+    events.append(f"initial refit: {live_count(current)} poles, "
+                  f"chi2 {chi2_cur:.4g}")
+
+    for it in range(1, max_iterations + 1):
+        changed = False
+
+        # -- merge phase ------------------------------------------------- #
+        n_before = live_count(current)
+        merged, _ = consolidate_poles(current, res, polish_steps=0)
+        if live_count(merged) < n_before:
+            merged_total += n_before - live_count(merged)
+            current, _, chi2_cur = refit(merged, refit_steps)
+            events.append(f"iter {it}: merge {n_before} -> "
+                          f"{live_count(current)}, chi2 {chi2_cur:.4g}")
+            changed = True
+
+        # -- prune phase (weakest first, rescan after every success) ------ #
+        while live_count(current) > 1:
+            live = [i for i in range(current.shape[1])
+                    if float(current.a[0][i]) > 0]
+            order = sorted(live, key=lambda i: float(current.a[0][i]))
+            accepted = False
+            for j in order:
+                cand, _, chi2_new = refit(drop(current, j), trial_steps)
+                d_total = n_dof * (chi2_new - chi2_cur)
+                if d_total < prune_quantile:
+                    events.append(
+                        f"iter {it}: prune eps={float(current.eps[0][j]):+.3f} "
+                        f"(a={float(current.a[0][j]):.4f}, "
+                        f"n*dchi2={d_total:+.1f})")
+                    current, chi2_cur = cand, chi2_new
+                    pruned_total += 1
+                    accepted = changed = True
+                    break
+            if not accepted:
+                break
+
+        if not changed:
+            break
+
+    # final long refit at the fixed-point count
+    current, _, chi2_cur = refit(current, refit_steps)
+    trace = FixedPointTrace(events=events, n_iterations=it,
+                            n_final=live_count(current),
+                            chi2_final=chi2_cur,
+                            pruned_total=pruned_total,
+                            merged_total=merged_total)
+    return current, trace
