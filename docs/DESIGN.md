@@ -703,6 +703,35 @@ degrade a good refined start (measured repeatedly at $s=10^{-2}$).  At high
 noise, report the refined (prior-carried) spectrum, and consolidate with the
 Matsubara polish only.
 
+### Measured: which sharp features are data-demanded (parametric superresolution)
+
+The :math:`e^{-\pi^2/\beta\Delta\omega}` suppression bounds *generic*
+structure recovery, but a **parametric** feature carried by a few pole
+parameters can be pinned far below :math:`\pi/\beta` when the SNR is high --
+the way a line centre is located to a fraction of its width.  Whether that
+happened is decidable per feature: ``sharpness_verdict`` refits the same pole
+set at matched budgets with and without widths floored at the resolution
+scale, and reads the likelihood ratio.  (Its own unit test caught a bug that
+had silently weakened the smeared arm -- explicit floors are hypotheses and
+are now honored exactly; the earlier ad-hoc verdicts were retracted.)
+
+Measured on the regenerated truths at :math:`s=10^{-4}`, 1000 bins:
+
+```
+gapped_semicircle  sharp 1.39  smeared 3.60   n*dchi2 = +443  DATA-DEMANDED
+pseudogap          sharp 2.27  smeared 2.21   n*dchi2 =  -12  undecidable
+                   A(0): 0.082 under BOTH hypotheses (truth: 0)
+```
+
+The discrimination is physical: hard band edges are high-contrast features
+that feed many Matsubara points coherently -- the data pins them below the
+naive resolution.  The pseudogap cusp's sub-resolution content is
+low-amplitude, so its depth beyond the measurable floor (:math:`A(0)
+\approx 0.08` at :math:`\beta = 10`) is the prior's assertion.  The shipped
+convention follows: the honest-resolution curve is the default display, and
+the verdict promotes specific sharp features to data-backed claims where the
+ratio says so.
+
 ### The mirror pair positivity theorem, and its measured price
 
 For a PH-symmetric mirror pair $(\pm\varepsilon, \gamma, a/2, \pm b/2)$ the
