@@ -759,6 +759,38 @@ effective resolution improves logarithmically with precision,
 show the finest scale the noise floor justifies, with the ledger labelling
 which visible features are measurements and which are the prior's assertions.
 
+### Measured: the MPM/AAA extraction engine, and its regime
+
+``physics/prony.py`` implements minimal-pole-style extraction (after Zhang &
+Gull, PRB **110**, 035154, and the minimal pole representation, JCP **162**,
+214111): spline-exact Matsubara transform from the bins (two-pass
+self-referencing around the endpoint log-singularity that Lorentzian tails
+give :math:`G'(\tau)` -- a smooth-tailed :math:`G` transforms at
+:math:`10^{-11}`, a pole-tailed one caps at :math:`10^{-5}` without the
+reference), AAA on the upper Matsubara axis, causal filtering, and a
+constant-aware residue least squares.  **Noiseless it is excellent**: a
+3-pole spectrum with complex residues is recovered from :math:`\tau`-bins
+alone to :math:`10^{-3}` in every parameter, with the pole count found, not
+assumed -- and it doubles as an exact generator of pole-labelled training
+data.
+
+**On noisy bins it is not the right default engine**, and four measured
+iterations say why rather than a guess: the H-transform variant amplifies
+tail noise (2-3 spiky poles, :math:`\chi^2/\mathrm{tgt} \sim 10^4`); a
+bandwidth cut removes load-bearing envelope poles; and per-point
+:math:`\sigma`-weighted stopping does not grow the mode count, because the
+Matsubara noise is strongly *correlated* (all points derive from one bin
+mean) and per-point treatment misprices the slack.  At
+:math:`s = 10^{-4} \times 1000` bins the route plateaus at 3-5 poles and
+raw :math:`l_2` 0.16-0.59 -- behind both MaxEnt and the fixed-point loop
+(which reaches 11 ledger-certified poles on the same semicircle data).
+The literature's own division of labour agrees: interpolation-grade pole
+methods want (near-)exact Matsubara input; robust noisy extraction needs the
+full projection + semidefinite machinery of PES/MiniPole, which is scoped
+future work (whitened-Matsubara stopping is the first step).  Until then:
+VAE + fixed-point + ledger for measured bins; MPM for analytic/noiseless
+input and for labelled training data.
+
 ### The mirror pair positivity theorem, and its measured price
 
 For a PH-symmetric mirror pair $(\pm\varepsilon, \gamma, a/2, \pm b/2)$ the
