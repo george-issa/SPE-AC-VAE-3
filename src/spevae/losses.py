@@ -467,6 +467,7 @@ class LossWeights:
     pole: float = 5.0              # Sinkhorn pole-space loss (pole-labeled data)
     pole_eps0: float = 0.1         # OT entropic eps at step 0 ...
     pole_eps1: float = 0.01        # ... annealed geometrically to this at the end
+    pole_coherence: float = 0.0    # stack-coherence weight (anti-ripple, pole-space)
     sparsity: float = 0.0          # weight-entropy penalty (minimal-pole prior)
     multiscale: float = 0.0        # broadened-envelope L2 alongside the plain one
     multiscale_scales: tuple = (1.0, 8.0, 32.0)
@@ -523,7 +524,8 @@ def pretrain_loss(
         t = 0.0 if progress is None else min(max(progress, 0.0), 1.0)
         eps_ot = weights.pole_eps0 * (weights.pole_eps1 / weights.pole_eps0) ** t
         L_ot, parts = sinkhorn_pole_loss(result.poles, batch.poles_true,
-                                         eps_ot=eps_ot)
+                                         eps_ot=eps_ot,
+                                         lam_coh=weights.pole_coherence)
         raw_chi2 = chi2(result.G_recon, batch.G, batch.sigma,
                         inv_sqrt_R=batch.inv_sqrt_R)
         total = weights.pole * L_ot \
@@ -703,6 +705,7 @@ def sinkhorn_pole_loss(
     eps_ot: float = 0.1,
     n_iter: int = 40,
     lam_b: float = 1.0,
+    lam_coh: float = 0.0,
     eps_scale: float = 3.141592653589793,
 ) -> tuple[torch.Tensor, dict]:
     r"""Entropic optimal transport between predicted and true pole measures.
@@ -758,6 +761,20 @@ def sinkhorn_pole_loss(
               + (f.unsqueeze(2) + g.unsqueeze(1)) / eps_ot)
     pi = torch.exp(log_pi.clamp(max=30.0))
     loss = (pi * C).sum(dim=(1, 2)).mean()
+
+    if lam_coh > 0.0:
+        # Stack coherence: soft within-cluster variance of the co-assigned
+        # predicted poles, in (position, log-width) only.  The transport cost
+        # pulls each pole toward its target; this term pulls co-assigned
+        # poles toward EACH OTHER -- the direct penalty on the intra-stack
+        # spread that renders as ripple, independent of how close the stack's
+        # centroid already is.
+        Upw = U[..., :2]                                     # (B, P, 2)
+        col = pi.sum(dim=1, keepdim=True).clamp_min(1e-30)   # (B, 1, Pt)
+        cent = torch.einsum("bpt,bpf->btf", pi, Upw) / col.transpose(1, 2)
+        d2 = ((Upw.unsqueeze(2) - cent.unsqueeze(1)) ** 2).sum(-1)  # (B,P,Pt)
+        L_coh = (pi * d2).sum(dim=(1, 2)).mean()
+        loss = loss + lam_coh * L_coh
 
     with torch.no_grad():
         eff = 1.0 / (p_m.pow(2).sum(-1) + 1e-12)

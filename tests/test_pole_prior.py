@@ -110,3 +110,41 @@ def test_sinkhorn_suppresses_dust():
     near = ~far
     assert u.grad[0][far].mean() > u.grad[0][near].mean()
     assert "eff_gap" in parts
+
+
+def test_stack_coherence_penalizes_spread_stacks():
+    lab = {"eps": torch.tensor([[-2.0, 2.0]]),
+           "gamma": torch.tensor([[0.6, 0.6]]),
+           "a": torch.tensor([[0.5, 0.5]]),
+           "b": torch.zeros(1, 2), "n_true": torch.tensor([2])}
+    # tight stacks: 3 poles exactly on each target
+    tight = PoleSet(eps=torch.tensor([[-2.0]*3 + [2.0]*3]),
+                    gamma=torch.full((1, 6), 0.6),
+                    a=torch.full((1, 6), 1/6), b=torch.zeros(1, 6))
+    # spread stacks: same assignment, poles scattered around targets
+    spread = PoleSet(eps=torch.tensor([[-2.4, -2.0, -1.6, 1.6, 2.0, 2.4]]),
+                     gamma=torch.full((1, 6), 0.6),
+                     a=torch.full((1, 6), 1/6), b=torch.zeros(1, 6))
+    lt, _ = sinkhorn_pole_loss(tight, lab, lam_coh=1.0)
+    ls, _ = sinkhorn_pole_loss(spread, lab, lam_coh=1.0)
+    l0, _ = sinkhorn_pole_loss(spread, lab, lam_coh=0.0)
+    assert float(ls) > float(lt)
+    assert float(ls) > float(l0)          # the term adds positive pressure
+
+
+def test_mixed_generator_interleaves_and_freezes():
+    from spevae.data.pole_prior import MixedGenerator, PolePriorGenerator
+    from spevae.data.synthetic import SyntheticGenerator
+    mg = MixedGenerator(PolePriorGenerator(beta_range=(6.0, 10.0)),
+                        SyntheticGenerator(beta_range=(6.0, 10.0)))
+    mg.seed_scalars(4)
+    rng = torch.Generator().manual_seed(4)
+    kinds = [bool(mg.batch(4, rng).meta.get("pole_labeled")) for _ in range(12)]
+    assert any(kinds) and not all(kinds), kinds
+    rng1 = torch.Generator().manual_seed(9)
+    with mg.fixed_scalars(77):
+        b1 = mg.batch(4, rng1)
+    rng2 = torch.Generator().manual_seed(9)
+    with mg.fixed_scalars(77):
+        b2 = mg.batch(4, rng2)
+    assert torch.equal(b1.G, b2.G)

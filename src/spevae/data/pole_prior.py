@@ -38,7 +38,7 @@ from ..physics.positivity import certify
 from .noise import NoiseModel, sample_correlated_noise, whitener
 from .synthetic import TrainingBatch
 
-__all__ = ["PolePriorGenerator"]
+__all__ = ["PolePriorGenerator", "MixedGenerator"]
 
 MOTIFS = ("lorentz", "smooth_band", "edged_band", "fano", "ladder")
 
@@ -284,3 +284,40 @@ class PolePriorGenerator:
             poles_true=lab,
             meta={"noise": model, "correlation": kind, "pole_labeled": True},
         )
+
+
+class MixedGenerator:
+    """Interleave pole-labeled and family batches (coverage + labels).
+
+    Each ``batch()`` call flips a coin from its own scalar stream: pole-prior
+    batches carry exact labels and take the pole-space losses; family batches
+    keep the legacy spectral supervision.  ``fixed_scalars`` freezes all three
+    streams, so held-out evaluation stays bit-reproducible.
+    """
+
+    def __init__(self, pole_gen, family_gen, p_pole: float = 0.5) -> None:
+        self.pole_gen = pole_gen
+        self.family_gen = family_gen
+        self.p_pole = float(p_pole)
+        self._cpu_rng = torch.Generator()
+
+    def seed_scalars(self, seed: int) -> None:
+        self._cpu_rng.manual_seed(int(seed))
+        self.pole_gen.seed_scalars(seed + 1)
+        self.family_gen.seed_scalars(seed + 2)
+
+    @contextlib.contextmanager
+    def fixed_scalars(self, seed: int):
+        state = self._cpu_rng.get_state()
+        self._cpu_rng.manual_seed(int(seed))
+        with self.pole_gen.fixed_scalars(seed + 1), \
+                self.family_gen.fixed_scalars(seed + 2):
+            try:
+                yield self
+            finally:
+                self._cpu_rng.set_state(state)
+
+    def batch(self, batch_size: int, rng: torch.Generator):
+        coin = float(torch.rand((), generator=self._cpu_rng))
+        gen = self.pole_gen if coin < self.p_pole else self.family_gen
+        return gen.batch(batch_size, rng)

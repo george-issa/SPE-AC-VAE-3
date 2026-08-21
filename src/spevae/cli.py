@@ -337,12 +337,17 @@ def cmd_pretrain(args) -> None:
                        omega_c=args.omega_c, d_model=p["d_model"],
                        enc_layers=p["enc_layers"], residue_mode=args.residue_mode,
                        ph_symmetric=args.ph_symmetric)
-    if args.data == "poles":
-        from .data.pole_prior import PolePriorGenerator
+    if args.data in ("poles", "mixed"):
+        from .data.pole_prior import MixedGenerator, PolePriorGenerator
         gen = PolePriorGenerator(omega_c=args.omega_c,
                                  beta_range=p["beta_range"],
                                  P_max=args.num_poles - 4,
                                  device=args.device)
+        if args.data == "mixed":
+            fam = SyntheticGenerator(omega_c=args.omega_c,
+                                     beta_range=p["beta_range"],
+                                     device=args.device)
+            gen = MixedGenerator(gen, fam, p_pole=0.5)
     else:
         gen = SyntheticGenerator(omega_c=args.omega_c,
                                  beta_range=p["beta_range"],
@@ -350,7 +355,9 @@ def cmd_pretrain(args) -> None:
                                  device=args.device)
     weights = LossWeights(w1=args.w_w1, l2=args.w_l2, barrier=args.w_barrier,
                           sparsity=args.w_sparsity, multiscale=args.w_multiscale,
-                          highpass=args.w_highpass)
+                          highpass=args.w_highpass,
+                          pole_coherence=args.w_pole_coh,
+                          pole_eps1=args.pole_eps1)
     cfg = PretrainConfig(steps=steps, batch_size=args.batch_size or p["batch_size"],
                          lr=args.lr, eval_every=max(steps // 12, 1),
                          eval_batches=8, seed=args.seed, device=args.device,
@@ -456,7 +463,8 @@ def main(argv=None) -> None:
     p.add_argument("--omega-c", type=float, default=20.0)
     p.add_argument("--residue-mode", default="complex",
                    choices=["complex", "real"])
-    p.add_argument("--data", default="families", choices=["families", "poles"],
+    p.add_argument("--data", default="families",
+                   choices=["families", "poles", "mixed"],
                    help="training data: legacy A-space families, or the "
                         "pole-first motif prior with exact canonical labels")
     p.add_argument("--ph-symmetric", action="store_true",
@@ -475,6 +483,10 @@ def main(argv=None) -> None:
                    help="broadened-envelope multiscale L2 weight")
     p.add_argument("--w-highpass", type=float, default=3.0,
                    help="sub-thermal mismatch weight (anti-pole-comb)")
+    p.add_argument("--w-pole-coh", type=float, default=0.0,
+                   help="stack-coherence weight (pole-labeled data)")
+    p.add_argument("--pole-eps1", type=float, default=0.01,
+                   help="final OT eps (set equal to 0.1 to disable annealing)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
     p.add_argument("--init-from", default=None,
