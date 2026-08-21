@@ -54,8 +54,15 @@ budget (6k steps, fast preset, identical seeds and frozen judges):
   0.491), and had the lowest ripple of all three arms on both streams.
   The micro-tier promise of *matching* pure-family coverage did not fully
   transfer — a 0.05 residual gap to the family-only control remains —
-  exactly the promote-recipes-not-constants caveat in action.  Whether
-  budget closes it is the 24k question.
+  exactly the promote-recipes-not-constants caveat in action.
+- **At 24k the residual halves and the gate passes** (*measured*).
+  Curriculum legacy W₁ 0.254 vs the matched control's 0.231 (gap
+  0.050 → 0.024 as budget went 6k → 24k, i.e. shrinking with budget,
+  unlike constant mixing) with χ²_geo within 15% of the control and a
+  1.41× pole-placement advantage retained (0.315 vs 0.444).  The
+  curriculum is the production recipe; the remaining ~10% relative
+  coverage cost buys the pole-space accuracy that family-only training
+  never acquires at any measured budget.
 
 ## 2. Where the time goes, and the tier ladder
 
