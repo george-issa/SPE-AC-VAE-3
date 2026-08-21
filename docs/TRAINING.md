@@ -34,11 +34,20 @@ budget (6k steps, fast preset, identical seeds and frozen judges):
   control's 0.444) — but the matched-budget control stayed ahead on family
   coverage (0.231), and the mixed model underperforms even the 6k pure
   control (0.276) despite seeing ~12k family batches.  The two objectives
-  interfere; more steps alone will not close it.  Before the production
-  run, the mixing knob must be swept at the micro tier: the p_pole ratio
-  (0.5 was a guess, not a measurement), and a curriculum (pole-heavy early,
-  family-heavy late — this is not a cross-tier warm start; the distribution
-  contains both streams throughout).
+  interfere; more steps alone will not close it.
+- **The curriculum breaks the trade-off** (*measured*, micro tier, 3
+  seeds).  Sweeping p_pole at fixed β = 8: every constant ratio pays a
+  family-coverage cost over pure-family training (legacy W₁ 0.572–0.581 vs
+  0.545), monotone in the ratio — micro-scale confirmation of the
+  interference.  A linear 0.9 → 0.1 curriculum (pole-heavy early,
+  family-heavy late) *eliminates* it: legacy W₁ 0.527 ± 0.008, at or below
+  the pure-family arm with a far tighter seed spread, while retaining a
+  1.5× pole-placement advantage (pole-stream W₁ 0.401 ± 0.001 vs
+  0.590 ± 0.055) and better legacy L².  The reading: early pole supervision
+  shapes the decoder's representation; late family-heavy training refines
+  A-space accuracy without erasing it.  Flags: `--p-pole 0.9
+  --p-pole-final 0.1`.  Pending full-width confirmation at the fast tier
+  before it becomes the production recipe.
 
 ## 2. Where the time goes, and the tier ladder
 
@@ -89,9 +98,9 @@ family; the release gate below is stated per family, not on the mean.
 
 Recipe, from the campaign:
 
-- `--data mixed`, `--pole-eps1 0.1` (no annealing), coherence off.  The
-  50/50 ratio is provisional: sweep p_pole (and a pole→family curriculum)
-  at the micro tier before locking the production recipe — see §1.
+- `--data mixed --p-pole 0.9 --p-pole-final 0.1` (the measured curriculum;
+  constant 50/50 pays a coverage cost — see §1), `--pole-eps1 0.1` (no
+  annealing), coherence off.
 - Full preset: β ∈ [2,20], all Δτ choices, all families, complex residues.
 - EMA on (0.999) — the shipped weights are the EMA weights.
 - Full cosine schedule; **no early stopping** on the production run.  Early
