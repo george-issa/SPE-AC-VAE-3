@@ -100,6 +100,20 @@ single-Lorentzian case recovering the true pole to four digits.  The
 amortized pass supplies the basin; refine supplies the digits.  (χ²
 settling ~1σ below 1 on 65 points is the expected mild noise
 absorption of an unconsolidated 16-pole fit.)
+
+Residual (ii) resolves the same way — and exposes what pretraining
+quality is *for* (*measured*).  The consolidation fixed point run from
+the pole-loss model's amortized output recovers the **exact minimal
+pole set** on all three probes: 16 → 1 / 2 / 2 poles with the true
+(ε, γ, a) to 3–4 digits, b collapsed to ≤ 2×10⁻⁴, χ² ≈ 0.88–0.92.
+From the A-space model's messier output the same procedure stalls at
+5–7 poles: the main features are right, but the single true pole stays
+split into two just outside the π/β merge resolution (separation 0.404
+vs threshold 0.393) plus ~1%-weight dust — a χ²-equivalent local fixed
+point the data cannot distinguish from the truth.  Consolidation is a
+*local* fixed point: the pretraining basin decides which representation
+is recovered, not just how accurate the spectrum is.  That is the
+measured argument for pole-first pretraining.
 | fast 6k | preset defaults, β ∈ [6,10] | ~16 min | does the winner survive full width? |
 | fast 24k | `--steps 24000` | ~1 h | pre-production confirmation |
 | full | `--preset full`, β ∈ [2,20], larger d_model, ≥100k steps | hours | the shipped model |
