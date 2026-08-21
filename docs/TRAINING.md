@@ -77,9 +77,19 @@ change, and results are only ever promoted upward:
 | tier | flags | cost | answers |
 |---|---|---|---|
 | micro | `--beta-min 8 --beta-max 8 --dtau 0.125 --families …`, ~1k steps | 1–2 min | does this loss/knob help at all? (run 3 seeds) |
+| identity | micro + one family, 12k steps | ~10 min | ceiling: can the model invert its own forward map? |
 | fast 6k | preset defaults, β ∈ [6,10] | ~16 min | does the winner survive full width? |
 | fast 24k | `--steps 24000` | ~1 h | pre-production confirmation |
 | full | `--preset full`, β ∈ [2,20], larger d_model, ≥100k steps | hours | the shipped model |
+
+**Micro probes must match the training grid exactly** (*measured*, the hard
+way).  A micro-trained model has seen exactly one τ-grid; probing the
+Lorentzian identity model on a 64-point midpoint grid instead of its
+65-point endpoint grid turned W₁ 0.04 into W₁ 1.35 — a catastrophic score
+that was pure grid mismatch, not model failure.  Narrow tiers are
+single-grid specialists; only wide training buys grid robustness.  Any
+probe of a micro checkpoint must reuse the generator's own (β, Δτ) grid
+convention.
 
 Promote **recipes, not constants**: which terms are on and their rough
 ratios transfer between tiers; tuned magnitudes and convergence step counts
