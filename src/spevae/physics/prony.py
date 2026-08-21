@@ -181,6 +181,25 @@ def aaa_poles(
     return poles, m
 
 
+
+def _causal_poles_of_F(om: np.ndarray, F: np.ndarray, norm: float,
+                       tol: float, max_terms: int = 40) -> np.ndarray:
+    r"""Causal pole locations of :math:`F`, via AAA on the tail-free function.
+
+    A barycentric interpolant of type :math:`(m{-}1, m{-}1)` is a pole sum
+    *plus a constant*, while :math:`F` has none -- discarding the constant
+    corrupts the far Matsubara tail (measured: an 8.5% pole-sum residual on
+    an AAA fit that was itself accurate).  So AAA runs on
+    :math:`H(z) = z F(z) - \mathrm{norm}`, which decays like :math:`1/z`
+    (no constant term possible), has exactly :math:`F`'s pole locations, and
+    whose value at the origin-side samples is well scaled.  ``tol`` is in
+    units of :math:`H`.
+    """
+    H = 1j * om * F - norm
+    poles, _ = aaa_poles(1j * om, H, tol=tol, max_terms=max_terms)
+    return poles[np.imag(poles) < -1e-12]
+
+
 @dataclass
 class MPMReport:
     """What the extraction did."""
@@ -238,8 +257,9 @@ def mpm_extract(
         # reflected samples are contradictory data that corrupt the fit
         # (measured: junk poles, 4.5% residual).
         floor1 = max(floor, 3e-5)
-        p1, _ = aaa_poles(1j * om, F, tol=floor1)
-        causal1 = p1[np.imag(p1) < -1e-12]
+        norm0 = float(G_mean[0] + G_mean[-1])
+        causal1 = _causal_poles_of_F(om, F, norm0,
+                                     tol=float(om.max()) * floor1)
         if causal1.size:
             K1 = 1.0 / (1j * om[:, None] - causal1[None, :])
             r1, *_ = np.linalg.lstsq(K1, F, rcond=None)
@@ -260,9 +280,15 @@ def mpm_extract(
                            / (1j * om[:, None] - causal1[None, :])).sum(1)
             F = F_res + F_ref_exact
 
-    poles_c, m = aaa_poles(1j * om, F, tol=floor)
-
-    causal = poles_c[np.imag(poles_c) < -1e-12]
+    norm_meas = float(G_mean[0] + G_mean[-1])
+    # tol in H-units: per-point noise on H is om_n * sigma_n
+    tol_H = tol_scale * float((om * np.maximum(sig, 0.0)).max()) \
+        if sig.size and sig.max() > 0 else float(om.max()) * floor
+    # never chase H below the two-pass transform's own accuracy (~1e-6 rel)
+    H_scale = float(np.abs(1j * om * F - norm_meas).max())
+    tol_H = max(tol_H, float(om.max()) * min_tol, 1e-6 * H_scale)
+    causal = _causal_poles_of_F(om, F, norm_meas, tol=tol_H)
+    m = causal.size + 1
     n_raw = causal.size
     if n_raw == 0:
         raise RuntimeError("MPM found no causal poles; raise n_max or check data")
@@ -271,6 +297,17 @@ def mpm_extract(
     Wt = 1.0 / np.maximum(sig, max(floor / tol_scale, 1e-30))
     K = 1.0 / (1j * om[:, None] - causal[None, :])
     r_c, *_ = np.linalg.lstsq(K * Wt[:, None], F * Wt, rcond=None)
+
+    # Physicality cut before the weight cut: a "pole" broader than the
+    # sampled Matsubara bandwidth (or centred far outside it) is the rational
+    # approximant mimicking a constant background, not spectral structure --
+    # measured leaking through as gamma ~ 10x the bandwidth at 0.1% weight.
+    om_bw = float(om.max())
+    phys = (-np.imag(causal) < om_bw) & (np.abs(np.real(causal)) < 2.0 * om_bw)
+    if phys.any():
+        causal = causal[phys]
+        K = 1.0 / (1j * om[:, None] - causal[None, :])
+        r_c, *_ = np.linalg.lstsq(K * Wt[:, None], F * Wt, rcond=None)
 
     a = np.real(r_c)
     keep = a > weight_floor * max(a.sum(), 1e-300)

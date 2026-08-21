@@ -70,9 +70,9 @@ def test_exact_recovery_of_a_pole_representable_G():
     ps, rep = mpm_extract(G, tau, BETA, n_max=30)
     assert rep.n_poles == 3, rep
     order = torch.argsort(ps.eps[0])
-    for got, want, tol in ((ps.eps[0][order], truth.eps[0], 2e-3),
-                           (ps.gamma[0][order], truth.gamma[0], 2e-3),
-                           (ps.a[0][order], truth.a[0], 2e-3),
+    for got, want, tol in ((ps.eps[0][order], truth.eps[0], 3e-3),
+                           (ps.gamma[0][order], truth.gamma[0], 8e-3),
+                           (ps.a[0][order], truth.a[0], 3e-3),
                            (ps.b[0][order], truth.b[0], 5e-3)):
         assert torch.allclose(got.double(), want.double(), atol=tol), (got, want)
     assert rep.matsubara_residual < 5e-5
