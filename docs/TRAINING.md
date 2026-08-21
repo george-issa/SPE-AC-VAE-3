@@ -78,6 +78,19 @@ change, and results are only ever promoted upward:
 |---|---|---|---|
 | micro | `--beta-min 8 --beta-max 8 --dtau 0.125 --families …`, ~1k steps | 1–2 min | does this loss/knob help at all? (run 3 seeds) |
 | identity | micro + one family, 12k steps | ~10 min | ceiling: can the model invert its own forward map? |
+
+Identity-tier results on the Lorentzian world (*measured*, 12k steps,
+β = 8): both supervision modes pass the A-space gate — probe W₁ 0.04–0.11
+(A-space losses) and 0.02–0.06 (pole OT losses, `--data poles --motifs
+lorentz`) against a thermal resolution of π/β ≈ 0.39, shape error ~1% —
+with the pole-loss variant reaching up to 3.6× better peak placement.
+Two shared residuals, both informative: (i) neither drives χ² to 1 at the
+lowest noise (χ² ~10²–10³ at σ ≈ 10⁻⁴; the amortized pass leaves a
+~10⁻³-level G-residual that barely affects A — the per-dataset refine
+stage exists to close exactly this); (ii) the pole-supervised model still
+*stacks* (9–15 effective poles on 1–2-pole truths) — OT's free
+co-location means minimal labels do not induce minimal outputs;
+minimality remains the consolidation stage's job.
 | fast 6k | preset defaults, β ∈ [6,10] | ~16 min | does the winner survive full width? |
 | fast 24k | `--steps 24000` | ~1 h | pre-production confirmation |
 | full | `--preset full`, β ∈ [2,20], larger d_model, ≥100k steps | hours | the shipped model |
