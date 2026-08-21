@@ -212,7 +212,9 @@ def pretrain(
         # Encode only: the consistency term reads mu and logvar and nothing else.
         alt = (model.encode(batch.G_alt, batch.x, batch.beta, sigma=batch.sigma)[:2]
                if cfg.weights.consistency > 0 else None)
-        loss, parts = pretrain_loss(out, batch, model, cfg.weights, alt_posterior=alt)
+        loss, parts = pretrain_loss(out, batch, model, cfg.weights,
+                                    alt_posterior=alt,
+                                    progress=step / max(cfg.steps - 1, 1))
 
         opt.zero_grad(set_to_none=True)
         loss.backward()

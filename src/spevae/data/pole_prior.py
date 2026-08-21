@@ -109,7 +109,12 @@ class PolePriorGenerator:
 
     def _feature(self, motif: str, centre: float, half: float, floor: float):
         """Return (eps, gamma, a_rel, t) lists for one feature; a_rel sums 1."""
-        rho = self._u(0.8, 3.5)                     # spacing / width knob
+        # spacing / width knob, quadratically biased toward the smooth end:
+        # this distribution IS the explicit smoothness prior -- uniform rho
+        # said "resolved bumps as likely as smooth bands", which is not the
+        # physical expectation.  median ~1.5, p90 ~3.0.
+        u = self._u(0.0, 1.0)
+        rho = 0.8 + 2.7 * u * u
         if motif == "lorentz":
             g = max(self._u(0.5, 2.0) * half, floor)
             return [centre], [g], [1.0], [self._u(-0.4, 0.4)]

@@ -465,6 +465,8 @@ class LossWeights:
     barrier: float = 0.0
     positivity: float = 1.0
     pole: float = 5.0              # Sinkhorn pole-space loss (pole-labeled data)
+    pole_eps0: float = 0.1         # OT entropic eps at step 0 ...
+    pole_eps1: float = 0.01        # ... annealed geometrically to this at the end
     sparsity: float = 0.0          # weight-entropy penalty (minimal-pole prior)
     multiscale: float = 0.0        # broadened-envelope L2 alongside the plain one
     multiscale_scales: tuple = (1.0, 8.0, 32.0)
@@ -480,6 +482,7 @@ def pretrain_loss(
     model,
     weights: LossWeights,
     alt_posterior: tuple | None = None,
+    progress: float | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     r"""Supervised Stage-1 objective.
 
@@ -513,7 +516,14 @@ def pretrain_loss(
     # its weight for data-space grounding.
     if isinstance(getattr(batch, "poles_true", None), dict) \
             and batch.meta.get("pole_labeled"):
-        L_ot, parts = sinkhorn_pole_loss(result.poles, batch.poles_true)
+        # entropic eps annealed toward the Hungarian limit: soft transport
+        # early (split representations cheap while poles find their features),
+        # sharp assignment late (stacks tighten onto single targets -- the
+        # measured cure for early-training cluster-spread ripple)
+        t = 0.0 if progress is None else min(max(progress, 0.0), 1.0)
+        eps_ot = weights.pole_eps0 * (weights.pole_eps1 / weights.pole_eps0) ** t
+        L_ot, parts = sinkhorn_pole_loss(result.poles, batch.poles_true,
+                                         eps_ot=eps_ot)
         raw_chi2 = chi2(result.G_recon, batch.G, batch.sigma,
                         inv_sqrt_R=batch.inv_sqrt_R)
         total = weights.pole * L_ot \
