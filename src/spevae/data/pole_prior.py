@@ -64,6 +64,7 @@ class PolePriorGenerator:
         noise_xi_range: tuple[float, float] = (0.01, 0.4),
         P_max: int = 12,
         dip_tol: float = 5e-3,
+        motifs: tuple[str, ...] = MOTIFS,
         quad_nodes_per_width: float = 3.5,
         quad_tail_nodes: int = 32,
         cache_limit: int = 4,
@@ -81,6 +82,12 @@ class PolePriorGenerator:
         # Max negative spectral weight a training truth may carry (fraction
         # of total weight); dips beyond it trigger b-shrinking in sample_poles.
         self.dip_tol = float(dip_tol)
+        # Restricting motifs narrows the prior to a sub-world (e.g. only
+        # isolated Lorentzians) -- the pole-loss identity tier.
+        unknown = set(motifs) - set(MOTIFS)
+        if unknown:
+            raise ValueError(f"unknown motifs: {sorted(unknown)}")
+        self.motifs = tuple(motifs)
         self.quad_h = float(gamma_min) / float(quad_nodes_per_width)
         self.quad_tail_nodes = int(quad_tail_nodes)
         self.cache_limit = max(int(cache_limit), 1)
@@ -167,7 +174,7 @@ class PolePriorGenerator:
             weights[k] = self._u(0.2, 1.0)
         weights = weights / weights.sum()
         for k in range(K):
-            motif = MOTIFS[self._i(len(MOTIFS))]
+            motif = self.motifs[self._i(len(self.motifs))]
             centre = self._u(-0.8, 0.8) * W
             half = self._u(0.15, 0.6) * W / K + floor
             e, g, ar, tt = self._feature(motif, centre, half, floor)

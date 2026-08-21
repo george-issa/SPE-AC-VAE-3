@@ -347,9 +347,12 @@ def cmd_pretrain(args) -> None:
                        ph_symmetric=args.ph_symmetric)
     if args.data in ("poles", "mixed"):
         from .data.pole_prior import MixedGenerator, PolePriorGenerator
+        pole_kw = {}
+        if args.motifs is not None:
+            pole_kw["motifs"] = tuple(args.motifs)
         gen = PolePriorGenerator(omega_c=args.omega_c,
                                  P_max=args.num_poles - 4,
-                                 device=args.device, **dist)
+                                 device=args.device, **pole_kw, **dist)
         if args.data == "mixed":
             fam = SyntheticGenerator(omega_c=args.omega_c,
                                      families=args.families,
@@ -509,6 +512,10 @@ def main(argv=None) -> None:
     p.add_argument("--families", type=lambda s: s.split(","), default=None,
                    help="comma-separated subset of spectral families for the "
                         "family stream (e.g. 'gapped,phonon')")
+    p.add_argument("--motifs", type=lambda s: s.split(","), default=None,
+                   help="comma-separated subset of pole-prior motifs for the "
+                        "pole stream (e.g. 'lorentz' for the pole-loss "
+                        "identity tier)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
     p.add_argument("--init-from", default=None,

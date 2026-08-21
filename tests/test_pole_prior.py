@@ -175,3 +175,17 @@ def test_mixed_curriculum_schedule_and_frozen_eval():
                           for _ in range(8)])
     assert kinds[0] == kinds[1]
     assert any(kinds[0]) and not all(kinds[0])
+
+
+def test_motif_restriction_lorentz_only():
+    import pytest
+    with pytest.raises(ValueError):
+        PolePriorGenerator(motifs=("lorentz", "nope"))
+    g = PolePriorGenerator(beta_range=(8.0, 8.0), motifs=("lorentz",))
+    g.seed_scalars(3)
+    rng = torch.Generator().manual_seed(3)
+    for _ in range(4):
+        lab = g.batch(8, rng).poles_true
+        # lorentz motifs emit one pole per feature: K <= 3, x2 if mirrored
+        assert (lab["n_true"] <= 6).all()
+        assert (lab["n_true"] >= 1).all()
