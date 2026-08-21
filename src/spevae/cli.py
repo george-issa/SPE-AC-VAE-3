@@ -325,6 +325,14 @@ def cmd_pretrain(args) -> None:
     }
     p = presets[args.preset]
     steps = args.steps or p["steps"]
+    # Narrow-distribution overrides for mechanism A/Bs: a fixed beta (and one
+    # dtau) pins the eval stream and the kernel conditioning, so a 1-2 minute
+    # run answers "does this loss/knob help" before any wide run is paid for.
+    beta_range = (args.beta_min or p["beta_range"][0],
+                  args.beta_max or p["beta_range"][1])
+    dist = {"beta_range": beta_range}
+    if args.dtau is not None:
+        dist["dtau_choices"] = (args.dtau,)
 
     torch.manual_seed(args.seed)
     if args.init_from:
@@ -340,19 +348,18 @@ def cmd_pretrain(args) -> None:
     if args.data in ("poles", "mixed"):
         from .data.pole_prior import MixedGenerator, PolePriorGenerator
         gen = PolePriorGenerator(omega_c=args.omega_c,
-                                 beta_range=p["beta_range"],
                                  P_max=args.num_poles - 4,
-                                 device=args.device)
+                                 device=args.device, **dist)
         if args.data == "mixed":
             fam = SyntheticGenerator(omega_c=args.omega_c,
-                                     beta_range=p["beta_range"],
-                                     device=args.device)
+                                     families=args.families,
+                                     device=args.device, **dist)
             gen = MixedGenerator(gen, fam, p_pole=0.5)
     else:
         gen = SyntheticGenerator(omega_c=args.omega_c,
-                                 beta_range=p["beta_range"],
+                                 families=args.families,
                                  ph_symmetric=args.ph_symmetric,
-                                 device=args.device)
+                                 device=args.device, **dist)
     weights = LossWeights(w1=args.w_w1, l2=args.w_l2, barrier=args.w_barrier,
                           sparsity=args.w_sparsity, multiscale=args.w_multiscale,
                           highpass=args.w_highpass,
@@ -487,6 +494,15 @@ def main(argv=None) -> None:
                    help="stack-coherence weight (pole-labeled data)")
     p.add_argument("--pole-eps1", type=float, default=0.01,
                    help="final OT eps (set equal to 0.1 to disable annealing)")
+    p.add_argument("--beta-min", type=float, default=None,
+                   help="override the preset's beta range (equal min/max "
+                        "fixes beta -- the cheap tier for mechanism A/Bs)")
+    p.add_argument("--beta-max", type=float, default=None)
+    p.add_argument("--dtau", type=float, default=None,
+                   help="use a single dtau instead of the preset's choices")
+    p.add_argument("--families", type=lambda s: s.split(","), default=None,
+                   help="comma-separated subset of spectral families for the "
+                        "family stream (e.g. 'gapped,phonon')")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
     p.add_argument("--init-from", default=None,
