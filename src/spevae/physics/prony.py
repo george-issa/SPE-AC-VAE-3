@@ -257,12 +257,14 @@ def mpm_extract(
         # reflected samples are contradictory data that corrupt the fit
         # (measured: junk poles, 4.5% residual).
         floor1 = max(floor, 3e-5)
-        norm0 = float(G_mean[0] + G_mean[-1])
-        causal1 = _causal_poles_of_F(om, F, norm0,
-                                     tol=float(om.max()) * floor1)
+        p1, _ = aaa_poles(1j * om, F, tol=floor1)
+        causal1 = p1[np.imag(p1) < -1e-12]
         if causal1.size:
-            K1 = 1.0 / (1j * om[:, None] - causal1[None, :])
-            r1, *_ = np.linalg.lstsq(K1, F, rcond=None)
+            K1 = np.concatenate(
+                [1.0 / (1j * om[:, None] - causal1[None, :]),
+                 np.ones((om.size, 1), complex)], axis=1)
+            sol1, *_ = np.linalg.lstsq(K1, F, rcond=None)
+            r1 = sol1[:-1]                    # constant column absorbed, dropped
             from .forward import PoleGreens, SpectralQuadrature
             ref = PoleSet(
                 eps=torch.tensor(np.real(causal1)).unsqueeze(0),
@@ -280,34 +282,24 @@ def mpm_extract(
                            / (1j * om[:, None] - causal1[None, :])).sum(1)
             F = F_res + F_ref_exact
 
-    norm_meas = float(G_mean[0] + G_mean[-1])
-    # tol in H-units: per-point noise on H is om_n * sigma_n
-    tol_H = tol_scale * float((om * np.maximum(sig, 0.0)).max()) \
-        if sig.size and sig.max() > 0 else float(om.max()) * floor
-    # never chase H below the two-pass transform's own accuracy (~1e-6 rel)
-    H_scale = float(np.abs(1j * om * F - norm_meas).max())
-    tol_H = max(tol_H, float(om.max()) * min_tol, 1e-6 * H_scale)
-    causal = _causal_poles_of_F(om, F, norm_meas, tol=tol_H)
-    m = causal.size + 1
+    # plain-F fit: multiplying by omega (the H-transform variant) amplifies
+    # exactly the noisiest tail samples and starves the fit of modes at the
+    # noise floor (measured: 2-3 spiky poles, chi2/tgt ~1e4).  The barycentric
+    # constant is handled where it lives instead: an explicit constant column
+    # in the residue least squares, absorbed and then dropped.
+    tol_F = max(floor, 1e-6 * float(np.abs(F).max()))
+    poles_c, m = aaa_poles(1j * om, F, tol=tol_F)
+    causal = poles_c[np.imag(poles_c) < -1e-12]
     n_raw = causal.size
     if n_raw == 0:
         raise RuntimeError("MPM found no causal poles; raise n_max or check data")
 
     # noise-weighted least squares for complex residues on the causal poles
     Wt = 1.0 / np.maximum(sig, max(floor / tol_scale, 1e-30))
-    K = 1.0 / (1j * om[:, None] - causal[None, :])
-    r_c, *_ = np.linalg.lstsq(K * Wt[:, None], F * Wt, rcond=None)
-
-    # Physicality cut before the weight cut: a "pole" broader than the
-    # sampled Matsubara bandwidth (or centred far outside it) is the rational
-    # approximant mimicking a constant background, not spectral structure --
-    # measured leaking through as gamma ~ 10x the bandwidth at 0.1% weight.
-    om_bw = float(om.max())
-    phys = (-np.imag(causal) < om_bw) & (np.abs(np.real(causal)) < 2.0 * om_bw)
-    if phys.any():
-        causal = causal[phys]
-        K = 1.0 / (1j * om[:, None] - causal[None, :])
-        r_c, *_ = np.linalg.lstsq(K * Wt[:, None], F * Wt, rcond=None)
+    K = np.concatenate([1.0 / (1j * om[:, None] - causal[None, :]),
+                        np.ones((om.size, 1), complex)], axis=1)
+    sol, *_ = np.linalg.lstsq(K * Wt[:, None], F * Wt, rcond=None)
+    r_c, const = sol[:-1], sol[-1]
 
     a = np.real(r_c)
     keep = a > weight_floor * max(a.sum(), 1e-300)
