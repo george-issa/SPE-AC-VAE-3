@@ -128,6 +128,7 @@ def aaa_poles(
     f: np.ndarray,
     tol: float,
     max_terms: int = 40,
+    sigma: np.ndarray | None = None,
 ) -> tuple[np.ndarray, int]:
     r"""AAA rational approximation; returns the interpolant's poles.
 
@@ -140,6 +141,13 @@ def aaa_poles(
     """
     z = np.asarray(z, complex)
     f = np.asarray(f, complex)
+    # Per-point noise weighting: an unweighted absolute stopping rule grants
+    # the quietest samples up to tol/sigma_j ~ 13 sigma of slack (measured),
+    # under-resolving the rank the data actually supports.  With sigma given,
+    # residuals are measured in units of each point's own noise and ``tol``
+    # is in sigma units.
+    wgt = (1.0 / np.maximum(np.asarray(sigma, float), 1e-300)
+           if sigma is not None else np.ones(f.size))
     M = z.size
     mask = np.ones(M, bool)
     support: list[int] = []
@@ -147,7 +155,7 @@ def aaa_poles(
     w = np.array([1.0 + 0j])
 
     for _ in range(min(max_terms, M - 2)):
-        j = int(np.argmax(np.abs(f - R) * mask))
+        j = int(np.argmax(np.abs(f - R) * wgt * mask))
         support.append(j)
         mask[j] = False
         zs, fs = z[support], f[support]
@@ -162,7 +170,8 @@ def aaa_poles(
         R = np.full(M, np.nan, complex)
         R[mask] = num / den
         R[support] = f[support]
-        err = np.max(np.abs(f[mask] - R[mask])) if mask.any() else 0.0
+        err = np.max(np.abs(f[mask] - R[mask]) * wgt[mask]) \
+            if mask.any() else 0.0
         if err < tol:
             break
 
@@ -287,8 +296,11 @@ def mpm_extract(
     # noise floor (measured: 2-3 spiky poles, chi2/tgt ~1e4).  The barycentric
     # constant is handled where it lives instead: an explicit constant column
     # in the residue least squares, absorbed and then dropped.
-    tol_F = max(floor, 1e-6 * float(np.abs(F).max()))
-    poles_c, m = aaa_poles(1j * om, F, tol=tol_F)
+    if sig.size and sig.max() > 0:
+        poles_c, m = aaa_poles(1j * om, F, tol=float(tol_scale), sigma=sig)
+    else:
+        tol_F = max(floor, 1e-6 * float(np.abs(F).max()))
+        poles_c, m = aaa_poles(1j * om, F, tol=tol_F)
     causal = poles_c[np.imag(poles_c) < -1e-12]
     n_raw = causal.size
     if n_raw == 0:
