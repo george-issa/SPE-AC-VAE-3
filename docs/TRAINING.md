@@ -27,10 +27,18 @@ budget (6k steps, fast preset, identical seeds and frozen judges):
   toward their transport centroid raised ripple on every stream at weight
   1.0.  The code remains (`pole_coherence`), default 0.0; do not turn it on
   without a micro-tier sweep showing otherwise.
-- **Remaining gaps are data budget, not mechanism** (*measured*).  Scaling
-  the mixed recipe 6k → 24k closed the family-coverage gap monotonically at
-  every eval; step count is the knob that buys accuracy, exactly as the
-  infinite-generator design intends.
+- **The family-coverage gap is interference, not just data budget**
+  (*measured*, and this falsified the first hypothesis).  Scaling the mixed
+  recipe 6k → 24k narrowed the legacy-stream gap (W₁ 0.392 → 0.329) while
+  the pole-space advantage grew (pole-stream W₁ 0.279 → 0.255 vs the 24k
+  control's 0.444) — but the matched-budget control stayed ahead on family
+  coverage (0.231), and the mixed model underperforms even the 6k pure
+  control (0.276) despite seeing ~12k family batches.  The two objectives
+  interfere; more steps alone will not close it.  Before the production
+  run, the mixing knob must be swept at the micro tier: the p_pole ratio
+  (0.5 was a guess, not a measurement), and a curriculum (pole-heavy early,
+  family-heavy late — this is not a cross-tier warm start; the distribution
+  contains both streams throughout).
 
 ## 2. Where the time goes, and the tier ladder
 
@@ -81,7 +89,9 @@ family; the release gate below is stated per family, not on the mean.
 
 Recipe, from the campaign:
 
-- `--data mixed` (50/50), `--pole-eps1 0.1` (no annealing), coherence off.
+- `--data mixed`, `--pole-eps1 0.1` (no annealing), coherence off.  The
+  50/50 ratio is provisional: sweep p_pole (and a pole→family curriculum)
+  at the micro tier before locking the production recipe — see §1.
 - Full preset: β ∈ [2,20], all Δτ choices, all families, complex residues.
 - EMA on (0.999) — the shipped weights are the EMA weights.
 - Full cosine schedule; **no early stopping** on the production run.  Early
