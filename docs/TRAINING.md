@@ -46,8 +46,16 @@ budget (6k steps, fast preset, identical seeds and frozen judges):
   0.590 ± 0.055) and better legacy L².  The reading: early pole supervision
   shapes the decoder's representation; late family-heavy training refines
   A-space accuracy without erasing it.  Flags: `--p-pole 0.9
-  --p-pole-final 0.1`.  Pending full-width confirmation at the fast tier
-  before it becomes the production recipe.
+  --p-pole-final 0.1`.
+- **Full-width confirmation: a strictly better trade-off point, with the
+  usual constants caveat** (*measured*, fast 6k).  Versus constant 50/50
+  at identical budget the curriculum improved family coverage (legacy W₁
+  0.392 → 0.326), kept a 1.47× pole advantage (0.334 vs the control's
+  0.491), and had the lowest ripple of all three arms on both streams.
+  The micro-tier promise of *matching* pure-family coverage did not fully
+  transfer — a 0.05 residual gap to the family-only control remains —
+  exactly the promote-recipes-not-constants caveat in action.  Whether
+  budget closes it is the 24k question.
 
 ## 2. Where the time goes, and the tier ladder
 
