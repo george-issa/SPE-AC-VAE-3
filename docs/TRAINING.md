@@ -91,6 +91,15 @@ stage exists to close exactly this); (ii) the pole-supervised model still
 *stacks* (9–15 effective poles on 1–2-pole truths) — OT's free
 co-location means minimal labels do not induce minimal outputs;
 minimality remains the consolidation stage's job.
+
+Residual (i) is confirmed to be refine's job (*measured*): staged
+whitened refit on the three probes — no consolidation — takes χ² from
+30–540 to ≈ 0.87 within the first 500–1000 steps, and the refined
+spectra are near-exact: W₁ 0.0008–0.016, with the pole-loss model's
+single-Lorentzian case recovering the true pole to four digits.  The
+amortized pass supplies the basin; refine supplies the digits.  (χ²
+settling ~1σ below 1 on 65 points is the expected mild noise
+absorption of an unconsolidated 16-pole fit.)
 | fast 6k | preset defaults, β ∈ [6,10] | ~16 min | does the winner survive full width? |
 | fast 24k | `--steps 24000` | ~1 h | pre-production confirmation |
 | full | `--preset full`, β ∈ [2,20], larger d_model, ≥100k steps | hours | the shipped model |
