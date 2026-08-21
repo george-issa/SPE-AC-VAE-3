@@ -337,9 +337,17 @@ def cmd_pretrain(args) -> None:
                        omega_c=args.omega_c, d_model=p["d_model"],
                        enc_layers=p["enc_layers"], residue_mode=args.residue_mode,
                        ph_symmetric=args.ph_symmetric)
-    gen = SyntheticGenerator(omega_c=args.omega_c, beta_range=p["beta_range"],
-                             ph_symmetric=args.ph_symmetric,
-                             device=args.device)
+    if args.data == "poles":
+        from .data.pole_prior import PolePriorGenerator
+        gen = PolePriorGenerator(omega_c=args.omega_c,
+                                 beta_range=p["beta_range"],
+                                 P_max=args.num_poles - 4,
+                                 device=args.device)
+    else:
+        gen = SyntheticGenerator(omega_c=args.omega_c,
+                                 beta_range=p["beta_range"],
+                                 ph_symmetric=args.ph_symmetric,
+                                 device=args.device)
     weights = LossWeights(w1=args.w_w1, l2=args.w_l2, barrier=args.w_barrier,
                           sparsity=args.w_sparsity, multiscale=args.w_multiscale,
                           highpass=args.w_highpass)
@@ -448,6 +456,9 @@ def main(argv=None) -> None:
     p.add_argument("--omega-c", type=float, default=20.0)
     p.add_argument("--residue-mode", default="complex",
                    choices=["complex", "real"])
+    p.add_argument("--data", default="families", choices=["families", "poles"],
+                   help="training data: legacy A-space families, or the "
+                        "pole-first motif prior with exact canonical labels")
     p.add_argument("--ph-symmetric", action="store_true",
                    help="mirror-paired decoder: A(w) = A(-w) by construction, "
                         "trained on PH-symmetrised targets; for half-filled / "

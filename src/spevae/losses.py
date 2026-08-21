@@ -83,6 +83,7 @@ __all__ = [
     "pretrain_loss",
     "negativity_stencil_weights",
     "negativity_penalties",
+    "sinkhorn_pole_loss",
 ]
 
 
@@ -463,6 +464,7 @@ class LossWeights:
     consistency: float = 0.1
     barrier: float = 0.0
     positivity: float = 1.0
+    pole: float = 5.0              # Sinkhorn pole-space loss (pole-labeled data)
     sparsity: float = 0.0          # weight-entropy penalty (minimal-pole prior)
     multiscale: float = 0.0        # broadened-envelope L2 alongside the plain one
     multiscale_scales: tuple = (1.0, 8.0, 32.0)
@@ -504,6 +506,33 @@ def pretrain_loss(
         the diagnostic to watch: it should approach 1 from above, and *not* go
         below the shrinkage-corrected floor.
     """
+    # Pole-labeled batches (pole-first pretraining): pure pole-space
+    # supervision -- the poles determine A exactly, so spectral losses would
+    # be redundant re-weightings of the same information.  KL and consistency
+    # stay (they are VAE-structure losses, not spectral ones); chi2 stays at
+    # its weight for data-space grounding.
+    if isinstance(getattr(batch, "poles_true", None), dict) \
+            and batch.meta.get("pole_labeled"):
+        L_ot, parts = sinkhorn_pole_loss(result.poles, batch.poles_true)
+        raw_chi2 = chi2(result.G_recon, batch.G, batch.sigma,
+                        inv_sqrt_R=batch.inv_sqrt_R)
+        total = weights.pole * L_ot \
+            + weights.chi2 * torch.sqrt(raw_chi2.clamp_min(1e-12)) \
+            + weights.kl * kl_divergence(result.mu, result.logvar,
+                                         free_bits=weights.free_bits)
+        parts["chi2"] = raw_chi2.detach()
+        parts["kl"] = parts.get("kl", total.detach() * 0)
+        if alt_posterior is not None and weights.consistency > 0.0:
+            L_cons = noise_consistency(result.mu, result.logvar,
+                                       alt_posterior[0], alt_posterior[1])
+            total = total + weights.consistency * L_cons
+            parts["consistency"] = L_cons.detach()
+        parts["total"] = total.detach()
+        # legacy keys expected by loggers
+        parts.setdefault("w1_omega", total.detach() * 0)
+        parts.setdefault("l2_rel", total.detach() * 0)
+        return total, parts
+
     quad = batch.quad
     A_pred = result.poles.spectral(quad.nodes.to(result.poles.eps.dtype))
 
@@ -652,3 +681,75 @@ def negativity_penalties(
         out["neg_G4"] = (torch.relu(-d4).pow(2)
                          * weights["inv_var4"]).sum(-1).mean() / (L - 4)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Pole-space supervision (pole-first pretraining)
+# --------------------------------------------------------------------------- #
+
+def sinkhorn_pole_loss(
+    pred,                                   # PoleSet, dimensionless, (B, P)
+    labels: dict,                           # eps/gamma/a/b (B, Pt), n_true (B,)
+    eps_ot: float = 0.1,
+    n_iter: int = 40,
+    lam_b: float = 1.0,
+    eps_scale: float = 3.141592653589793,
+) -> tuple[torch.Tensor, dict]:
+    r"""Entropic optimal transport between predicted and true pole measures.
+
+    Both sets are weighted point clouds -- mass :math:`a_p` at feature
+    coordinates :math:`u = (\mathrm{asinh}(\varepsilon/\pi), \log\gamma,
+    \lambda_b\, b/a)`, the decoder's own well-scaled parametrisation.  The
+    loss is the transport cost :math:`\langle \pi, C\rangle` of the entropic
+    plan between the normalised masses.  Because total predicted mass is
+    fixed (softmax :math:`\times` norm), every unit of weight *must* travel
+    somewhere: at the optimum the predicted poles either sit on true poles or
+    carry vanishing weight -- dust suppression is a consequence, not a bolt-on.
+    Fully differentiable (no discrete assignment to flip); annealing
+    ``eps_ot`` :math:`\to 0` approaches the Hungarian limit.
+
+    Returns ``(loss, parts)`` with the effective-vs-true pole-count gap as a
+    logged diagnostic (never a loss).
+    """
+    B, P = pred.a.shape
+    Pt = labels["a"].shape[1]
+    dev, dt = pred.a.device, pred.a.dtype
+
+    def feats(e, g, a, b):
+        t = b / a.clamp_min(1e-12)
+        return torch.stack([torch.asinh(e / eps_scale),
+                            torch.log(g.clamp_min(1e-12)),
+                            lam_b * t], dim=-1)
+
+    U = feats(pred.eps, pred.gamma, pred.a, pred.b)          # (B, P, 3)
+    V = feats(labels["eps"].to(dev, dt), labels["gamma"].to(dev, dt),
+              labels["a"].to(dev, dt).clamp_min(1e-12),
+              labels["b"].to(dev, dt))                        # (B, Pt, 3)
+    C = ((U.unsqueeze(2) - V.unsqueeze(1)) ** 2).sum(-1)      # (B, P, Pt)
+
+    p_m = pred.a / pred.a.sum(-1, keepdim=True).clamp_min(1e-30)
+    q_raw = labels["a"].to(dev, dt)
+    q_m = q_raw / q_raw.sum(-1, keepdim=True).clamp_min(1e-30)
+    # mask label padding out of the transport entirely
+    pad = q_raw <= 0
+    logq = torch.where(pad, torch.full_like(q_m, -1e9),
+                       q_m.clamp_min(1e-30).log())
+    logp = p_m.clamp_min(1e-30).log()
+
+    f = torch.zeros_like(p_m)
+    g = torch.zeros_like(q_m)
+    Ce = C / eps_ot
+    for _ in range(n_iter):
+        f = -eps_ot * torch.logsumexp(logq.unsqueeze(1) - Ce
+                                      + g.unsqueeze(1) / eps_ot, dim=2)
+        g = -eps_ot * torch.logsumexp(logp.unsqueeze(2) - Ce
+                                      + f.unsqueeze(2) / eps_ot, dim=1)
+    log_pi = (logp.unsqueeze(2) + logq.unsqueeze(1) - Ce
+              + (f.unsqueeze(2) + g.unsqueeze(1)) / eps_ot)
+    pi = torch.exp(log_pi.clamp(max=30.0))
+    loss = (pi * C).sum(dim=(1, 2)).mean()
+
+    with torch.no_grad():
+        eff = 1.0 / (p_m.pow(2).sum(-1) + 1e-12)
+        gap = (eff - labels["n_true"].to(dev).float()).abs().mean()
+    return loss, {"pole_ot": loss.detach(), "eff_gap": gap}
