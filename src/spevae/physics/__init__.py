@@ -34,6 +34,7 @@ from .consolidate import (
     sharpness_verdict,
 )
 from .positivity import PositivityReport, certify, positivity_certificate
+from .prony import MPMReport, aaa_poles, matsubara_from_bins, mpm_extract
 
 __all__ = [
     "MATSUBARA_NU0",
@@ -64,4 +65,8 @@ __all__ = [
     "pole_significance_table",
     "sharpness_verdict",
     "feature_ledger",
+    "mpm_extract",
+    "matsubara_from_bins",
+    "aaa_poles",
+    "MPMReport",
 ]
