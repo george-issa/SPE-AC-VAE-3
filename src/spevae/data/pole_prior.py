@@ -295,11 +295,29 @@ class MixedGenerator:
     streams, so held-out evaluation stays bit-reproducible.
     """
 
-    def __init__(self, pole_gen, family_gen, p_pole: float = 0.5) -> None:
+    def __init__(self, pole_gen, family_gen, p_pole: float = 0.5,
+                 p_pole_final: float | None = None) -> None:
         self.pole_gen = pole_gen
         self.family_gen = family_gen
         self.p_pole = float(p_pole)
+        # A linear curriculum: the coin bias moves from p_pole to
+        # p_pole_final as set_progress() advances.  Held-out evaluation must
+        # stay comparable across evals (and across arms), so under
+        # fixed_scalars the bias is pinned to 0.5 regardless of schedule.
+        self.p_pole_final = None if p_pole_final is None else float(p_pole_final)
+        self._progress = 0.0
+        self._eval_frozen = False
         self._cpu_rng = torch.Generator()
+
+    def set_progress(self, t: float) -> None:
+        self._progress = min(max(float(t), 0.0), 1.0)
+
+    def _p_eff(self) -> float:
+        if self._eval_frozen:
+            return 0.5
+        if self.p_pole_final is None:
+            return self.p_pole
+        return self.p_pole + (self.p_pole_final - self.p_pole) * self._progress
 
     def seed_scalars(self, seed: int) -> None:
         self._cpu_rng.manual_seed(int(seed))
@@ -309,15 +327,18 @@ class MixedGenerator:
     @contextlib.contextmanager
     def fixed_scalars(self, seed: int):
         state = self._cpu_rng.get_state()
+        frozen = self._eval_frozen
         self._cpu_rng.manual_seed(int(seed))
+        self._eval_frozen = True
         with self.pole_gen.fixed_scalars(seed + 1), \
                 self.family_gen.fixed_scalars(seed + 2):
             try:
                 yield self
             finally:
                 self._cpu_rng.set_state(state)
+                self._eval_frozen = frozen
 
     def batch(self, batch_size: int, rng: torch.Generator):
         coin = float(torch.rand((), generator=self._cpu_rng))
-        gen = self.pole_gen if coin < self.p_pole else self.family_gen
+        gen = self.pole_gen if coin < self._p_eff() else self.family_gen
         return gen.batch(batch_size, rng)

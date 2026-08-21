@@ -148,3 +148,28 @@ def test_mixed_generator_interleaves_and_freezes():
     with mg.fixed_scalars(77):
         b2 = mg.batch(4, rng2)
     assert torch.equal(b1.G, b2.G)
+
+
+def test_mixed_curriculum_schedule_and_frozen_eval():
+    from spevae.data.pole_prior import MixedGenerator, PolePriorGenerator
+    from spevae.data.synthetic import SyntheticGenerator
+    mg = MixedGenerator(PolePriorGenerator(beta_range=(6.0, 10.0)),
+                        SyntheticGenerator(beta_range=(6.0, 10.0)),
+                        p_pole=1.0, p_pole_final=0.0)
+    mg.seed_scalars(5)
+    rng = torch.Generator().manual_seed(5)
+    mg.set_progress(0.0)     # all coins land below p_eff = 1.0
+    assert all(mg.batch(2, rng).meta.get("pole_labeled") for _ in range(6))
+    mg.set_progress(1.0)     # p_eff = 0.0: no coin can select the pole stream
+    assert not any(mg.batch(2, rng).meta.get("pole_labeled") for _ in range(6))
+    # Under fixed_scalars the bias pins to 0.5 whatever the schedule says,
+    # so the held-out stream is identical across progress states and arms.
+    kinds = []
+    for prog in (0.0, 1.0):
+        mg.set_progress(prog)
+        r = torch.Generator().manual_seed(11)
+        with mg.fixed_scalars(42):
+            kinds.append([bool(mg.batch(2, r).meta.get("pole_labeled"))
+                          for _ in range(8)])
+    assert kinds[0] == kinds[1]
+    assert any(kinds[0]) and not all(kinds[0])

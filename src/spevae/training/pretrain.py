@@ -207,6 +207,8 @@ def pretrain(
         for group in opt.param_groups:
             group["lr"] = _lr_at(step, cfg)
 
+        if hasattr(generator, "set_progress"):
+            generator.set_progress(step / max(cfg.steps - 1, 1))
         batch = generator.batch(cfg.batch_size, rng)
         out = model(batch.G, batch.x, batch.beta, sigma=batch.sigma)
         # Encode only: the consistency term reads mu and logvar and nothing else.

@@ -354,7 +354,8 @@ def cmd_pretrain(args) -> None:
             fam = SyntheticGenerator(omega_c=args.omega_c,
                                      families=args.families,
                                      device=args.device, **dist)
-            gen = MixedGenerator(gen, fam, p_pole=0.5)
+            gen = MixedGenerator(gen, fam, p_pole=args.p_pole,
+                                 p_pole_final=args.p_pole_final)
     else:
         gen = SyntheticGenerator(omega_c=args.omega_c,
                                  families=args.families,
@@ -494,6 +495,11 @@ def main(argv=None) -> None:
                    help="stack-coherence weight (pole-labeled data)")
     p.add_argument("--pole-eps1", type=float, default=0.01,
                    help="final OT eps (set equal to 0.1 to disable annealing)")
+    p.add_argument("--p-pole", type=float, default=0.5,
+                   help="fraction of pole-labeled batches under --data mixed")
+    p.add_argument("--p-pole-final", type=float, default=None,
+                   help="if set, the pole fraction moves linearly from "
+                        "--p-pole to this value over the run (curriculum)")
     p.add_argument("--beta-min", type=float, default=None,
                    help="override the preset's beta range (equal min/max "
                         "fixes beta -- the cheap tier for mechanism A/Bs)")
