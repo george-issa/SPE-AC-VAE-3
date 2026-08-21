@@ -463,7 +463,11 @@ class LossWeights:
     free_bits: float = 0.05
     consistency: float = 0.1
     barrier: float = 0.0
-    positivity: float = 1.0
+    # Off by design, not by accident: forcing A >= 0 in the loss biases the
+    # prior -- small dips are sometimes what a good reconstruction needs.
+    # Positivity is enforced where it is owed to the user instead: the
+    # consolidation refit and the certificate gate at inference.
+    positivity: float = 0.0
     pole: float = 5.0              # Sinkhorn pole-space loss (pole-labeled data)
     pole_eps0: float = 0.1         # OT entropic eps at step 0 ...
     pole_eps1: float = 0.01        # ... annealed geometrically to this at the end

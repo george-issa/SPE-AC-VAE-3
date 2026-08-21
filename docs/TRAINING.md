@@ -116,6 +116,13 @@ Recipe, from the campaign:
 - `--data mixed --p-pole 0.9 --p-pole-final 0.1` (the measured curriculum;
   constant 50/50 pays a coverage cost — see §1), `--pole-eps1 0.1` (no
   annealing), coherence off.
+- **No positivity pressure in training** (design decision, 2026-08-21):
+  the positivity loss defaults to 0 and training labels are allowed small
+  negative dips (bounded at 0.5% negative spectral weight via `dip_tol`,
+  not banned).  Forcing A ≥ 0 during training biases the prior — small
+  dips are sometimes what a good reconstruction needs.  Positivity is
+  enforced where the user is owed it: the consolidation refit and the
+  certificate gate at inference (release gate 4 is unchanged).
 - Full preset: β ∈ [2,20], all Δτ choices, all families, complex residues.
 - EMA on (0.999) — the shipped weights are the EMA weights.
 - Full cosine schedule; **no early stopping** on the production run.  Early

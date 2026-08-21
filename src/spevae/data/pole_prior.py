@@ -63,6 +63,7 @@ class PolePriorGenerator:
         noise_scale_range: tuple[float, float] = (3e-5, 3e-2),
         noise_xi_range: tuple[float, float] = (0.01, 0.4),
         P_max: int = 12,
+        dip_tol: float = 5e-3,
         quad_nodes_per_width: float = 3.5,
         quad_tail_nodes: int = 32,
         cache_limit: int = 4,
@@ -77,6 +78,9 @@ class PolePriorGenerator:
         self.noise_scale_range = noise_scale_range
         self.noise_xi_range = noise_xi_range
         self.P_max = int(P_max)
+        # Max negative spectral weight a training truth may carry (fraction
+        # of total weight); dips beyond it trigger b-shrinking in sample_poles.
+        self.dip_tol = float(dip_tol)
         self.quad_h = float(gamma_min) / float(quad_nodes_per_width)
         self.quad_tail_nodes = int(quad_tail_nodes)
         self.cache_limit = max(int(cache_limit), 1)
@@ -206,13 +210,18 @@ class PolePriorGenerator:
                 if changed:
                     break
 
-        # residues: b = a (t - <t>_a), certified positive (shrink b on the
-        # rare violation -- exact certificate, no grid)
+        # residues: b = a (t - <t>_a).  Truths are NOT forced non-negative:
+        # hard positivity biases the prior (small dips are sometimes what a
+        # good reconstruction needs).  The exact certificate is used only to
+        # *measure* the dip, and b shrinks only when the negative weight
+        # exceeds dip_tol -- a bound, not a ban.  Enforcement proper lives at
+        # inference (consolidation refit + certificate gate), not here.
         for shrink in range(4):
             tm = sum(ai * ti for ai, ti in zip(a, t))
             b = [ai * (ti - tm) for ai, ti in zip(a, t)]
             rep = certify(eps, gam, a, b, atol=1e-9)
-            if rep.is_positive or all(abs(v) < 1e-12 for v in b):
+            if (rep.is_positive or rep.negative_weight <= self.dip_tol
+                    or all(abs(v) < 1e-12 for v in b)):
                 break
             t = [0.5 * v for v in t]
         else:
