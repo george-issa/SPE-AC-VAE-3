@@ -887,6 +887,12 @@ def rank_scan(
     Returns the selected, polished pole set (physical units) and the
     :class:`RankScanTrace` carrying the full chi^2(n) curve.
     """
+    if ph_symmetric:
+        raise NotImplementedError(
+            "mirror-constrained rank scan is not validated yet (the folded "
+            "descent duplicates half-poles); run the plain scan -- it "
+            "recovers mirrored counts without symmetry knowledge -- or the "
+            "mirror-constrained refit/fixed point directly")
     eps = poles.eps.reshape(-1).double().clone()
     gam = poles.gamma.reshape(-1).double().clone()
     a = poles.a.reshape(-1).double().clone()
@@ -933,23 +939,34 @@ def rank_scan(
             fitted, _, c_end = refit_poles_to_greens(
                 cand, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R,
                 slices=slices, gamma_floor=gamma_floor, steps=refit_steps,
-                lr=lr, ph_symmetric=ph_symmetric)
+                lr=lr, ph_symmetric=ph_symmetric,
+                fold_tolerance=0.1 if ph_symmetric else 0.0)
             if float(c_end) < best_c:
                 best_fit, best_c = fitted, float(c_end)
         fitted, c_end = best_fit, best_c
+        n = int(fitted.a.shape[-1])          # ph refit expands to the full set
         ns.append(n)
         fits[n] = (fitted, float(c_end))
-        if n == 1:
+        if n <= (2 if ph_symmetric else 1):
             break
         eps = fitted.eps.reshape(-1).double()
         gam = fitted.gamma.reshape(-1).double()
         a = fitted.a.reshape(-1).double()
         b = fitted.b.reshape(-1).double()
-        if n > 1:
+        if ph_symmetric:
+            # descend in the folded half-space: the expanded output is exact
+            # mirror pairs, so the positive half (weights doubled) is a
+            # complete representation; one half-space merge removes one
+            # mirror PAIR from the full set, and the refit re-folds anyway.
+            half = eps > 0
+            eps, gam, a, b = eps[half], gam[half], 2.0 * a[half], 2.0 * b[half]
+        if a.numel() > 1 and not ph_symmetric:
             k = int(a.argmin())
-            keep = [i for i in range(n) if i != k]
+            keep = [i for i in range(a.numel()) if i != k]
             scale = float(a.sum() / a[keep].sum().clamp_min(1e-30))
             drop = (eps[keep], gam[keep], a[keep] * scale, b[keep])
+        else:
+            drop = None
         eps, gam, a, b = _merge_closest_pair(eps, gam, a, b)
     ns = sorted(ns)
 

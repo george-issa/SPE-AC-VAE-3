@@ -121,6 +121,27 @@ resolved world is the harder curriculum, and the smooth-biased prior's
 tail transfers better than a resolved bulk trained to the same cost.
 The smooth-biased ρ stays.
 
+**The rank scan closes the count question** (*measured*, built after the
+comb-aliasing discovery).  `rank_scan` replaces the fixed point's local,
+path-dependent count decision with a global one: warm-started descent in
+n (each candidate = the fitted (n+1)-parent reduced by merge-closest or
+drop-lightest, plus jittered restarts; χ² keeps the best basin per n),
+selected by the sequential likelihood ratio (a step to n+1 must buy
+≥ 9.5 in total whitened χ² — the pruner's doctrine applied to globally
+optimised fits).  On the ladder probes from the composite model's output
+it recovers the pole count on *all* cases: 3-rung → 3 (escaping the
+6-pole alias the fixed point could never leave), mirrored → 4 with no
+symmetry knowledge, and 4-rung → 3 — correctly: the faintest rung's
+evidence is 6.6 < 9.5 at this noise realisation, so "the data does not
+demand it" is the statistically right answer.  Within-count positions
+are recovered to the information limit only — several χ²-equivalent
+minima within ±0.3–0.5 exist for faint rungs (measured), so no χ²-based
+method can pin them tighter; dominant poles are sharp.  The χ²(n) curve
+in the trace is the honesty artifact: a sharp elbow = data-determined
+count, a shelf = report the ambiguity.  (Mirror-constrained scan is
+guarded off pending a correct folded descent; the plain scan needs no
+symmetry declaration.)
+
 Residual (ii) resolves the same way — and exposes what pretraining
 quality is *for* (*measured*).  The consolidation fixed point run from
 the pole-loss model's amortized output recovers the **exact minimal
