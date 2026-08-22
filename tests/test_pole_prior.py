@@ -189,3 +189,41 @@ def test_motif_restriction_lorentz_only():
         # lorentz motifs emit one pole per feature: K <= 3, x2 if mirrored
         assert (lab["n_true"] <= 6).all()
         assert (lab["n_true"] >= 1).all()
+
+
+def test_width_metric_prices_high_frequency_displacement():
+    lab = {"eps": torch.tensor([[2.0, 16.0]]), "gamma": torch.tensor([[0.5, 0.5]]),
+           "a": torch.tensor([[0.5, 0.5]]), "b": torch.zeros(1, 2),
+           "n_true": torch.tensor([2])}
+    exact = PoleSet(eps=lab["eps"], gamma=lab["gamma"], a=lab["a"], b=lab["b"])
+    lo, _ = sinkhorn_pole_loss(exact, lab, metric="width")
+    assert float(lo) < 0.02
+    # shift the HIGH-frequency pole by half a width: the width metric must
+    # notice it about as strongly as the same shift at low frequency
+    hi = PoleSet(eps=torch.tensor([[2.0, 16.25]]), gamma=lab["gamma"],
+                 a=lab["a"], b=lab["b"])
+    low = PoleSet(eps=torch.tensor([[2.25, 16.0]]), gamma=lab["gamma"],
+                  a=lab["a"], b=lab["b"])
+    c_hi = float(sinkhorn_pole_loss(hi, lab, metric="width")[0])
+    c_lo = float(sinkhorn_pole_loss(low, lab, metric="width")[0])
+    assert c_hi > 0.02
+    assert 0.5 < c_hi / c_lo < 2.0
+    # while the asinh metric barely sees the high-frequency shift
+    a_hi = float(sinkhorn_pole_loss(hi, lab, metric="asinh")[0])
+    a_lo = float(sinkhorn_pole_loss(low, lab, metric="asinh")[0])
+    assert a_hi < 0.2 * a_lo
+
+
+def test_concentration_penalizes_mass_splitting():
+    lab = {"eps": torch.tensor([[0.0]]), "gamma": torch.tensor([[0.5]]),
+           "a": torch.tensor([[1.0]]), "b": torch.zeros(1, 1),
+           "n_true": torch.tensor([1])}
+    one = PoleSet(eps=torch.tensor([[0.0, 5.0]]), gamma=torch.tensor([[0.5, 0.5]]),
+                  a=torch.tensor([[1.0 - 1e-6, 1e-6]]), b=torch.zeros(1, 2))
+    split = PoleSet(eps=torch.tensor([[0.0, 0.0]]), gamma=torch.tensor([[0.5, 0.5]]),
+                    a=torch.tensor([[0.5, 0.5]]), b=torch.zeros(1, 2))
+    l_one = float(sinkhorn_pole_loss(one, lab, lam_conc=1.0)[0])
+    l_split = float(sinkhorn_pole_loss(split, lab, lam_conc=1.0)[0])
+    l_split0 = float(sinkhorn_pole_loss(split, lab, lam_conc=0.0)[0])
+    assert l_split > l_one            # splitting now costs something
+    assert l_split > l_split0 + 0.2   # and the cost comes from the new term

@@ -472,6 +472,8 @@ class LossWeights:
     pole_eps0: float = 0.1         # OT entropic eps at step 0 ...
     pole_eps1: float = 0.01        # ... annealed geometrically to this at the end
     pole_coherence: float = 0.0    # stack-coherence weight (anti-ripple, pole-space)
+    pole_conc: float = 0.0         # one-label-one-slot concentration pressure
+    pole_metric: str = "asinh"     # OT position metric: "asinh" | "width"
     sparsity: float = 0.0          # weight-entropy penalty (minimal-pole prior)
     multiscale: float = 0.0        # broadened-envelope L2 alongside the plain one
     multiscale_scales: tuple = (1.0, 8.0, 32.0)
@@ -528,6 +530,8 @@ def pretrain_loss(
         t = 0.0 if progress is None else min(max(progress, 0.0), 1.0)
         eps_ot = weights.pole_eps0 * (weights.pole_eps1 / weights.pole_eps0) ** t
         L_ot, parts = sinkhorn_pole_loss(result.poles, batch.poles_true,
+                                         lam_conc=weights.pole_conc,
+                                         metric=weights.pole_metric,
                                          eps_ot=eps_ot,
                                          lam_coh=weights.pole_coherence)
         raw_chi2 = chi2(result.G_recon, batch.G, batch.sigma,
@@ -710,6 +714,8 @@ def sinkhorn_pole_loss(
     n_iter: int = 40,
     lam_b: float = 1.0,
     lam_coh: float = 0.0,
+    lam_conc: float = 0.0,
+    metric: str = "asinh",
     eps_scale: float = 3.141592653589793,
 ) -> tuple[torch.Tensor, dict]:
     r"""Entropic optimal transport between predicted and true pole measures.
@@ -742,7 +748,19 @@ def sinkhorn_pole_loss(
     V = feats(labels["eps"].to(dev, dt), labels["gamma"].to(dev, dt),
               labels["a"].to(dev, dt).clamp_min(1e-12),
               labels["b"].to(dev, dt))                        # (B, Pt, 3)
-    C = ((U.unsqueeze(2) - V.unsqueeze(1)) ** 2).sum(-1)      # (B, P, Pt)
+    if metric == "width":
+        # Position error in units of the LABEL's linewidth: a sub-width
+        # displacement costs the same wherever the pole sits and however
+        # faint it is -- the asinh feature compresses exactly the high-nu
+        # region where recovery failures concentrate.  asinh keeps the cost
+        # quadratic below one width and logarithmic far away (bounded
+        # early-training gradients).
+        de = pred.eps.unsqueeze(2) - labels["eps"].to(dev, dt).unsqueeze(1)
+        gl = labels["gamma"].to(dev, dt).clamp_min(1e-12).unsqueeze(1)
+        d_pos = (2.0 * torch.asinh(0.5 * de / gl)) ** 2
+        C = d_pos + ((U[..., 1:].unsqueeze(2) - V[..., 1:].unsqueeze(1)) ** 2).sum(-1)
+    else:
+        C = ((U.unsqueeze(2) - V.unsqueeze(1)) ** 2).sum(-1)  # (B, P, Pt)
 
     p_m = pred.a / pred.a.sum(-1, keepdim=True).clamp_min(1e-30)
     q_raw = labels["a"].to(dev, dt)
@@ -779,6 +797,18 @@ def sinkhorn_pole_loss(
         d2 = ((Upw.unsqueeze(2) - cent.unsqueeze(1)) ** 2).sum(-1)  # (B,P,Pt)
         L_coh = (pi * d2).sum(dim=(1, 2)).mean()
         loss = loss + lam_coh * L_coh
+
+    if lam_conc > 0.0:
+        # Concentration: each real label's incoming transport mass should
+        # come from ONE predicted slot.  Under plain OT co-location is free,
+        # so the trained equilibrium is stacks; this term is the missing
+        # pressure toward the minimal (canonical) representation the labels
+        # already are.  1 - max_i pi_ij / col_j is 0 for a one-hot column.
+        col = pi.sum(dim=1).clamp_min(1e-30)                 # (B, Pt)
+        conc = pi.max(dim=1).values / col                    # (B, Pt)
+        real = (~pad).to(dt)
+        L_conc = ((1.0 - conc) * real).sum(-1) / real.sum(-1).clamp_min(1.0)
+        loss = loss + lam_conc * L_conc.mean()
 
     with torch.no_grad():
         eff = 1.0 / (p_m.pow(2).sum(-1) + 1e-12)

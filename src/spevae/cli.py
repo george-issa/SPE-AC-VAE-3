@@ -370,6 +370,8 @@ def cmd_pretrain(args) -> None:
                           sparsity=args.w_sparsity, multiscale=args.w_multiscale,
                           highpass=args.w_highpass,
                           pole_coherence=args.w_pole_coh,
+                          pole_conc=args.w_pole_conc,
+                          pole_metric=args.pole_metric,
                           pole_eps1=args.pole_eps1)
     cfg = PretrainConfig(steps=steps, batch_size=args.batch_size or p["batch_size"],
                          lr=args.lr, eval_every=max(steps // 12, 1),
@@ -518,6 +520,11 @@ def main(argv=None) -> None:
                    help="comma-separated subset of pole-prior motifs for the "
                         "pole stream (e.g. 'lorentz' for the pole-loss "
                         "identity tier)")
+    p.add_argument("--pole-metric", default="asinh", choices=["asinh", "width"],
+                   help="OT position metric; 'width' prices displacement in "
+                        "units of the label's linewidth")
+    p.add_argument("--w-pole-conc", type=float, default=0.0,
+                   help="one-label-one-slot concentration pressure (anti-stack)")
     p.add_argument("--rho-min", type=float, default=None,
                    help="override the smooth-biased spacing/width prior with "
                         "a uniform rho draw on [rho-min, rho-max]")
