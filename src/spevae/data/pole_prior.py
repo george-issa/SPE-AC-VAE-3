@@ -65,6 +65,7 @@ class PolePriorGenerator:
         P_max: int = 12,
         dip_tol: float = 5e-3,
         motifs: tuple[str, ...] = MOTIFS,
+        rho_range: tuple[float, float] | None = None,
         quad_nodes_per_width: float = 3.5,
         quad_tail_nodes: int = 32,
         cache_limit: int = 4,
@@ -82,6 +83,11 @@ class PolePriorGenerator:
         # Max negative spectral weight a training truth may carry (fraction
         # of total weight); dips beyond it trigger b-shrinking in sample_poles.
         self.dip_tol = float(dip_tol)
+        # Overrides the smooth-biased spacing/width draw with a uniform one:
+        # identity tests on *resolved* structures need a prior whose bulk is
+        # resolved, not its tail.
+        self.rho_range = None if rho_range is None else (float(rho_range[0]),
+                                                         float(rho_range[1]))
         # Restricting motifs narrows the prior to a sub-world (e.g. only
         # isolated Lorentzians) -- the pole-loss identity tier.
         unknown = set(motifs) - set(MOTIFS)
@@ -124,8 +130,11 @@ class PolePriorGenerator:
         # this distribution IS the explicit smoothness prior -- uniform rho
         # said "resolved bumps as likely as smooth bands", which is not the
         # physical expectation.  median ~1.5, p90 ~3.0.
-        u = self._u(0.0, 1.0)
-        rho = 0.8 + 2.7 * u * u
+        if self.rho_range is not None:
+            rho = self._u(*self.rho_range)
+        else:
+            u = self._u(0.0, 1.0)
+            rho = 0.8 + 2.7 * u * u
         if motif == "lorentz":
             g = max(self._u(0.5, 2.0) * half, floor)
             return [centre], [g], [1.0], [self._u(-0.4, 0.4)]

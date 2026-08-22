@@ -350,6 +350,8 @@ def cmd_pretrain(args) -> None:
         pole_kw = {}
         if args.motifs is not None:
             pole_kw["motifs"] = tuple(args.motifs)
+        if args.rho_min is not None:
+            pole_kw["rho_range"] = (args.rho_min, args.rho_max)
         gen = PolePriorGenerator(omega_c=args.omega_c,
                                  P_max=args.num_poles - 4,
                                  device=args.device, **pole_kw, **dist)
@@ -516,6 +518,10 @@ def main(argv=None) -> None:
                    help="comma-separated subset of pole-prior motifs for the "
                         "pole stream (e.g. 'lorentz' for the pole-loss "
                         "identity tier)")
+    p.add_argument("--rho-min", type=float, default=None,
+                   help="override the smooth-biased spacing/width prior with "
+                        "a uniform rho draw on [rho-min, rho-max]")
+    p.add_argument("--rho-max", type=float, default=None)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
     p.add_argument("--init-from", default=None,
