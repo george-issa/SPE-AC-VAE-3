@@ -353,3 +353,56 @@ def test_sharpness_verdict_discriminates():
                            inv_sqrt_R=cov2["inv_sqrt_R"], slices=cov2["slices"],
                            steps=1200)
     assert not v2["data_demanded"], v2["n_dchi2"]
+
+
+def test_rank_scan_escapes_the_comb_aliasing_trap():
+    """The measured trap: a dense 6-pole comb fits a 3-rung truth at chi^2 ~ 1
+    and blocks every single-pole pruning move.  The rank scan must select
+    n = 3 and land the rungs, because the 3-pole refit reaches the noise
+    floor and the elbow prefers the smallest count that does."""
+    from spevae.physics.consolidate import rank_scan
+
+    beta, noise = 8.0, 1e-4
+    truth = PoleSet(eps=torch.tensor([[0.5, 1.5, 2.5]]) * beta,
+                    gamma=torch.tensor([[0.3, 0.3, 0.3]]) * beta,
+                    a=torch.tensor([[0.540, 0.297, 0.163]]),
+                    b=torch.zeros(1, 3)).to_physical(1.0)  # already physical scale
+    truth = PoleSet(eps=torch.tensor([[0.5, 1.5, 2.5]]),
+                    gamma=torch.tensor([[0.3, 0.3, 0.3]]),
+                    a=torch.tensor([[0.540, 0.297, 0.163]]),
+                    b=torch.zeros(1, 3))
+    quad = SpectralQuadrature(nu_c=beta * 20.0, h=0.09, dtype=torch.float64)
+    fwd = PoleGreens(quad)
+    x = torch.linspace(0.0, 1.0, 65, dtype=torch.float64).unsqueeze(0)
+    G = fwd(truth.to_dimensionless(beta).to(torch.float64), x[0])
+    g = torch.Generator().manual_seed(0)
+    sigma = torch.full_like(G, noise)
+    G = G + sigma * torch.randn(G.shape, generator=g, dtype=torch.float64)
+
+    # the alias: a denser, finer comb spanning the same envelope, plus dust
+    dense = PoleSet(
+        eps=torch.tensor([[0.45, 1.0, 1.45, 2.0, 2.55, 3.1, -0.9, 4.0]]),
+        gamma=torch.tensor([[0.28, 0.3, 0.3, 0.28, 0.3, 0.3, 0.5, 0.4]]),
+        a=torch.tensor([[0.40, 0.16, 0.17, 0.12, 0.09, 0.04, 0.01, 0.01]]),
+        b=torch.zeros(1, 8))
+
+    sel, trace = rank_scan(dense, beta, x, G, sigma, n_max=6,
+                           refit_steps=3000, polish_steps=1000)
+    # The COUNT is what the sequential LR recovers deterministically.
+    assert trace.selected_n == 3, str(trace)
+    # The selected fit is statistically equivalent to the truth basin
+    # (chi2 at truth is ~0.92; 9.5/L_eff of slack is the LR resolution).
+    assert trace.chi2_selected < 1.1, str(trace)
+    got = torch.sort(sel.eps[0]).values
+    want = torch.tensor([0.5, 1.5, 2.5], dtype=got.dtype)
+    # Dominant rung: pinned by the data.  Faint rungs: recovered only to the
+    # measured information limit (several chi2-equivalent minima within ~0.5).
+    assert abs(float(got[0] - want[0])) < 0.15, got
+    assert (got - want).abs().max() < 0.6, got
+    # And the selected spectrum is indistinguishable from the truth's.
+    quad2 = SpectralQuadrature(nu_c=beta * 20.0, h=0.09)
+    from spevae.losses import spectral_w1
+    w1 = float(spectral_w1(sel.to_dimensionless(beta).spectral(quad2.nodes),
+                           truth.to_dimensionless(beta).spectral(quad2.nodes),
+                           quad2, beta=beta))
+    assert w1 < 0.06, w1

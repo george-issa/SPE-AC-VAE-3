@@ -39,7 +39,8 @@ from .poles import PoleSet
 
 __all__ = ["ConsolidationReport", "consolidate_poles",
            "refit_poles_to_greens", "minimal_pole_fixed_point",
-           "FixedPointTrace", "pole_significance_table", "sharpness_verdict",
+           "FixedPointTrace", "rank_scan", "RankScanTrace",
+           "pole_significance_table", "sharpness_verdict",
            "feature_ledger"]
 
 
@@ -800,3 +801,178 @@ def feature_ledger(
             row["verdict"] = "sharpness undecidable"
         rows.append(row)
     return rows
+
+
+# --------------------------------------------------------------------------- #
+# Rank scan: the global pole-count decision
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class RankScanTrace:
+    """The chi^2(n) curve and the selection it led to.
+
+    A sharp elbow means the pole count is data-determined; a flat shelf
+    means the data genuinely cannot distinguish the counts on it -- print
+    the curve, it is the honesty artifact.
+    """
+
+    ns: list                      #: candidate pole counts, ascending
+    chi2s: list                   #: whitened per-dof chi^2 after full refit, per n
+    selected_n: int
+    chi2_selected: float
+    chi2_best: float
+    tolerance: float
+
+    def __str__(self) -> str:
+        curve = "  ".join(f"{n}:{c:.3g}" for n, c in zip(self.ns, self.chi2s))
+        return (f"rank scan [{curve}] -> n={self.selected_n} "
+                f"(chi2 {self.chi2_selected:.4g}, best {self.chi2_best:.4g}, "
+                f"tol x{self.tolerance:g})")
+
+
+def _merge_closest_pair(eps, gam, a, b):
+    """Merge the closest pair (positions in units of the narrower width)."""
+    P = eps.numel()
+    d = (eps.unsqueeze(0) - eps.unsqueeze(1)).abs()
+    scale = torch.minimum(gam.unsqueeze(0), gam.unsqueeze(1)).clamp_min(1e-12)
+    d = d / scale + torch.eye(P, dtype=eps.dtype) * 1e30
+    i, j = divmod(int(d.argmin()), P)
+    keep = [k for k in range(P) if k not in (i, j)]
+    w = (a[i] + a[j]).clamp_min(1e-30)
+    eps_m = (a[i] * eps[i] + a[j] * eps[j]) / w
+    gam_m = (a[i] * gam[i] + a[j] * gam[j]) / w
+    return (torch.cat([eps[keep], eps_m[None]]),
+            torch.cat([gam[keep], gam_m[None]]),
+            torch.cat([a[keep], w[None]]),
+            torch.cat([b[keep], (b[i] + b[j])[None]]))
+
+
+def rank_scan(
+    poles: PoleSet,
+    beta: float,
+    x: torch.Tensor,
+    G_obs: torch.Tensor,
+    sigma: torch.Tensor,
+    inv_sqrt_R: torch.Tensor | None = None,
+    slices: torch.Tensor | None = None,
+    n_max: int = 8,
+    refit_steps: int = 2000,
+    polish_steps: int = 2000,
+    lr: float = 0.02,
+    tolerance: float = 1.5,     # retained in the trace for context only
+    prune_quantile: float = 9.5,
+    restarts: int = 2,
+    jitter: float = 0.4,
+    seed: int = 0,
+    gamma_floor: float | None = None,
+    ph_symmetric: bool = False,
+) -> tuple[PoleSet, RankScanTrace]:
+    r"""Global pole-count selection: refit at every count, pick the elbow.
+
+    The fixed point (:func:`minimal_pole_fixed_point`) is a *local* search:
+    it prunes one pole at a time, and a wrong-count basin whose poles must
+    reorganise wholesale under a removal blocks every individual step (the
+    measured comb-aliasing trap).  The scan makes the one discrete decision
+    -- how many poles -- globally instead: hierarchical weighted merging of
+    the amortized set supplies an n-pole initialisation for every
+    n = 1..n_max, each is refit *in full* against the whitened data (its own
+    basin, not a pruning remnant), and the smallest n whose refit chi^2 lies
+    within ``tolerance`` of the best over all n is selected -- the parsimony
+    elbow, i.e. the likelihood-ratio doctrine applied to the whole curve
+    rather than to one removal at a time.  This is the noisy-tau-data
+    counterpart of the SVD-rank decision in the minimal pole method of
+    Zhang & Gull: the noise floor, not the parameterisation, sets how many
+    poles the data supports.
+
+    Returns the selected, polished pole set (physical units) and the
+    :class:`RankScanTrace` carrying the full chi^2(n) curve.
+    """
+    eps = poles.eps.reshape(-1).double().clone()
+    gam = poles.gamma.reshape(-1).double().clone()
+    a = poles.a.reshape(-1).double().clone()
+    b = poles.b.reshape(-1).double().clone()
+    live = a > 1e-9 * float(a.sum())
+    eps, gam, a, b = eps[live], gam[live], a[live], b[live]
+
+    # cold-merge the amortized set down to n_max, then descend in n with a
+    # WARM start: each n-pole candidate is the fitted (n+1)-pole result with
+    # its closest pair merged.  Every fit therefore starts from a
+    # data-consistent parent -- backward elimination with full refits --
+    # which is what carries a candidate across the half-spacing moves a
+    # cold merge-tree init cannot make.
+    dt = poles.eps.dtype
+    while eps.numel() > n_max:
+        eps, gam, a, b = _merge_closest_pair(eps, gam, a, b)
+
+    ns: list[int] = []
+    fits: dict[int, tuple[PoleSet, float]] = {}
+    rng = torch.Generator().manual_seed(seed)
+    drop = None
+    while True:
+        n = eps.numel()
+        # Multi-start: refit landscapes at fixed n have rival basins of their
+        # own (the measured 3-pole merger alias sits 0.35 chi^2/dof above the
+        # truth basin).  Two deterministic starts -- the parent with its
+        # closest pair merged, and the parent with its lightest pole dropped
+        # (the right move when the parent is truth-plus-dust) -- plus
+        # jittered restarts; chi^2 arbitrates, and at fixed n that
+        # comparison IS statistically decisive, unlike across n.
+        span = (eps.max() - eps.min()).clamp_min(1.0)
+        spacing = span / max(n, 1)
+        starts = [(eps, gam, a, b)]
+        if drop is not None:
+            starts.append(drop)
+        for r in range(restarts):
+            e0 = eps + jitter * spacing * (
+                2.0 * torch.rand(eps.shape, generator=rng, dtype=eps.dtype) - 1.0)
+            starts.append((e0, gam, a, b))
+        best_fit, best_c = None, float("inf")
+        for e0, g0, a0, b0 in starts:
+            cand = PoleSet(eps=e0[None].to(dt), gamma=g0[None].to(dt),
+                           a=a0[None].to(dt), b=b0[None].to(dt))
+            fitted, _, c_end = refit_poles_to_greens(
+                cand, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R,
+                slices=slices, gamma_floor=gamma_floor, steps=refit_steps,
+                lr=lr, ph_symmetric=ph_symmetric)
+            if float(c_end) < best_c:
+                best_fit, best_c = fitted, float(c_end)
+        fitted, c_end = best_fit, best_c
+        ns.append(n)
+        fits[n] = (fitted, float(c_end))
+        if n == 1:
+            break
+        eps = fitted.eps.reshape(-1).double()
+        gam = fitted.gamma.reshape(-1).double()
+        a = fitted.a.reshape(-1).double()
+        b = fitted.b.reshape(-1).double()
+        if n > 1:
+            k = int(a.argmin())
+            keep = [i for i in range(n) if i != k]
+            scale = float(a.sum() / a[keep].sum().clamp_min(1e-30))
+            drop = (eps[keep], gam[keep], a[keep] * scale, b[keep])
+        eps, gam, a, b = _merge_closest_pair(eps, gam, a, b)
+    ns = sorted(ns)
+
+    chi2s = [fits[n][1] for n in ns]
+    best = min(chi2s)
+    # Sequential likelihood ratio, smallest n first: accept n unless the
+    # step to n+1 buys more than ``prune_quantile`` in TOTAL whitened chi^2
+    # (the same chi^2_4 doctrine the pruner uses, applied to globally
+    # optimised fits).  A relative band on per-dof chi^2 is too crude here:
+    # a 2-pole merger can sit within 1.3x of the floor while the third pole
+    # is still statistically demanded.
+    L_eff = int(G_obs.reshape(-1).numel())
+    sel = ns[-1]
+    for k, n in enumerate(ns[:-1]):
+        gain = (chi2s[k] - min(chi2s[k + 1:])) * L_eff
+        if gain < prune_quantile:
+            sel = n
+            break
+    selected, _, c_sel = refit_poles_to_greens(
+        fits[sel][0], beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R,
+        slices=slices, gamma_floor=gamma_floor, steps=polish_steps, lr=0.5 * lr,
+        ph_symmetric=ph_symmetric)
+    trace = RankScanTrace(ns=ns, chi2s=chi2s, selected_n=sel,
+                          chi2_selected=float(c_sel), chi2_best=best,
+                          tolerance=tolerance)
+    return selected, trace
