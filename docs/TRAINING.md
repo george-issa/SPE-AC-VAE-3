@@ -101,6 +101,26 @@ amortized pass supplies the basin; refine supplies the digits.  (χ²
 settling ~1σ below 1 on 65 points is the expected mild noise
 absorption of an unconsolidated 16-pole fit.)
 
+**Ladder extension** (*measured*, `--motifs ladder`, the next pole-closed
+family up: 2–4-rung combs, decaying weights, up to 12 poles with
+mirroring).  A(ω) accuracy transfers at every budget (consolidated W₁
+0.015–0.031, χ² ≈ 0.85); exact structural recovery is harder and its
+residuals decompose three ways, each measured: (i) *budget* — 12k → 24k
+fixed the 3-rung count (5 → 3 poles) and brought dominant rungs to 2–3
+digits; monotone, as the basin picture predicts; (ii) *information* —
+at noise 3×10⁻⁵ the 3-rung case becomes essentially exact (W₁ 0.008,
+weakest rung recovered), so its 10⁻⁴-noise residual was the
+identifiability edge, not the model; (iii) *basin* — the 4-rung's ~0.08
+position offsets and the mirrored case's 6-poles-asymmetric answer are
+unchanged by better data: only a stronger amortized basin (or, for
+genuinely PH-symmetric data, the mirror-constrained consolidation mode)
+removes them.  Negative result, recorded: swapping the smooth-biased ρ
+draw for a resolved-comb prior (ρ ~ U(2, 4.5)) at matched budget made
+*everything worse* (amortized W₁ ~2× worse, counts 5/5/6) — the
+resolved world is the harder curriculum, and the smooth-biased prior's
+tail transfers better than a resolved bulk trained to the same cost.
+The smooth-biased ρ stays.
+
 Residual (ii) resolves the same way — and exposes what pretraining
 quality is *for* (*measured*).  The consolidation fixed point run from
 the pole-loss model's amortized output recovers the **exact minimal
