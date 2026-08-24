@@ -157,6 +157,26 @@ precision limit, not physics.  Together these are the quantitative case
 for structured-template priors at selection time: only shared-parameter
 structure can cross the log wall.
 
+**Structured templates cross the log wall** (*measured*,
+`physics/templates.py`).  Physics hypotheses fit as competing models —
+a ladder is 4 parameters (base, spacing, shared width, decay) for *any*
+rung count — selected against free poles by an ascending-complexity LR
+walk (Wilson–Hilferty χ² quantiles; equal complexity decided by fit
+alone).  On the probes: 3-rung recovered to **four digits**
+(ε₀ = 0.4999, Ω = 0.9996, γ = 0.300, r = 0.5504; W₁ 2×10⁻⁴); the
+4-rung's faint rung — individually below the 9.5 evidence threshold —
+is recovered *through the template* (ladder(4) vs ladder(3) is an
+equal-k contest: 0.906 vs 153, decisive) with all parameters to 3–4
+digits; the mirrored case selects mirrored_ladder(2) exactly
+(1.198, 1.001, 0.299, 0.454 vs 1.2, 1.0, 0.3, 0.45), i.e. symmetry
+*detected by model comparison*, no declaration needed; and the
+extreme-SNR count overshoot vanishes (templates leave no slop for an
+absorber pole).  Free poles stay on the menu as the assumption-free
+fallback, so the floor is the plain rank scan; a template only wins
+when the data is consistent with it AND it is more parsimonious.  The
+selection trace (winner, χ², margins over runners-up) is part of the
+output — the prior's entire contribution is declared, per dataset.
+
 Residual (ii) resolves the same way — and exposes what pretraining
 quality is *for* (*measured*).  The consolidation fixed point run from
 the pole-loss model's amortized output recovers the **exact minimal
