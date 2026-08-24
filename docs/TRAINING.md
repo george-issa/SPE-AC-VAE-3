@@ -177,6 +177,20 @@ when the data is consistent with it AND it is more parsimonious.  The
 selection trace (winner, χ², margins over runners-up) is part of the
 output — the prior's entire contribution is declared, per dataset.
 
+**The three error laws, measured with guide lines and no fits**
+(template sweep, σ = 3×10⁻³ … 10⁻⁵): *detection* evidence rides slope
+−2 over four decades (the 3-rung's faint-rung evidence crosses the
+χ²₄ threshold at σ ≈ 2×10⁻³, exactly where its noisiest-point selection
+degrades — the panels interlock); *identification* error (template W₁
+and rung positions) rides slope +1 down to W₁ ~ 10⁻⁴–10⁻⁵; free-pole
+*resolution* sits on the 1/ln(1/σ) wall (flat at ~0.3–0.8 position
+error across all noise) while the template track descends linearly
+through it — three to four orders of magnitude below at the clean end.
+Templates also recover full structure at σ = 3×10⁻³ where the free scan
+supports only half the poles (ladder(4) at W₁ 0.005 from data the
+likelihood reads as two bumps).  At fixed data quality, the declared
+prior is the resolution.
+
 Residual (ii) resolves the same way — and exposes what pretraining
 quality is *for* (*measured*).  The consolidation fixed point run from
 the pole-loss model's amortized output recovers the **exact minimal
