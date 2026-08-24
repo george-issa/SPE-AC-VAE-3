@@ -979,9 +979,32 @@ def rank_scan(
     # a 2-pole merger can sit within 1.3x of the floor while the third pole
     # is still statistically demanded.
     L_eff = int(G_obs.reshape(-1).numel())
+
+    def _repolish(idx):
+        n_ = ns[idx]
+        refit, _, c_ = refit_poles_to_greens(
+            fits[n_][0], beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R,
+            slices=slices, gamma_floor=gamma_floor, steps=polish_steps,
+            lr=0.5 * lr, ph_symmetric=ph_symmetric)
+        if float(c_) < chi2s[idx]:
+            fits[n_] = (refit, float(c_))
+            chi2s[idx] = float(c_)
+
+    polished: set[int] = set()
     sel = ns[-1]
     for k, n in enumerate(ns[:-1]):
         gain = (chi2s[k] - min(chi2s[k + 1:])) * L_eff
+        # Borderline decisions are settled on floor-quality fits: Adam's
+        # step-size orbit costs a few units of total chi^2, comparable to
+        # the LR margin exactly when it matters.  Polish both competitors
+        # at the finer rate before ruling; clear-cut gaps skip this.
+        if 0.5 * prune_quantile < gain < 2.0 * prune_quantile:
+            rival = k + 1 + int(torch.tensor(chi2s[k + 1:]).argmin())
+            for idx in (k, rival):
+                if ns[idx] not in polished:
+                    _repolish(idx)
+                    polished.add(ns[idx])
+            gain = (chi2s[k] - min(chi2s[k + 1:])) * L_eff
         if gain < prune_quantile:
             sel = n
             break
