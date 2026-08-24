@@ -142,6 +142,21 @@ count, a shelf = report the ambiguity.  (Mirror-constrained scan is
 guarded off pending a correct folded descent; the plain scan needs no
 symmetry declaration.)
 
+**Noise-convergence study** (*measured*, full pipeline over σ = 3×10⁻³
+… 10⁻⁵ on the ladder probes): the three error classes separate exactly
+as the analyticity argument predicts.  *Counts* staircase up fast
+(evidence ∝ 1/σ²): the 4-rung flips 3 → 4 at σ = 3×10⁻⁵, as computed in
+advance from its 7.1-vs-9.5 evidence at 10⁻⁴.  *Spectra* converge then
+plateau at W₁ ≈ 0.03 — not to zero at any tested noise.  *Faint-rung
+positions* stagnate at ~0.3 across three decades — the logarithmic wall
+drawn in data.  New phenomenon at extreme SNR: mild count *overshoot*
+(4/3, 5/4 at σ ≤ 3×10⁻⁵) — at that precision the within-count position
+slop of the refit basins is itself worth ≫ 9.5 in χ², so the LR test
+honestly demands an extra pole to absorb it; an optimization/amortization
+precision limit, not physics.  Together these are the quantitative case
+for structured-template priors at selection time: only shared-parameter
+structure can cross the log wall.
+
 Residual (ii) resolves the same way — and exposes what pretraining
 quality is *for* (*measured*).  The consolidation fixed point run from
 the pole-loss model's amortized output recovers the **exact minimal
