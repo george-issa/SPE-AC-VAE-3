@@ -196,17 +196,43 @@ def ladder_starts(poles: PoleSet, mirrored: bool = False,
     return [(b, o) for b in bases for o in oms]
 
 
-def select_model(candidates: list[TemplateFit], L_eff: int) -> TemplateFit:
+def select_model(candidates: list[TemplateFit], L_eff: int,
+                 repolish=None, borderline=(0.5, 2.0)) -> TemplateFit:
     """Ascending-k walk: complexity must pay the chi^2 quantile for its
-    extra parameters; equal complexity is decided by fit alone."""
-    order = sorted(candidates, key=lambda c: (c.k_params, c.chi2))
-    current = order[0]
-    for cand in order[1:]:
-        dk = cand.k_params - current.k_params
-        gain = (current.chi2 - cand.chi2) * L_eff
-        if gain > chi2_quantile_95(dk):
-            current = cand
-    return current
+    extra parameters; equal complexity is decided by fit alone.
+
+    ``repolish``: optional ``TemplateFit -> TemplateFit`` returning the same
+    hypothesis refit at floor quality (longer, finer).  When a displacement
+    decision's gain lands within ``borderline`` times its threshold, both
+    competitors are re-polished before ruling -- optimiser orbit noise is a
+    few units of total chi^2, the same order as the margin exactly when the
+    call is close (the rank scan's measured rule, applied to the menu).
+    A candidate whose polish does not improve chi^2 keeps its original fit.
+    """
+    cands = sorted(candidates, key=lambda c: (c.k_params, c.chi2))
+    polished: set[int] = set()
+
+    def _polish(i):
+        if repolish is None or i in polished:
+            return
+        better = repolish(cands[i])
+        if better is not None and better.chi2 < cands[i].chi2:
+            cands[i] = better
+        polished.add(i)
+
+    cur = 0
+    for i in range(1, len(cands)):
+        dk = cands[i].k_params - cands[cur].k_params
+        q = chi2_quantile_95(dk)
+        gain = (cands[cur].chi2 - cands[i].chi2) * L_eff
+        lo, hi = (borderline[0] * q, borderline[1] * q) if dk > 0 else (0.0, 5.0)
+        if lo < gain < max(hi, lo + 1e-9):
+            _polish(cur)
+            _polish(i)
+            gain = (cands[cur].chi2 - cands[i].chi2) * L_eff
+        if gain > q:
+            cur = i
+    return cands[cur]
 
 
 def fit_peaks(
@@ -221,6 +247,7 @@ def fit_peaks(
     lr: float = 0.02,
     gamma_floor: float | None = None,
     asym: bool = False,
+    t_starts: list[list[float]] | None = None,
 ) -> TemplateFit:
     r"""n independent symmetric peaks: the humblest structured hypothesis.
 
@@ -279,6 +306,9 @@ def fit_peaks(
                 sgn = torch.where(torch.rand(n, generator=gen_t) < 0.5,
                                   -1.0, 1.0).to(torch.float64)
                 t_inits.append(0.25 * sgn)
+            for tv in (t_starts or []):
+                t_inits.append(torch.tensor([float(v) for v in tv],
+                                            dtype=torch.float64))
         else:
             t_inits = [torch.zeros(n, dtype=torch.float64)]
         e_init0 = e_init.clone()

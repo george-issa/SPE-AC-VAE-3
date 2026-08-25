@@ -149,3 +149,26 @@ def test_symmetric_truth_keeps_the_symmetric_winner():
     # b == 0 truth: freeing b buys < the quantile -> parsimony keeps peaks
     assert select_model([sym, asym], L_eff=65).name == "peaks", \
         (sym.chi2, asym.chi2)
+
+
+def test_select_model_repolishes_borderline_contests():
+    calls = []
+
+    def repolish(c):
+        calls.append((c.name, c.m))
+        # polishing the k=10 candidate reveals its true floor and flips
+        # the borderline verdict
+        if c.k_params == 10:
+            return TemplateFit(name=c.name, m=c.m, k_params=c.k_params,
+                               chi2=c.chi2 - 0.06, poles=None, params={})
+        return c
+
+    a = TemplateFit(name="asym", m=3, k_params=10, chi2=1.054, poles=None,
+                    params={})
+    b = TemplateFit(name="peaks", m=4, k_params=11, chi2=0.963, poles=None,
+                    params={})
+    # gain = (1.054-0.963)*65 = 5.9, threshold q95(1) = 3.84 -> borderline band
+    assert select_model([a, b], L_eff=65).name == "peaks"          # no polish
+    w = select_model([a, b], L_eff=65, repolish=repolish)
+    assert calls, "borderline contest must trigger repolish"
+    assert w.name == "asym"      # polished floor flips the verdict
