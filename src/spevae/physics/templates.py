@@ -31,7 +31,7 @@ from .forward import PoleGreens, SpectralQuadrature
 from .poles import PoleSet
 
 __all__ = ["TemplateFit", "fit_ladder", "ladder_starts", "select_model",
-           "chi2_quantile_95"]
+           "fit_peaks", "peak_starts", "fit_edged_band", "chi2_quantile_95"]
 
 
 def chi2_quantile_95(d: int) -> float:
@@ -207,3 +207,180 @@ def select_model(candidates: list[TemplateFit], L_eff: int) -> TemplateFit:
         if gain > chi2_quantile_95(dk):
             current = cand
     return current
+
+
+def fit_peaks(
+    beta: float,
+    x: torch.Tensor,
+    G_obs: torch.Tensor,
+    sigma: torch.Tensor,
+    inv_sqrt_R: torch.Tensor | None = None,
+    n: int = 3,
+    starts: list[list[float]] | None = None,
+    steps: int = 2000,
+    lr: float = 0.02,
+    gamma_floor: float | None = None,
+) -> TemplateFit:
+    r"""n independent symmetric peaks: the humblest structured hypothesis.
+
+    Positions, widths and (normalised) weights are free but the asymmetries
+    are pinned to zero -- k = 3n - 1 against the free fit's 4n.  This is the
+    entry whose absence the irregular-triplet test exposed: same fit as free
+    poles whenever the truth is symmetric, strictly cheaper.
+    """
+    quad = SpectralQuadrature.for_beta(float(beta), dtype=torch.float64)
+    fwd = PoleGreens(quad)
+    xd = x.reshape(-1).double()
+    K = fwd.kernel_matrix(xd)
+    G = G_obs.reshape(1, -1).double()
+    s = sigma.reshape(1, -1).double()
+    W = None if inv_sqrt_R is None else inv_sqrt_R.double()
+    floor = (0.1 * math.pi / beta) if gamma_floor is None else float(gamma_floor)
+
+    def chi2_of(ps):
+        Gp = fwd(ps, xd, kernel_matrix=K)
+        d = (Gp - G) / s
+        if W is not None:
+            d = d @ W.transpose(-1, -2)
+        return (d * d).sum(-1).mean() / d.shape[-1]
+
+    if starts is None:
+        starts = [list(torch.linspace(-2.0, 2.0, n))]
+    # rival basins are the rule, not the exception: jittered restarts around
+    # every provided start, chi^2 keeps the best (seeded, deterministic)
+    rng = torch.Generator().manual_seed(0)
+    expanded = []
+    for e_init in starts:
+        e0 = torch.tensor([float(v) for v in e_init], dtype=torch.float64)
+        expanded.append(e0)
+        for _ in range(3):
+            expanded.append(e0 + 0.3 * (2.0 * torch.rand(n, generator=rng,
+                            dtype=torch.float64) - 1.0))
+    best = None
+    for e_init in expanded:
+        u_e = e_init.clone().requires_grad_(True)
+        u_g = torch.log(torch.expm1(torch.full((n,), 0.25,
+                        dtype=torch.float64))).clone().requires_grad_(True)
+        u_w = torch.zeros(n, dtype=torch.float64, requires_grad=True)
+        opt = torch.optim.Adam([u_e, u_g, u_w], lr=lr)
+        best_local, best_state = float("inf"), None
+        for _ in range(steps):
+            g = floor + torch.nn.functional.softplus(u_g)
+            w = torch.softmax(u_w, dim=-1)
+            ps = PoleSet(eps=(u_e * beta).unsqueeze(0),
+                         gamma=(g * beta).unsqueeze(0),
+                         a=w.unsqueeze(0), b=torch.zeros(1, n,
+                                                         dtype=torch.float64))
+            loss = chi2_of(ps)
+            v = float(loss.detach())
+            if v < best_local:
+                best_local = v
+                best_state = (u_e.detach().clone(), g.detach().clone(),
+                              w.detach().clone())
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+        if best is None or best_local < best[0]:
+            best = (best_local, best_state)
+    c, (e, g, w) = best
+    poles = PoleSet(eps=e.unsqueeze(0), gamma=g.unsqueeze(0),
+                    a=w.unsqueeze(0), b=torch.zeros(1, n, dtype=torch.float64))
+    return TemplateFit(name="peaks", m=n, k_params=3 * n - 1, chi2=float(c),
+                       poles=poles,
+                       params={f"eps{i}": float(e[i]) for i in range(n)})
+
+
+def peak_starts(poles: PoleSet, n: int) -> list[list[float]]:
+    """Position inits: the n heaviest amortized poles, sorted."""
+    a = poles.a.reshape(-1)
+    eps = poles.eps.reshape(-1)
+    idx = torch.topk(a, k=min(n, a.numel())).indices
+    base = sorted(float(eps[i]) for i in idx)
+    while len(base) < n:
+        base.append(base[-1] + 1.0)
+    return [base]
+
+
+def fit_edged_band(
+    beta: float,
+    x: torch.Tensor,
+    G_obs: torch.Tensor,
+    sigma: torch.Tensor,
+    inv_sqrt_R: torch.Tensor | None = None,
+    m: int = 5,
+    starts: list[tuple[float, float]] | None = None,
+    steps: int = 2500,
+    lr: float = 0.02,
+    gamma_floor: float | None = None,
+) -> TemplateFit:
+    r"""A band with sharp edges: m poles spanning [c-W, c+W], narrow at the
+    edges and broad in the body, with one weight-tilt parameter.
+
+    k = 5 whatever m is (centre, half-width, body width, edge width, tilt);
+    m is representation multiplicity -- a resolution choice, not physics.
+    """
+    quad = SpectralQuadrature.for_beta(float(beta), dtype=torch.float64)
+    fwd = PoleGreens(quad)
+    xd = x.reshape(-1).double()
+    K = fwd.kernel_matrix(xd)
+    G = G_obs.reshape(1, -1).double()
+    s = sigma.reshape(1, -1).double()
+    Wm = None if inv_sqrt_R is None else inv_sqrt_R.double()
+    floor = (0.1 * math.pi / beta) if gamma_floor is None else float(gamma_floor)
+
+    def chi2_of(ps):
+        Gp = fwd(ps, xd, kernel_matrix=K)
+        d = (Gp - G) / s
+        if Wm is not None:
+            d = d @ Wm.transpose(-1, -2)
+        return (d * d).sum(-1).mean() / d.shape[-1]
+
+    ks = torch.linspace(-1.0, 1.0, m, dtype=torch.float64)
+    if starts is None:
+        starts = [(0.0, 1.5)]
+    best = None
+    for c0, w0 in starts:
+        u_c = torch.tensor(float(c0), dtype=torch.float64, requires_grad=True)
+        u_W = torch.log(torch.expm1(torch.tensor(max(float(w0), 0.2),
+                        dtype=torch.float64))).clone().requires_grad_(True)
+        u_gb = torch.log(torch.expm1(torch.tensor(0.4, dtype=torch.float64)))
+        u_gb = u_gb.clone().requires_grad_(True)
+        u_ge = torch.log(torch.expm1(torch.tensor(0.1, dtype=torch.float64)))
+        u_ge = u_ge.clone().requires_grad_(True)
+        u_t = torch.tensor(0.0, dtype=torch.float64, requires_grad=True)
+        opt = torch.optim.Adam([u_c, u_W, u_gb, u_ge, u_t], lr=lr)
+        best_local, best_state = float("inf"), None
+        for _ in range(steps):
+            Wb = 0.1 + torch.nn.functional.softplus(u_W)
+            gb = floor + torch.nn.functional.softplus(u_gb)
+            ge = floor + torch.nn.functional.softplus(u_ge)
+            gam = torch.cat([ge[None], gb.expand(m - 2), ge[None]])
+            eps = u_c + ks * Wb
+            w = torch.softmax(u_t * ks, dim=-1)
+            ps = PoleSet(eps=(eps * beta).unsqueeze(0),
+                         gamma=(gam * beta).unsqueeze(0),
+                         a=w.unsqueeze(0),
+                         b=torch.zeros(1, m, dtype=torch.float64))
+            loss = chi2_of(ps)
+            v = float(loss.detach())
+            if v < best_local:
+                best_local = v
+                best_state = (float(u_c), float(Wb), float(gb), float(ge),
+                              float(u_t))
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+        if best is None or best_local < best[0]:
+            best = (best_local, best_state)
+    c, (cc, Wb, gb, ge, t) = best
+    with torch.no_grad():
+        gam = torch.cat([torch.tensor([ge]), torch.full((m - 2,), gb),
+                         torch.tensor([ge])]).double()
+        eps = cc + ks * Wb
+        w = torch.softmax(torch.tensor(t, dtype=torch.float64) * ks, dim=-1)
+    poles = PoleSet(eps=eps.unsqueeze(0), gamma=gam.unsqueeze(0),
+                    a=w.unsqueeze(0), b=torch.zeros(1, m, dtype=torch.float64))
+    return TemplateFit(name="edged_band", m=m, k_params=5, chi2=float(c),
+                       poles=poles,
+                       params=dict(centre=cc, half_width=Wb, gamma_body=gb,
+                                   gamma_edge=ge, tilt=t))
