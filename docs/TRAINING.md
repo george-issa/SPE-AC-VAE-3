@@ -139,6 +139,24 @@ Inference hardening adopted along the way: RankScanTrace exposes per-n
 fits; templates start from the scan's n-matched fits.  Legacy canary
 baseline banked for step 2 (MPM labels) to close: W₁ 0.438.
 
+**Real-data checkpoint A** (*measured*, half-filled Holstein β = 8,
+Ω = 1.0, λ = 0.325, 400 bins, arm-C and arm-A models): the menu selects
+**mirrored_ladder(3)** — PH symmetry detected from the bins by model
+comparison, no declaration — and the result is *doubly robust*: identical
+winner and parameters to 3 digits (ε₀ = 1.29, Ω = 1.45, γ at the width
+floor, r = 0.94) under both models AND under two very different
+whiteners (LW ρ = 0.012 vs structured-target ρ = 0.45, ξ = 3.05).  Open
+gaps, banked as step-2 targets: (i) winner χ² sits ~20× above the
+calibrated perfect-fit target with either whitener — the real spectrum
+is richer than any current menu entry; (ii) the free-pole scan collapses
+on real data (best fit 3 orders above the 4-parameter template,
+non-monotone in n) — the amortized proposal seeds a bad basin the warm
+descent cannot escape; template-informed scan starts are the queued fix.
+Whitening: `covariance(method="structured")` shrinks toward the physical
+exp(−|Δτ|/ξ) target (Schäfer–Strimmer intensity); on synthetic
+exp-correlated bins it calibrates the perfect-fit target near 1 where
+LW sat at ~0.24.
+
 **The rank scan closes the count question** (*measured*, built after the
 comb-aliasing discovery).  `rank_scan` replaces the fixed point's local,
 path-dependent count decision with a global one: warm-started descent in
