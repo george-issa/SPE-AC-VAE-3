@@ -215,3 +215,22 @@ def test_structured_shrinkage_beats_lw_on_exp_correlated_bins():
     t_st = chi2_target(R_st, R_sample)
     assert abs(t_st - 1.0) < abs(t_lw - 1.0), (t_st, t_lw)
     assert 0.6 < t_st < 1.4, t_st
+
+
+def test_autocorrelation_report_on_ar1_bins():
+    """AR(1) bins with known correlation time: g must come back right, and
+    independent bins must come back g ~ 1."""
+    import math, torch
+    from spevae.data.real import autocorrelation_report
+    torch.manual_seed(0)
+    N, L, phi = 2000, 12, 0.7          # tau_int = (1+phi)/(2(1-phi)) ~ 2.83, g ~ 5.67
+    base = torch.zeros(N)
+    e = torch.randn(N)
+    for i in range(1, N):
+        base[i] = phi * base[i - 1] + e[i]
+    bins = base.unsqueeze(1) + 0.3 * torch.randn(N, L)
+    rep = autocorrelation_report(bins)
+    g_true = (1 + phi) / (1 - phi)
+    assert 0.5 * g_true < rep["g"] < 1.7 * g_true, rep["g"]
+    rep0 = autocorrelation_report(torch.randn(N, L))
+    assert rep0["g"] < 1.4, rep0["g"]

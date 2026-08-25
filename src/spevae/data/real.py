@@ -43,6 +43,7 @@ import torch
 from .noise import chi2_target, ledoit_wolf_correlation, whitener
 
 __all__ = [
+    "autocorrelation_report",
     "MeasuredGreens",
     "from_bins",
     "read_text_bins",
@@ -420,3 +421,49 @@ def read_holstein_cube(
     mg.meta.update(n=HOLSTEIN_N[n_idx], omega=HOLSTEIN_OMEGA[omega_idx],
                    beta=beta, dtau=HOLSTEIN_DTAU, source=path)
     return mg
+
+
+def autocorrelation_report(bins: torch.Tensor, max_block: int = 64) -> dict:
+    r"""Bin-autocorrelation diagnostics: blocking curve + Sokal :math:`\tau_{int}`.
+
+    Requires bins in their original Monte-Carlo order.  Returns the blocking
+    curve (error-of-mean inflation vs block size), the integrated
+    autocorrelation time of the bins' leading principal component (Sokal
+    self-consistent window, :math:`W \ge 5\tau_{int}`), the statistical
+    inefficiency ``g`` from each method, and ``n_eff = N / g``.  The two
+    estimates must roughly agree; quote the larger (conservative) one.
+    """
+    X = bins.detach().cpu().to(torch.float64)
+    N, L = X.shape
+    Xc = X - X.mean(0, keepdim=True)
+    # leading principal component: the slowest collective mode of the bins
+    _, _, Vt = torch.linalg.svd(Xc, full_matrices=False)
+    pc = Xc @ Vt[0]
+    pc = pc / pc.std().clamp_min(1e-300)
+
+    # blocking curve on the PC (per-slice curves average to the same story)
+    var1 = float(pc.var(unbiased=True)) / N
+    curve = {}
+    b = 1
+    while b <= max_block and N // b >= 8:
+        m = pc[: (N // b) * b].reshape(N // b, b).mean(1)
+        curve[b] = (float(m.var(unbiased=True)) / (N // b)) / var1
+        b *= 2
+    g_block = max(curve.values())
+
+    # Sokal: integrate rho(k) with the self-consistent window
+    rho = []
+    for k in range(1, N // 4):
+        r = float((pc[:-k] * pc[k:]).mean())
+        rho.append(r)
+    tau = 0.5
+    for k, r in enumerate(rho, start=1):
+        tau += r
+        if k >= 5.0 * tau:
+            break
+    g_sokal = max(2.0 * tau, 1.0)
+
+    g = max(g_block, g_sokal)
+    return {"blocking_curve": curve, "g_blocking": g_block,
+            "tau_int": tau, "g_sokal": g_sokal, "g": g,
+            "n_eff": N / g}
