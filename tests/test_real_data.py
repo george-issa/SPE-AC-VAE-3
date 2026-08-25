@@ -191,3 +191,27 @@ def test_ph_symmetric_pinned_slices_do_not_poison_chi2():
     # encoder-facing sigma is floored, raw sigma untouched
     assert float(mg.sigma_encoder[0]) >= 1e-6 * float(mg.sigma.max())
     assert float(mg.sigma[0]) < 1e-12
+
+
+def test_structured_shrinkage_beats_lw_on_exp_correlated_bins():
+    """Bins with a known exp-kernel correlation: the structured target should
+    shrink hard (rho >> LW's) and calibrate chi2_target much nearer 1."""
+    import torch
+    from spevae.data.noise import (ledoit_wolf_correlation,
+                                   structured_shrunk_correlation, chi2_target)
+    torch.manual_seed(0)
+    L, N, xi_true = 60, 240, 0.8
+    x = torch.linspace(0.0, 6.0, L, dtype=torch.float64)
+    R_true = torch.exp(-(x[:, None] - x[None, :]).abs() / xi_true)
+    Lch = torch.linalg.cholesky(R_true + 1e-10 * torch.eye(L, dtype=torch.float64))
+    bins = (torch.randn(N, L, dtype=torch.float64) @ Lch.T) * 1e-3
+    Z = (bins - bins.mean(0)) / bins.std(0)
+    R_sample = (Z.T @ Z) / N
+    _, R_lw, rho_lw = ledoit_wolf_correlation(bins)
+    _, R_st, rho_st, xi_hat = structured_shrunk_correlation(bins, x)
+    assert rho_st > 5 * max(rho_lw, 1e-3), (rho_st, rho_lw)
+    assert abs(xi_hat - xi_true) / xi_true < 0.35, xi_hat
+    t_lw = chi2_target(R_lw, R_sample)
+    t_st = chi2_target(R_st, R_sample)
+    assert abs(t_st - 1.0) < abs(t_lw - 1.0), (t_st, t_lw)
+    assert 0.6 < t_st < 1.4, t_st

@@ -319,3 +319,72 @@ def expected_chi2(R_sample: torch.Tensor, rho: float) -> float:
         R_sample.detach().cpu().to(torch.float64)).clamp_min(0.0)
     mu = lam.mean()
     return float((lam / (rho * mu + (1.0 - rho) * lam)).mean())
+
+
+def structured_shrunk_correlation(
+    bins: torch.Tensor,
+    x: torch.Tensor,
+    min_eigenvalue: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor, float, float]:
+    r"""Shrink the sample correlation towards an exponential-decay target.
+
+    Ledoit--Wolf's identity target is the least informed choice possible for
+    DQMC bins, whose true :math:`\tau`-correlations decay smoothly -- so LW
+    assigns almost no shrinkage exactly when regularisation is needed most
+    (see :func:`ledoit_wolf_correlation`).  Here the target is the physical
+    one, :math:`T_{ij} = e^{-|x_i - x_j|/\xi}` with :math:`\xi` read off the
+    sample correlation's own diagonal decay, and the intensity is the
+    Schafer--Strimmer optimum for an arbitrary target,
+
+    .. math:: \rho^* = \sum_{i\ne j} \widehat{\mathrm{Var}}(r_{ij}) \Big/
+              \sum_{i\ne j} (r_{ij} - t_{ij})^2 .
+
+    Because the target now carries the real off-diagonal structure, large
+    intensities are cheap: the estimator can shrink hard without flattening
+    correlations that are actually there.
+
+    Returns ``(sigma, R_shrunk, rho, xi)``.
+    """
+    X = bins.detach().cpu().to(torch.float64)
+    N, L = X.shape
+    if N < 2:
+        raise ValueError("need at least two bins to estimate a covariance")
+    xd = x.detach().cpu().to(torch.float64).reshape(-1)
+    Xc = X - X.mean(0, keepdim=True)
+    S = (Xc.T @ Xc) / N
+    sigma = torch.sqrt(torch.diagonal(S).clamp_min(1e-300))
+    R = S / (sigma.reshape(-1, 1) * sigma.reshape(1, -1))
+
+    # xi from the mean superdiagonal decay: ln r(lag) ~ -dx(lag)/xi over the
+    # lags where the mean correlation is solidly positive
+    lags, logr, dxs = [], [], []
+    for k in range(1, L):
+        rk = float(torch.diagonal(R, offset=k).mean())
+        if rk < 0.05:
+            break
+        lags.append(k)
+        logr.append(math.log(rk))
+        dxs.append(float((xd[k:] - xd[:-k]).mean()))
+    if len(lags) >= 2:
+        A = torch.tensor(dxs, dtype=torch.float64)
+        b = -torch.tensor(logr, dtype=torch.float64)
+        xi = float((A * A).sum() / (A * b).sum().clamp_min(1e-12))
+        xi = max(min(xi, 100.0 * float(xd[-1] - xd[0])), 1e-6)
+    else:
+        xi = 1e-6                                  # effectively uncorrelated
+    T = torch.exp(-(xd.reshape(-1, 1) - xd.reshape(1, -1)).abs() / xi)
+
+    Z = Xc / sigma.reshape(1, -1)
+    off = ~torch.eye(L, dtype=torch.bool)
+    # Var(r_ij) ~ (1/N^2) sum_k (z_ki z_kj - r_ij)^2  (moment estimate)
+    W2 = torch.einsum("ki,kj->ij", Z * Z, Z * Z) / N - R * R
+    var_r = (W2 / N).clamp_min(0.0)
+    d2 = ((R - T)[off] ** 2).sum()
+    rho = float((var_r[off].sum() / d2).clamp(0.0, 1.0)) if float(d2) > 0 else 1.0
+
+    R_sh = rho * T + (1.0 - rho) * R
+    if min_eigenvalue > 0.0:
+        w, V = torch.linalg.eigh(0.5 * (R_sh + R_sh.T))
+        R_sh = V @ torch.diag(w.clamp_min(float(min_eigenvalue))) @ V.T
+    return (sigma.to(device=bins.device, dtype=bins.dtype),
+            R_sh.to(device=bins.device, dtype=bins.dtype), rho, xi)

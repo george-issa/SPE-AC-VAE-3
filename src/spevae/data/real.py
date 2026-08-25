@@ -176,7 +176,8 @@ class MeasuredGreens:
 
     # -- noise model --------------------------------------------------------- #
 
-    def covariance(self, min_eigenvalue: float = 0.0) -> dict:
+    def covariance(self, min_eigenvalue: float = 0.0,
+                   method: str = "lw") -> dict:
         r"""The noise model the reconstruction loss needs, plus its calibration.
 
         Returns ``sigma``, ``inv_sqrt_R``, ``rho``, ``chi2_target`` and
@@ -195,12 +196,19 @@ class MeasuredGreens:
         Raise it when the bin count is not comfortably above the number of time
         slices, and report the value used.
         """
-        key = float(min_eigenvalue)
+        key = (float(min_eigenvalue), method)
         cache = self._cov or {}
         if key not in cache:
             slices = self.statistical_slices
             b = self.bins[:, slices]
-            sigma, R_lw, rho = ledoit_wolf_correlation(b, min_eigenvalue=key)
+            if method == "structured":
+                from .noise import structured_shrunk_correlation
+                sigma, R_lw, rho, xi = structured_shrunk_correlation(
+                    b, self.tau[slices], min_eigenvalue=key[0])
+            else:
+                sigma, R_lw, rho = ledoit_wolf_correlation(b,
+                                                           min_eigenvalue=key[0])
+                xi = None
             Z = (b - b.mean(0, keepdim=True)) / sigma
             R_sample = (Z.T @ Z) / b.shape[0]
             cache[key] = {
@@ -219,7 +227,9 @@ class MeasuredGreens:
                 # PH-symmetric data.  chi2 consumers should select columns
                 # with "slices" rather than truncating to the leading n.
                 "n_independent": int(slices.numel()),
-                "min_eigenvalue": key,
+                "min_eigenvalue": key[0],
+                "method": method,
+                "xi": xi,
             }
             object.__setattr__(self, "_cov", cache)
         return cache[key]
