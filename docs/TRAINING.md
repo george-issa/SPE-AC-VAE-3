@@ -154,10 +154,15 @@ With the working asym entries the triplet becomes a measured
 near-degeneracy: peaks_asym(3) (true structure, k = 10, χ² 1.054) vs
 peaks(4) (k = 11, χ² 0.963) differ by ~6 total χ² — the
 asymmetry-vs-extra-peak discrimination is genuinely at the evidence
-edge at σ = 10⁻⁴, and the LR walk keeps peaks(4) by 5.9 vs the 3.84
-toll.  Borderline by less than 2× threshold: the fine-polish rule
-should extend to select_model, and this is the natural first client for
-effective-parameter (Laplace) accounting.
+edge at σ = 10⁻⁴, and the LR walk initially kept peaks(4) by 5.9 vs
+the 3.84 toll.  **Resolved by the borderline fine-polish rule extended
+to select_model** (*measured*): re-polishing both competitors at floor
+quality (warm-started, 12k steps, lr/2) dropped peaks_asym(3) from
+1.054 to 0.880 — *below* its pricier rival — and the true structure
+wins with W₁ 0.0115.  The degeneracy was optimiser orbit, not physics:
+6 units of total χ² was exactly the convergence slack the rank scan's
+version of this rule was built for.  free(n) is now charged its
+effective k = 4n−2 (sum rule and Σb = 0 each remove one dof).
 
 **Real-data checkpoint A** (*measured*, half-filled Holstein β = 8,
 Ω = 1.0, λ = 0.325, 400 bins, arm-C and arm-A models): the menu selects
