@@ -155,7 +155,11 @@ descent cannot escape; template-informed scan starts are the queued fix.
 Whitening: `covariance(method="structured")` shrinks toward the physical
 exp(−|Δτ|/ξ) target (Schäfer–Strimmer intensity); on synthetic
 exp-correlated bins it calibrates the perfect-fit target near 1 where
-LW sat at ~0.24.
+LW sat at ~0.24.  Bin autocorrelation ruled out as an explanation of the
+gap (*measured*: blocking curve flat, Sokal τ_int = 0.53 ≈ white,
+g = 1.07, n_eff = 375/400 — the bins are pre-blocked past their
+correlation time), so the ~19–20× χ² excess is genuine spectral
+mismatch and step 2 owns all of it.
 
 **The rank scan closes the count question** (*measured*, built after the
 comb-aliasing discovery).  `rank_scan` replaces the fixed point's local,
