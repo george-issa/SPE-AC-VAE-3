@@ -220,8 +220,17 @@ def fit_peaks(
     steps: int = 2000,
     lr: float = 0.02,
     gamma_floor: float | None = None,
+    asym: bool = False,
 ) -> TemplateFit:
     r"""n independent symmetric peaks: the humblest structured hypothesis.
+
+    ``asym=True`` frees one asymmetry per peak with the exact structural
+    constraints of the decoder itself -- :math:`b = a(t - \langle t
+    \rangle_a)`, :math:`t = \tanh(u)/2` -- so :math:`\sum b = 0` holds
+    identically and :math:`|b| \le a`.  Costs :math:`n - 1` extra effective
+    parameters (k = 4n - 2): a symmetric-only basis pays for every real
+    asymmetry by stacking extra poles, and this entry is what lets the menu
+    say so.
 
     Positions, widths and (normalised) weights are free but the asymmetries
     are pinned to zero -- k = 3n - 1 against the free fit's 4n.  This is the
@@ -258,36 +267,61 @@ def fit_peaks(
                             dtype=torch.float64) - 1.0))
     best = None
     for e_init in expanded:
-        u_e = e_init.clone().requires_grad_(True)
-        u_g = torch.log(torch.expm1(torch.full((n,), 0.25,
-                        dtype=torch.float64))).clone().requires_grad_(True)
-        u_w = torch.zeros(n, dtype=torch.float64, requires_grad=True)
-        opt = torch.optim.Adam([u_e, u_g, u_w], lr=lr)
         best_local, best_state = float("inf"), None
-        for _ in range(steps):
-            g = floor + torch.nn.functional.softplus(u_g)
-            w = torch.softmax(u_w, dim=-1)
-            ps = PoleSet(eps=(u_e * beta).unsqueeze(0),
-                         gamma=(g * beta).unsqueeze(0),
-                         a=w.unsqueeze(0), b=torch.zeros(1, n,
-                                                         dtype=torch.float64))
-            loss = chi2_of(ps)
-            v = float(loss.detach())
-            if v < best_local:
-                best_local = v
-                best_state = (u_e.detach().clone(), g.detach().clone(),
-                              w.detach().clone())
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
-            opt.step()
+        # Asymmetry basins are separated: a symmetric fit absorbs real
+        # asymmetry into shifted positions (measured), so neither gradient
+        # descent nor a linear b-solve escapes once geometry has settled.
+        # Multi-start over t sign patterns, jointly optimised from step 0.
+        if asym:
+            gen_t = torch.Generator().manual_seed(1)
+            t_inits = [torch.zeros(n, dtype=torch.float64)]
+            for _ in range(3):
+                sgn = torch.where(torch.rand(n, generator=gen_t) < 0.5,
+                                  -1.0, 1.0).to(torch.float64)
+                t_inits.append(0.25 * sgn)
+        else:
+            t_inits = [torch.zeros(n, dtype=torch.float64)]
+        e_init0 = e_init.clone()
+        for t0 in t_inits:
+            u_e = e_init0.clone().requires_grad_(True)
+            u_g = torch.log(torch.expm1(torch.full((n,), 0.25,
+                            dtype=torch.float64))).clone().requires_grad_(True)
+            u_w = torch.zeros(n, dtype=torch.float64, requires_grad=True)
+            u_t = torch.atanh((2.0 * t0).clamp(-0.98, 0.98)).clone(
+                ).requires_grad_(True)
+            params = [u_e, u_g, u_w] + ([u_t] if asym else [])
+            opt = torch.optim.Adam(params, lr=lr)
+            for it in range(steps):
+                g = floor + torch.nn.functional.softplus(u_g)
+                w = torch.softmax(u_w, dim=-1)
+                if asym:
+                    t = 0.5 * torch.tanh(u_t)
+                    bb = w * (t - (w * t).sum())
+                else:
+                    bb = torch.zeros(n, dtype=torch.float64)
+                ps = PoleSet(eps=(u_e * beta).unsqueeze(0),
+                             gamma=(g * beta).unsqueeze(0),
+                             a=w.unsqueeze(0), b=bb.unsqueeze(0))
+                loss = chi2_of(ps)
+                v = float(loss.detach())
+                if v < best_local:
+                    best_local = v
+                    best_state = (u_e.detach().clone(), g.detach().clone(),
+                                  w.detach().clone(), bb.detach().clone())
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                opt.step()
         if best is None or best_local < best[0]:
             best = (best_local, best_state)
-    c, (e, g, w) = best
+    c, (e, g, w, bb) = best
     poles = PoleSet(eps=e.unsqueeze(0), gamma=g.unsqueeze(0),
-                    a=w.unsqueeze(0), b=torch.zeros(1, n, dtype=torch.float64))
-    return TemplateFit(name="peaks", m=n, k_params=3 * n - 1, chi2=float(c),
-                       poles=poles,
-                       params={f"eps{i}": float(e[i]) for i in range(n)})
+                    a=w.unsqueeze(0), b=bb.unsqueeze(0))
+    pr = {f"eps{i}": float(e[i]) for i in range(n)}
+    if asym:
+        pr.update({f"b{i}": float(bb[i]) for i in range(n)})
+    return TemplateFit(name="peaks_asym" if asym else "peaks", m=n,
+                       k_params=(4 * n - 2) if asym else (3 * n - 1),
+                       chi2=float(c), poles=poles, params=pr)
 
 
 def peak_starts(poles: PoleSet, n: int) -> list[list[float]]:

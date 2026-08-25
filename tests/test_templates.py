@@ -105,3 +105,47 @@ def test_edged_band_recovers_its_own_shape():
     assert abs(fit.params["centre"] - c0) < 0.1, fit
     assert abs(fit.params["half_width"] - W0) < 0.15, fit
     assert fit.params["gamma_edge"] < fit.params["gamma_body"], fit
+
+
+def test_asym_peaks_demanded_by_asymmetric_truth_only():
+    import numpy as np
+    from spevae.physics.templates import fit_peaks
+    # asymmetric triplet: sum-zero b, certified positive
+    a = np.array([0.5, 0.3, 0.2]); t = np.array([0.35, -0.4, -0.25])
+    b = a * (t - (a * t).sum())
+    truth_asym = ([0.4, 1.1, 2.6], [0.35, 0.25, 0.45], list(a), list(b))
+    e, g, w, bb = truth_asym
+    truth = PoleSet(eps=torch.tensor([e]) * BETA, gamma=torch.tensor([g]) * BETA,
+                    a=torch.tensor([w]), b=torch.tensor([bb]))
+    quad = SpectralQuadrature.for_beta(BETA, dtype=torch.float64)
+    x = torch.linspace(0.0, 1.0, 65, dtype=torch.float64)
+    G = PoleGreens(quad)(truth.to(torch.float64), x)
+    gen = torch.Generator().manual_seed(0)
+    sigma = torch.full_like(G, 1e-4)
+    G = G + sigma * torch.randn(G.shape, generator=gen, dtype=torch.float64)
+    starts = [[0.4, 1.1, 2.6]]
+    sym = fit_peaks(BETA, x, G, sigma, n=3, starts=starts)
+    asym = fit_peaks(BETA, x, G, sigma, n=3, starts=starts, asym=True,
+                     steps=6000)
+    # the asymmetry is REAL here: freeing b must pay for its 2 extra
+    # parameters many times over
+    gain = (sym.chi2 - asym.chi2) * 65
+    assert gain > chi2_quantile_95(asym.k_params - sym.k_params) * 3, \
+        (sym.chi2, asym.chi2)
+    assert select_model([sym, asym], L_eff=65).name == "peaks_asym"
+    # recovered asymmetries: correct sign pattern, scale within the
+    # identifiability slop of independent b's at this noise
+    bfit = [asym.params[f"b{i}"] for i in range(3)]
+    assert max(abs(p - q) for p, q in zip(sorted(bfit), sorted(bb))) < 0.08, bfit
+
+
+def test_symmetric_truth_keeps_the_symmetric_winner():
+    from spevae.physics.templates import fit_peaks
+    e, g, w = [0.4, 1.1, 2.6], [0.35, 0.25, 0.45], [0.5, 0.3, 0.2]
+    x, G, sigma = _probe(e, g, w, seed=11)
+    starts = [[0.4, 1.1, 2.6]]
+    sym = fit_peaks(BETA, x, G, sigma, n=3, starts=starts)
+    asym = fit_peaks(BETA, x, G, sigma, n=3, starts=starts, asym=True)
+    # b == 0 truth: freeing b buys < the quantile -> parsimony keeps peaks
+    assert select_model([sym, asym], L_eff=65).name == "peaks", \
+        (sym.chi2, asym.chi2)
