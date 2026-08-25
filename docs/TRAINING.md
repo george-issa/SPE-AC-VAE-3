@@ -121,6 +121,24 @@ resolved world is the harder curriculum, and the smooth-biased prior's
 tail transfers better than a resolved bulk trained to the same cost.
 The smooth-biased ρ stays.
 
+**Step 1 of the scaling ladder: PASSED — the recipe is the width metric
+alone** (*measured*, β = 8, full motif breadth, pole-loss only, factorial
+A/B/C).  Arm A (metric + concentration 1.0), B (neither), C (metric
+only), 60k each, judged on frozen streams, the legacy canary and the
+five fixed probes through the full inference pipeline.  C dominates:
+best stream (W₁ 0.197, l2 0.103, ripple 0.075), best canary (0.438),
+and all five probes passed with correct structure — including the
+mirrored case (so concentration was NOT load-bearing there) and the
+irregular triplet with the *correct* peaks(3) hypothesis.  A passes all
+probes only after inference hardening and B fails mirrored + misses the
+4-rung faint rung.  Attribution: the width-relative metric carries every
+win; concentration at 1.0 adds nothing at breadth and over-concentrates
+multi-peak proposals (the measured triplet regression).  Production
+objective going forward: `--pole-metric width`, no concentration.
+Inference hardening adopted along the way: RankScanTrace exposes per-n
+fits; templates start from the scan's n-matched fits.  Legacy canary
+baseline banked for step 2 (MPM labels) to close: W₁ 0.438.
+
 **The rank scan closes the count question** (*measured*, built after the
 comb-aliasing discovery).  `rank_scan` replaces the fixed point's local,
 path-dependent count decision with a global one: warm-started descent in
