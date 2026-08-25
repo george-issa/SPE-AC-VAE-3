@@ -139,6 +139,26 @@ Inference hardening adopted along the way: RankScanTrace exposes per-n
 fits; templates start from the scan's n-matched fits.  Legacy canary
 baseline banked for step 2 (MPM labels) to close: W₁ 0.438.
 
+**The b channel probed end to end** (*measured*, step 1 extension).
+`peaks_asym` (b free per peak; Σb = 0 and |b| ≤ a structural; k = 4n−2)
+plus two certified b ≠ 0 probes.  Fit topology, learned the hard way:
+symmetric fits *absorb* real asymmetry into shifted positions — a
+separated basin that staged b-release and even an exact linear b-solve
+at converged geometry both fail to escape; only joint optimisation from
+asymmetric t-sign multi-starts reaches it.  Verdicts: the fano band is
+recovered cleanly by peaks_asym(4) (χ² 0.90, W₁ 0.021, beating free(5)
+with 6 fewer parameters; the symmetric menu sat at 2.1); the b = 0 menu
+on the asymmetric triplet over-counts exactly as constraint (iv)
+predicts (peaks(4) — an extra symmetric pole buying the asymmetry).
+With the working asym entries the triplet becomes a measured
+near-degeneracy: peaks_asym(3) (true structure, k = 10, χ² 1.054) vs
+peaks(4) (k = 11, χ² 0.963) differ by ~6 total χ² — the
+asymmetry-vs-extra-peak discrimination is genuinely at the evidence
+edge at σ = 10⁻⁴, and the LR walk keeps peaks(4) by 5.9 vs the 3.84
+toll.  Borderline by less than 2× threshold: the fine-polish rule
+should extend to select_model, and this is the natural first client for
+effective-parameter (Laplace) accounting.
+
 **Real-data checkpoint A** (*measured*, half-filled Holstein β = 8,
 Ω = 1.0, λ = 0.325, 400 bins, arm-C and arm-A models): the menu selects
 **mirrored_ladder(3)** — PH symmetry detected from the bins by model
