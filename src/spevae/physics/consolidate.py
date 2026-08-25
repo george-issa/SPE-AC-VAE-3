@@ -818,6 +818,7 @@ class RankScanTrace:
 
     ns: list                      #: candidate pole counts, ascending
     chi2s: list                   #: whitened per-dof chi^2 after full refit, per n
+    fits_by_n: dict               #: n -> fitted PoleSet (physical units)
     selected_n: int
     chi2_selected: float
     chi2_best: float
@@ -1012,7 +1013,8 @@ def rank_scan(
         fits[sel][0], beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R,
         slices=slices, gamma_floor=gamma_floor, steps=polish_steps, lr=0.5 * lr,
         ph_symmetric=ph_symmetric)
-    trace = RankScanTrace(ns=ns, chi2s=chi2s, selected_n=sel,
-                          chi2_selected=float(c_sel), chi2_best=best,
-                          tolerance=tolerance)
+    trace = RankScanTrace(ns=ns, chi2s=chi2s,
+                          fits_by_n={n: fits[n][0] for n in ns},
+                          selected_n=sel, chi2_selected=float(c_sel),
+                          chi2_best=best, tolerance=tolerance)
     return selected, trace
