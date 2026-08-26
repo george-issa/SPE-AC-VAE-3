@@ -172,3 +172,21 @@ def test_select_model_repolishes_borderline_contests():
     w = select_model([a, b], L_eff=65, repolish=repolish)
     assert calls, "borderline contest must trigger repolish"
     assert w.name == "asym"      # polished floor flips the verdict
+
+
+def test_mirrored_peaks_recovers_free_pairs():
+    from spevae.physics.templates import fit_mirrored_peaks
+    # 3 mirror pairs with UNEQUAL widths/weights -- a ladder cannot fit this,
+    # mirrored_peaks must
+    e = [0.6, 1.4, 2.6]; g = [0.15, 0.35, 0.5]; w = [0.5, 0.3, 0.2]
+    eps = e + [-v for v in e]
+    gam = g + g
+    a = [v / 2 for v in w] + [v / 2 for v in w]
+    x, G, sigma = _probe(eps, gam, a, seed=5)
+    fit = fit_mirrored_peaks(BETA, x, G, sigma, n=3, starts=[[0.6, 1.4, 2.6]])
+    assert fit.chi2 < 1.2, fit
+    got = sorted(fit.params[f"eps{i}"] for i in range(3))
+    # positions to the measured within-count identifiability slop (~0.3);
+    # the middle pair's broad overlap with its neighbours is the soft one
+    assert max(abs(p - q) for p, q in zip(got, e)) < 0.35, got
+    assert fit.k_params == 8

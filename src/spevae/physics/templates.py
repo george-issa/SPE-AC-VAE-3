@@ -31,7 +31,8 @@ from .forward import PoleGreens, SpectralQuadrature
 from .poles import PoleSet
 
 __all__ = ["TemplateFit", "fit_ladder", "ladder_starts", "select_model",
-           "fit_peaks", "peak_starts", "fit_edged_band", "chi2_quantile_95"]
+           "fit_peaks", "peak_starts", "fit_edged_band", "fit_mirrored_peaks",
+           "chi2_quantile_95"]
 
 
 def chi2_quantile_95(d: int) -> float:
@@ -448,3 +449,88 @@ def fit_edged_band(
                        poles=poles,
                        params=dict(centre=cc, half_width=Wb, gamma_body=gb,
                                    gamma_edge=ge, tilt=t))
+
+
+def fit_mirrored_peaks(
+    beta: float,
+    x: torch.Tensor,
+    G_obs: torch.Tensor,
+    sigma: torch.Tensor,
+    inv_sqrt_R: torch.Tensor | None = None,
+    n: int = 3,
+    starts: list[list[float]] | None = None,
+    steps: int = 2500,
+    lr: float = 0.02,
+    gamma_floor: float | None = None,
+) -> TemplateFit:
+    r"""n free mirror pairs: particle-hole symmetry as the only structure.
+
+    The entry the Holstein data asked for (checkpoint A, 2026-08-25): its
+    free-pole answer matched the mirrored ladder's count (3 pairs) but
+    rejected the ladder's shared-width/geometric-decay constraints at 6x in
+    chi^2.  Here each pair has its own position, width and weight --
+    A(w) = A(-w) exact, k = 3n - 1, nothing else assumed.
+    """
+    quad = SpectralQuadrature.for_beta(float(beta), dtype=torch.float64)
+    fwd = PoleGreens(quad)
+    xd = x.reshape(-1).double()
+    K = fwd.kernel_matrix(xd)
+    G = G_obs.reshape(1, -1).double()
+    s = sigma.reshape(1, -1).double()
+    W = None if inv_sqrt_R is None else inv_sqrt_R.double()
+    floor = (0.1 * math.pi / beta) if gamma_floor is None else float(gamma_floor)
+
+    def chi2_of(ps):
+        Gp = fwd(ps, xd, kernel_matrix=K)
+        d = (Gp - G) / s
+        if W is not None:
+            d = d @ W.transpose(-1, -2)
+        return (d * d).sum(-1).mean() / d.shape[-1]
+
+    if starts is None:
+        starts = [list(torch.linspace(0.5, 2.5, n))]
+    rng = torch.Generator().manual_seed(0)
+    expanded = []
+    for e_init in starts:
+        e0 = torch.tensor([abs(float(v)) for v in e_init], dtype=torch.float64)
+        expanded.append(e0)
+        for _ in range(3):
+            expanded.append((e0 + 0.3 * (2.0 * torch.rand(n, generator=rng,
+                            dtype=torch.float64) - 1.0)).abs().clamp_min(0.02))
+    best = None
+    for e_init in expanded:
+        u_e = e_init.clone().requires_grad_(True)
+        u_g = torch.log(torch.expm1(torch.full((n,), 0.25,
+                        dtype=torch.float64))).clone().requires_grad_(True)
+        u_w = torch.zeros(n, dtype=torch.float64, requires_grad=True)
+        opt = torch.optim.Adam([u_e, u_g, u_w], lr=lr)
+        best_local, best_state = float("inf"), None
+        for _ in range(steps):
+            e = u_e.abs()                        # positions live on w > 0
+            g = floor + torch.nn.functional.softplus(u_g)
+            w = torch.softmax(u_w, dim=-1)
+            ps = PoleSet(
+                eps=(torch.cat([e, -e]) * beta).unsqueeze(0),
+                gamma=(torch.cat([g, g]) * beta).unsqueeze(0),
+                a=(0.5 * torch.cat([w, w])).unsqueeze(0),
+                b=torch.zeros(1, 2 * n, dtype=torch.float64))
+            loss = chi2_of(ps)
+            v = float(loss.detach())
+            if v < best_local:
+                best_local = v
+                best_state = (e.detach().clone(), g.detach().clone(),
+                              w.detach().clone())
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+        if best is None or best_local < best[0]:
+            best = (best_local, best_state)
+    c, (e, g, w) = best
+    poles = PoleSet(eps=torch.cat([e, -e]).unsqueeze(0),
+                    gamma=torch.cat([g, g]).unsqueeze(0),
+                    a=(0.5 * torch.cat([w, w])).unsqueeze(0),
+                    b=torch.zeros(1, 2 * n, dtype=torch.float64))
+    pr = {f"eps{i}": float(e[i]) for i in range(n)}
+    pr.update({f"w{i}": float(w[i]) for i in range(n)})
+    return TemplateFit(name="mirrored_peaks", m=n, k_params=3 * n - 1,
+                       chi2=float(c), poles=poles, params=pr)
