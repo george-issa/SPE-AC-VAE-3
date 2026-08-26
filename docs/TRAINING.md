@@ -206,6 +206,30 @@ surfaces a genuine equal-k tie — free(3) at 0.920 vs peaks_asym(3) at
 complexity and equal fit is an open selection-policy question,
 deliberately not auto-decided.
 
+**The prior-started phase (user design) supersedes the free-started
+one** (*measured*, decisive).  Same objective and budget, opposite
+starting point: begin AT the z-descent decode (penalty starts ~0) and
+let whitened χ² pull away with the manifold as a continuous prior
+force.  Direction of approach decides the basin: on fano the
+prior-started fit reaches **floor χ² 0.877, manifold distance 0.0008,
+W₁ 0.011 — template-quality with zero template knowledge**, the best
+assumption-free reconstruction the pipeline has produced (free scan
+0.054, free-started 0.045, best template 0.012); triplet W₁ 0.043 vs
+free 0.062.  Canonical per-dataset order is now: z-descent →
+**prior-started manifold refit** → count-gated scan → menu; the
+free-started variant retires to a diagnostic.  On the Holstein the
+ungated 16-pole phase overshoots (χ² 0.054–0.16 vs target 0.175 — no
+count control), and the count-gated scan from that basin gives the
+best-certified real-data answer yet: **n = 7 at χ² 0.103**.
+Calibration honesty: the perfect-fit χ² distribution under this
+correlation structure is 0.175 ± 0.061 (only ~17 effective independent
+dof of 80), so 0.103 sits ~1.2σ below expectation — mild residual
+overfit at worst, not the clean pathology the ungated 0.054 was.  The
+real-data fit gap is effectively CLOSED by inference improvements
+(20× → 3.2× → 2.2× → ~0.6×, within calibration uncertainty); what
+remains for step 2 is expressiveness (manifold floor 24.0), the canary,
+and the structured/physics description of the 7-pole answer.
+
 **Manifold-regularized refits: the harshness dial, built and measured**
 (`refine.manifold_refit`).  Free-pole refits with an A-space pull toward
 the decoder manifold's projection (anchor z re-projected each round):
