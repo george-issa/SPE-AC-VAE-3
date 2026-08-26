@@ -206,6 +206,19 @@ surfaces a genuine equal-k tie — free(3) at 0.920 vs peaks_asym(3) at
 complexity and equal fit is an open selection-policy question,
 deliberately not auto-decided.
 
+**Scope decision for step 2** (user directive 2026-08-26): step 2
+changes ONE thing — MPM-labeled smooth families in the training data —
+judged against the banked targets (manifold floor 24.0, canary 0.438,
+w-sensitivity flag, seven probes green).  The latent-basin/menu
+unification (auxiliary class heads, structured latent) is explicitly
+DEFERRED to its own arm on top of the step-2 checkpoint (heads on/off
+A/B at fixed data), per the one-variable-per-step discipline.  Also
+recorded from the sweep: initialization is itself a prior — at w → 0
+the prior-started refit does NOT recover the free scan's result (it
+finds a better-likelihood basin near its start: fano 0.874 vs the
+scan's 0.935) — the starting point, not the penalty, carries most of
+the prior's influence on in-vocabulary data.
+
 **Fine weight sweep of the prior-started refit** (*measured*, w =
 0.05…2 on all three cases): in-vocabulary data makes the weight
 irrelevant — probe W₁ flat within noise across 40× in w (fano
