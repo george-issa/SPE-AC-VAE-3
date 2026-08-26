@@ -206,6 +206,22 @@ surfaces a genuine equal-k tie — free(3) at 0.920 vs peaks_asym(3) at
 complexity and equal fit is an open selection-policy question,
 deliberately not auto-decided.
 
+**The w = 0 control resolves the phase comparison: the cold merge was
+the confound** (*measured*, user-demanded fairness check).  Pure χ²
+refit of the UNMERGED 16-pole z-descent configuration reproduces the
+"manifold-refit" probe results exactly (fano 0.875/0.0113, triplet
+0.860/0.0444) — the penalty contributed nothing on in-vocabulary data
+at any weight.  The free scans' spiky, W₁-poor answers came from the
+scan's cold-merge destroying the arrangement BEFORE any fitting; the
+prior's information lives in the starting arrangement, and plain
+likelihood descent preserves it.  Ledger correction: the manifold
+penalty's real value is confined to out-of-vocabulary data (Holstein,
+where w measurably arbitrates noise absorption); on in-vocabulary data
+the operative principle is *don't merge before you fit*.  Queued scan
+upgrade from this finding: build count candidates by drop-lightest
+pruning of the refitted 16-pole configuration instead of cold-merging
+the raw decode.
+
 **Scope decision for step 2** (user directive 2026-08-26): step 2
 changes ONE thing — MPM-labeled smooth families in the training data —
 judged against the banked targets (manifold floor 24.0, canary 0.438,
