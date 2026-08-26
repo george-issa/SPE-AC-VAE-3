@@ -206,6 +206,24 @@ surfaces a genuine equal-k tie — free(3) at 0.920 vs peaks_asym(3) at
 complexity and equal fit is an open selection-policy question,
 deliberately not auto-decided.
 
+**Step-1 gate closed with the boundary proof** (*measured*, Holstein
+cell).  z-descent with the prior anchor released (λ = 0, 10k steps)
+reaches χ² 23.96 — **137× the calibrated target**: the decoder
+manifold's expressiveness floor on this data, free of regularisation or
+optimiser excuses.  Free poles off-manifold reach 0.56 (3.2×).  The gap
+between those two numbers IS the vocabulary step-1 training lacks (no
+smooth families, no MPM labels) — step 2's training must pull the
+manifold floor down toward the free floor; both numbers are now the
+gate.  Two more verdicts from the final menu: (i) the cell is NOT
+PH-symmetric — measured directly on the bins, G(τ) vs G(β−τ) differs by
+up to 3.2σ (rms 1.7σ, symmetry-hypothesis χ² 2.9/dof) — so the
+asymmetric free(6) winner reflects real data asymmetry, every mirrored
+entry (ladder AND the new mirrored_peaks, best 4.7) is floored by the
+symmetric-model bound, and the earlier "robust mirrored_ladder(3)" was
+the best *symmetric* story told to a broken scan; (ii) the winner's
+sharp sub-thermal spikes are width-unidentifiable at χ² ≈ floor —
+honest-resolution display remains the convention for such features.
+
 **Real-data checkpoint A** (*measured*, half-filled Holstein β = 8,
 Ω = 1.0, λ = 0.325, 400 bins, arm-C and arm-A models): the menu selects
 **mirrored_ladder(3)** — PH symmetry detected from the bins by model
