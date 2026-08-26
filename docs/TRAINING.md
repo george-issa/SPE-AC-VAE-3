@@ -164,6 +164,26 @@ wins with W₁ 0.0115.  The degeneracy was optimiser orbit, not physics:
 version of this rule was built for.  free(n) is now charged its
 effective k = 4n−2 (sum rule and Σb = 0 each remove one dof).
 
+**The latent landscape, measured** (*measured*, fano + asym-triplet
+probes, arm C).  Amortized inference is one feedforward pass — nothing
+descends at inference — and the experiment shows what that costs: the
+posterior-*mean* readout sits 30–40× above the decoder manifold's best
+fit for the same data (χ² 530 vs 15 on fano; 211 vs 6.6 on the
+triplet).  Gradient descent of χ²(decode(z)) in latent space finds far
+better manifold points: fano W₁ 0.097 → 0.029 (approaching
+template-winner quality) while staying on the physics manifold — no
+absorber poles, no width-inflation trades, because the decoder never
+learned to emit them.  Posterior *sampling* is the weaker effect
+(best-of-64 only modestly beats the mean): the encoder is mis-centred
+more than multimodal-and-sharp.  Two boundaries also measured: z-descent
+cannot reach the noise floor (χ² 6–15 vs target ~0.9 — decoder
+resolution; pole-space refits still own the digits), and better χ² does
+not guarantee better W₁ within the data-equivalent class (triplet
+0.054 → 0.059).  Consequence for the pipeline: z-descent is the natural
+pre-scan stage — manifold-constrained basin selection feeding the scan
+and template nomination — with per-dataset finetune (stage 2, encoder-
+only, anchored) as the escalation for out-of-distribution data.
+
 **Real-data checkpoint A** (*measured*, half-filled Holstein β = 8,
 Ω = 1.0, λ = 0.325, 400 bins, arm-C and arm-A models): the menu selects
 **mirrored_ladder(3)** — PH symmetry detected from the bins by model
