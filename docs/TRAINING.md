@@ -215,8 +215,12 @@ between those two numbers IS the vocabulary step-1 training lacks (no
 smooth families, no MPM labels) — step 2's training must pull the
 manifold floor down toward the free floor; both numbers are now the
 gate.  Two more verdicts from the final menu: (i) the cell is NOT
-PH-symmetric — measured directly on the bins, G(τ) vs G(β−τ) differs by
-up to 3.2σ (rms 1.7σ, symmetry-hypothesis χ² 2.9/dof) — so the
+PH-symmetric — established by the *paired* per-bin test (the correct
+one: mirrored slices share bins and are positively correlated, so the
+naive independent-slices test *understates* the significance):
+τ-array verified exact (0…8 inclusive, uniform, mirror sums = β to
+0 ulp), per-slice-pair t-statistic max |t| = 4.1, rms 2.5,
+symmetry-hypothesis χ² = 6.5/dof — so the
 asymmetric free(6) winner reflects real data asymmetry, every mirrored
 entry (ladder AND the new mirrored_peaks, best 4.7) is floored by the
 symmetric-model bound, and the earlier "robust mirrored_ladder(3)" was
