@@ -206,6 +206,25 @@ surfaces a genuine equal-k tie — free(3) at 0.920 vs peaks_asym(3) at
 complexity and equal fit is an open selection-policy question,
 deliberately not auto-decided.
 
+**Fine weight sweep of the prior-started refit** (*measured*, w =
+0.05…2 on all three cases): in-vocabulary data makes the weight
+irrelevant — probe W₁ flat within noise across 40× in w (fano
+0.0104–0.0119, triplet 0.0429–0.0439), every fit at floor χ² with
+penalty ≤ 10⁻³; from the prior-started point the χ² floor for
+in-distribution data lies ON the manifold and the pull is a safety
+rail, not a dial.  On the Holstein the weight matters exactly as the
+out-of-vocabulary hypothesis predicts: small w lets the 16-pole refit
+absorb noise (χ² 0.042 at w = 0.05, ~2.2σ below the perfect-fit band;
+manifold distance 0.17), and even the count-gated answers sit below the
+band until w ≥ 0.5 (gated: n = 6 at 0.067–0.069 for w ≤ 0.2; n = 6 at
+0.132/0.136 for w = 0.5/1.0 — inside the band; n = 7 at 0.103 at
+w = 2).  Consequences: (i) default w ≈ 0.5–2 for real data, anything
+for synthetic; (ii) w-sensitivity is itself a *vocabulary-coverage
+diagnostic* — a flat plateau certifies in-vocabulary data, w-dependence
+flags that the manifold is being outvoted; (iii) the certified Holstein
+count is w-stable at 6–7 with the n = 6/7 split sitting inside the
+calibration band — report both, per the tie policy.
+
 **The prior-started phase (user design) supersedes the free-started
 one** (*measured*, decisive).  Same objective and budget, opposite
 starting point: begin AT the z-descent decode (penalty starts ~0) and
