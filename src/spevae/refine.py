@@ -65,7 +65,7 @@ import torch
 from .data.real import MeasuredGreens
 from .models.vae import SPEVAE
 
-__all__ = ["RefineConfig", "RefineResult", "refine_latent"]
+__all__ = ["RefineConfig", "RefineResult", "refine_latent", "z_descend"]
 
 
 @dataclass
@@ -106,6 +106,7 @@ class RefineConfig:
     lr: float = 0.05
     prior_weight: float = 1.0
     target_ratio: float = 1.0
+    cov_method: str = "lw"
     min_eigenvalue: float = 0.0
     per_bin: bool = False
     patience: int = 200
@@ -202,7 +203,7 @@ def refine_latent(
     dtype = next(model.parameters()).dtype
     device = next(model.parameters()).device
 
-    cov = mg.covariance(cfg.min_eigenvalue)
+    cov = mg.covariance(cfg.min_eigenvalue, method=cfg.cov_method)
     n = cov["n_independent"]
     sl = cov["slices"].to(device)
     inv_sqrt_R = cov["inv_sqrt_R"].to(device=device, dtype=dtype)
@@ -295,3 +296,96 @@ def refine_latent(
         steps_run=step, converged=converged,
         data_term=data_term, prior_term=prior_term,
     )
+
+
+def z_descend(
+    model: SPEVAE,
+    G: torch.Tensor,
+    x: torch.Tensor,
+    beta: float,
+    sigma: torch.Tensor | None = None,
+    inv_sqrt_R: torch.Tensor | None = None,
+    slices: torch.Tensor | None = None,
+    steps: int = 800,
+    lr: float = 0.05,
+    prior_weight: float = 1.0,
+    patience: int = 200,
+) -> "RefineResult":
+    r"""Raw-tensor twin of :func:`refine_latent` for synthetic pipelines.
+
+    Same MAP objective and conventions -- weights frozen, best-z tracked,
+    prior anchor at ``prior_weight`` -- but takes ``(G, x, sigma,
+    inv_sqrt_R)`` directly instead of a :class:`MeasuredGreens`.  The
+    measured motivation (latent-landscape experiment, 2026-08-25): the
+    posterior-mean readout sits 30--40x above the decoder manifold's best
+    fit for the same data; descending :math:`\chi^2(\mathrm{decode}(z))`
+    recovers it while staying on the physics manifold.  Use the result's
+    poles as the rank scan's start and the template nominator.
+    """
+    dtype = next(model.parameters()).dtype
+    device = next(model.parameters()).device
+    G = G.reshape(1, -1).to(device=device, dtype=dtype)
+    x = x.reshape(-1).to(device=device, dtype=dtype)
+    s_ = (torch.full_like(G, 1e-3) if sigma is None
+          else sigma.reshape(1, -1).to(device=device, dtype=dtype))
+    W = None if inv_sqrt_R is None else inv_sqrt_R.to(device=device, dtype=dtype)
+    sl = slice(None) if slices is None else slices
+    L_eff = G[:, sl].shape[-1] if slices is not None else G.shape[-1]
+
+    was_training = model.training
+    saved = [(p, p.requires_grad) for p in model.parameters()]
+    for p, _ in saved:
+        p.requires_grad_(False)
+    model.eval()
+    try:
+        with torch.no_grad():
+            mu, logvar, norm = model.encode(G, x, beta, sigma=s_)
+        z = mu.clone().requires_grad_(True)
+        opt = torch.optim.Adam([z], lr=lr)
+        K = model.kernel_matrix(beta, x)
+        fwd = model.forward_map(beta, device, dtype)
+
+        def chi2_of(z_):
+            poles = model.decode(z_, norm, beta)
+            G_rec = fwd(poles, x, kernel_matrix=K)
+            d = (G_rec - G)[:, sl] / s_[:, sl]
+            if W is not None:
+                d = d @ W.transpose(-1, -2)
+            return (d * d).sum(-1).mean() / L_eff, poles, G_rec
+
+        with torch.no_grad():
+            chi2_init = float(chi2_of(z)[0])
+        best, stall, step = (float("inf"), z.detach().clone()), 0, 0
+        history = []
+        for step in range(1, steps + 1):
+            chi2, _, _ = chi2_of(z)
+            loss = (0.5 * L_eff * chi2
+                    + 0.5 * prior_weight * (z * z).sum(-1).mean())
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            val = float(chi2.detach())
+            history.append(val)
+            if val < best[0] - 1e-9:
+                best, stall = (val, z.detach().clone()), 0
+            else:
+                stall += 1
+                if stall >= patience:
+                    break
+        z_best = best[1]
+        with torch.no_grad():
+            chi2_final, poles, G_rec = chi2_of(z_best)
+            data_term = float(0.5 * L_eff * chi2_final)
+            prior_term = float(0.5 * prior_weight * (z_best * z_best).sum(-1).mean())
+    finally:
+        for p, flag in saved:
+            p.requires_grad_(flag)
+        if was_training:
+            model.train()
+    return RefineResult(
+        z=z_best, z_init=mu.detach(), z_sigma=(0.5 * logvar).exp().detach(),
+        poles=poles.detach().to_physical(beta), G_recon=G_rec.detach(),
+        chi2=float(chi2_final), chi2_init=chi2_init, chi2_target=1.0,
+        history=history, beta=float(beta), steps_run=step,
+        converged=float(chi2_final) <= 1.0, data_term=data_term,
+        prior_term=prior_term)

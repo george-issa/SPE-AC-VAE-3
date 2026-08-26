@@ -232,3 +232,28 @@ def test_refinement_stops_at_the_calibrated_floor_not_at_one():
     if res.converged:
         assert res.chi2 <= res.chi2_target * 1.0 + 1e-9
         assert res.steps_run < 6000
+
+
+def test_z_descend_beats_the_mean_readout():
+    """The latent-landscape result as a regression test: descending
+    chi^2(decode(z)) must land far below the posterior-mean readout."""
+    import torch
+    from spevae import load_model
+    from spevae.refine import z_descend
+    from spevae.physics.poles import PoleSet
+    from spevae.physics.forward import SpectralQuadrature, PoleGreens
+    model = load_model("out/step1/s1_metric.pt")
+    beta = 8.0
+    truth = PoleSet(eps=torch.tensor([[0.5, 1.5, 2.5]]) * beta,
+                    gamma=torch.tensor([[0.3, 0.3, 0.3]]) * beta,
+                    a=torch.tensor([[0.54, 0.297, 0.163]]),
+                    b=torch.zeros(1, 3))
+    quad = SpectralQuadrature.for_beta(beta)
+    x = torch.linspace(0.0, 1.0, 65)
+    G = PoleGreens(quad)(truth, x)
+    g = torch.Generator().manual_seed(0)
+    sigma = torch.full_like(G, 1e-4)
+    G = G + sigma * torch.randn(G.shape, generator=g)
+    r = z_descend(model, G, x, beta, sigma=sigma, steps=400)
+    assert r.chi2 < 0.25 * r.chi2_init, (r.chi2_init, r.chi2)
+    assert r.poles.eps.shape[-1] == model.num_poles
