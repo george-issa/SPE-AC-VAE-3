@@ -65,7 +65,8 @@ import torch
 from .data.real import MeasuredGreens
 from .models.vae import SPEVAE
 
-__all__ = ["RefineConfig", "RefineResult", "refine_latent", "z_descend"]
+__all__ = ["RefineConfig", "RefineResult", "refine_latent", "z_descend",
+           "manifold_refit"]
 
 
 @dataclass
@@ -389,3 +390,133 @@ def z_descend(
         history=history, beta=float(beta), steps_run=step,
         converged=float(chi2_final) <= 1.0, data_term=data_term,
         prior_term=prior_term)
+
+
+def manifold_refit(
+    model: SPEVAE,
+    poles0,
+    z0: torch.Tensor,
+    norm: torch.Tensor,
+    G: torch.Tensor,
+    x: torch.Tensor,
+    beta: float,
+    sigma: torch.Tensor,
+    inv_sqrt_R: torch.Tensor | None = None,
+    weight: float = 2.0,
+    rounds: int = 4,
+    fit_steps: int = 800,
+    proj_steps: int = 300,
+    lr: float = 0.02,
+    gamma_floor: float | None = None,
+) -> tuple:
+    r"""Free-pole refit with a manifold prior: the harshness dial between
+    z-descent and the free scan.
+
+    Objective per round: whitened :math:`\chi^2(\text{poles}) + w\,
+    \mathrm{L2rel}\big(A(\text{poles}),\,A(\mathrm{decode}(z))\big)`, with
+    the anchor :math:`z` re-projected onto the current fit between rounds
+    (a few hundred decoder-only steps).  ``weight -> infty`` recovers
+    z-descent (prior-faithful, expressiveness-limited); ``weight -> 0``
+    recovers the free refit (data-faithful, spiky).  In between, fits leave
+    the manifold only where the data insists: sub-floor spikes cost penalty
+    precisely because the manifold contains none at those coordinates.
+
+    ``poles0`` physical units; returns ``(poles_physical, info)`` where
+    ``info`` carries the chi2 / penalty / distance trajectory.
+    """
+    import math as _math
+    from .physics.forward import PoleGreens, SpectralQuadrature
+    from .physics.poles import PoleSet
+
+    dtype64 = torch.float64
+    quad = SpectralQuadrature.for_beta(float(beta), dtype=dtype64)
+    fwd = PoleGreens(quad)
+    xd = x.reshape(-1).double()
+    K = fwd.kernel_matrix(xd)
+    Gd = G.reshape(1, -1).double()
+    s = sigma.reshape(1, -1).double()
+    W = None if inv_sqrt_R is None else inv_sqrt_R.double()
+    nodes = quad.nodes
+    wq = quad.weights
+    floor = (0.1 * _math.pi / beta) if gamma_floor is None else float(gamma_floor)
+
+    def chi2_of(ps):
+        Gp = fwd(ps, xd, kernel_matrix=K)
+        d = (Gp - Gd) / s
+        if W is not None:
+            d = d @ W.transpose(-1, -2)
+        return (d * d).sum(-1).mean() / d.shape[-1]
+
+    def l2rel(A, A0):
+        num = ((A - A0) ** 2 * wq).sum(-1)
+        den = ((A0 ** 2) * wq).sum(-1).clamp_min(1e-300)
+        return (num / den).mean()
+
+    # dimensionless internal parameterisation, structural constraints exact
+    p0 = poles0.to_dimensionless(beta)
+    n = p0.a.shape[-1]
+    A_tot = float(p0.a.sum())
+    u_e = p0.eps.reshape(-1).double().clone().requires_grad_(True)
+    u_g = torch.log(torch.expm1(
+        (p0.gamma.reshape(-1).double() - floor * beta).clamp_min(1e-6)
+    )).clone().requires_grad_(True)
+    u_a = torch.log(p0.a.reshape(-1).double().clamp_min(1e-12)
+                    ).clone().requires_grad_(True)
+    t0 = (p0.b.reshape(-1).double()
+          / p0.a.reshape(-1).double().clamp_min(1e-12)).clamp(-0.49, 0.49)
+    u_t = torch.atanh(2.0 * t0).clone().requires_grad_(True)
+
+    def assemble():
+        g = floor * beta + torch.nn.functional.softplus(u_g)
+        a = A_tot * torch.softmax(u_a, dim=-1)
+        t = 0.5 * torch.tanh(u_t)
+        b = a * (t - (a * t).sum() / a.sum())
+        return PoleSet(eps=u_e.unsqueeze(0), gamma=g.unsqueeze(0),
+                       a=a.unsqueeze(0), b=b.unsqueeze(0))
+
+    z = z0.detach().clone().float()
+    model.eval()
+    info = {"rounds": []}
+    for r in range(rounds):
+        with torch.no_grad():
+            A_anchor = model.decode(z, norm, beta).spectral(
+                nodes.float()).double()
+        opt = torch.optim.Adam([u_e, u_g, u_a, u_t], lr=lr)
+        best = (float("inf"), None)
+        for _ in range(fit_steps):
+            ps = assemble()
+            c = chi2_of(ps)
+            pen = l2rel(ps.spectral(nodes), A_anchor)
+            loss = c + weight * pen
+            v = float(loss.detach())
+            if v < best[0]:
+                best = (v, (float(c), float(pen),
+                            {k: t_.detach().clone()
+                             for k, t_ in zip("egat", (u_e, u_g, u_a, u_t))}))
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+        _, (c_best, pen_best, state) = best
+        with torch.no_grad():
+            for t_, k in zip((u_e, u_g, u_a, u_t), "egat"):
+                t_.copy_(state[k])
+        info["rounds"].append({"chi2": c_best, "penalty": pen_best})
+        if r < rounds - 1:
+            with torch.no_grad():
+                A_fit = assemble().spectral(nodes).float().detach()
+            zv = z.clone().requires_grad_(True)
+            zopt = torch.optim.Adam([zv], lr=0.05)
+            for _ in range(proj_steps):
+                Az = model.decode(zv, norm, beta).spectral(nodes.float())
+                dl = l2rel(Az.double(), A_fit.double())
+                zopt.zero_grad(set_to_none=True)
+                dl.backward()
+                zopt.step()
+            z = zv.detach()
+    with torch.no_grad():
+        ps = assemble()
+        info["chi2"] = float(chi2_of(ps))
+        info["penalty"] = float(l2rel(ps.spectral(nodes), A_anchor))
+        info["weight"] = float(weight)
+    return PoleSet(eps=ps.eps / beta, gamma=ps.gamma / beta,
+                   a=ps.a, b=ps.b).detach(), info

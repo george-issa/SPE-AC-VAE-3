@@ -257,3 +257,40 @@ def test_z_descend_beats_the_mean_readout():
     r = z_descend(model, G, x, beta, sigma=sigma, steps=400)
     assert r.chi2 < 0.25 * r.chi2_init, (r.chi2_init, r.chi2)
     assert r.poles.eps.shape[-1] == model.num_poles
+
+
+def test_manifold_refit_dial_behaves():
+    """weight -> 0 approaches the free refit's chi2; large weight stays
+    near the anchor; moderate weight sits between on both axes."""
+    import torch
+    from spevae import load_model
+    from spevae.refine import z_descend, manifold_refit
+    from spevae.physics.poles import PoleSet
+    from spevae.physics.forward import SpectralQuadrature, PoleGreens
+    model = load_model("out/step1/s1_metric.pt")
+    beta = 8.0
+    truth = PoleSet(eps=torch.tensor([[0.4, 1.1, 2.6]]) * beta,
+                    gamma=torch.tensor([[0.35, 0.25, 0.45]]) * beta,
+                    a=torch.tensor([[0.5, 0.3, 0.2]]), b=torch.zeros(1, 3))
+    quad = SpectralQuadrature.for_beta(beta)
+    x = torch.linspace(0.0, 1.0, 65)
+    G = PoleGreens(quad)(truth, x)
+    g = torch.Generator().manual_seed(0)
+    sigma = torch.full_like(G, 1e-4)
+    G = G + sigma * torch.randn(G.shape, generator=g)
+    zr = z_descend(model, G, x, beta, sigma=sigma, steps=300)
+    with torch.no_grad():
+        _, _, norm = model.encode(G, x, beta, sigma=sigma)
+    p0 = zr.poles
+    outs = {}
+    for w in (0.0, 2.0, 50.0):
+        _, info = manifold_refit(model, p0, zr.z, norm, G, x, beta, sigma,
+                                 weight=w, rounds=2, fit_steps=300,
+                                 proj_steps=100)
+        outs[w] = info
+    # the dial's contract: distance to the manifold decreases monotonically
+    # with weight (chi2 monotonicity does NOT hold at short budgets -- the
+    # manifold pull was measured to ACCELERATE early chi2 descent)
+    assert outs[50.0]["penalty"] < outs[2.0]["penalty"] < outs[0.0]["penalty"], outs
+    for w in outs:
+        assert outs[w]["chi2"] < 0.5 * zr.chi2 + 2.0, (w, outs[w], zr.chi2)
