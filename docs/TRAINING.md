@@ -206,6 +206,24 @@ surfaces a genuine equal-k tie — free(3) at 0.920 vs peaks_asym(3) at
 complexity and equal fit is an open selection-policy question,
 deliberately not auto-decided.
 
+**Manifold-regularized refits: the harshness dial, built and measured**
+(`refine.manifold_refit`).  Free-pole refits with an A-space pull toward
+the decoder manifold's projection (anchor z re-projected each round):
+w → ∞ recovers z-descent, w → 0 the free refit.  Contract verified on
+the probes (manifold distance monotone in w; χ² pinned at floor; W₁
+improves 10–15% over the free fit — the hierarchy stands: declared
+structure > manifold prior > no prior, so the dial upgrades the
+*fallback*, not the menu).  On the Holstein it beats the design goal:
+starting from free(6) at 0.559, the regularized refits reach **χ²
+0.38–0.45** (ratio 2.2–2.6× vs 3.2×) while pulling 3–5× closer to the
+manifold — the manifold guide *accelerates* likelihood descent (also
+seen at short budgets in the unit test) rather than trading against it.
+Real-data ratio now 2.2×.  Operational lesson, learned twice in one
+day: the encoder must always see the dataset's FULL native grid (a
+one-token 80-vs-81 change re-collapsed the scan); fits see the
+statistical slices — `refine_latent`'s internal split is now the
+mandated convention for every entry point.
+
 **Step-1 gate closed with the boundary proof** (*measured*, Holstein
 cell).  z-descent with the prior anchor released (λ = 0, 10k steps)
 reaches χ² 23.96 — **137× the calibrated target**: the decoder
