@@ -184,6 +184,28 @@ pre-scan stage — manifold-constrained basin selection feeding the scan
 and template nomination — with per-dataset finetune (stage 2, encoder-
 only, anchored) as the escalation for out-of-distribution data.
 
+**z-descent wired in, and it rewrites checkpoint A** (*measured*).
+With `refine_latent` (structured whitener) feeding the scan on the
+Holstein cell: the proposal improves on-manifold χ² 916 → 37, and the
+rank scan HEALS — a clean monotone cliff to χ² 0.56 at n = 6 (vs the
+old collapse at 4,880, non-monotone).  The winner flips from
+mirrored_ladder(3) (χ² 3.5) to free(6) (0.56), and the real-data gap
+shrinks **20× → 3.2×**: most of the "spectral mismatch" was proposal
+failure, not vocabulary.  The physics reading sharpens rather than
+reverses — free(6) matches the mirrored ladder's pole COUNT (3 mirrored
+pairs = 6) but rejects the ladder's shared-width/geometric-decay
+constraints at 6× in χ²; the data is asking for the menu entry we don't
+have yet: **mirrored_peaks(n)** — n free mirror pairs, the gap-Δ +
+sidebands vocabulary item.  On the b-probes with z-descent starts: fano
+upgrades (peaks_asym(3), polished 1.134 → 0.967, W₁ 0.0123, k = 10 —
+more parsimonious AND more accurate than the previous asym(4) verdict);
+the asym triplet's scan count locks at the true n = 3, and the menu
+surfaces a genuine equal-k tie — free(3) at 0.920 vs peaks_asym(3) at
+0.934 (Δχ²·L ≈ 1, data-equivalent) where the free arrangement carries
+5× worse W₁; whether structured entries deserve the tie-break at equal
+complexity and equal fit is an open selection-policy question,
+deliberately not auto-decided.
+
 **Real-data checkpoint A** (*measured*, half-filled Holstein β = 8,
 Ω = 1.0, λ = 0.325, 400 bins, arm-C and arm-A models): the menu selects
 **mirrored_ladder(3)** — PH symmetry detected from the bins by model
