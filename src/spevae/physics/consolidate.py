@@ -269,6 +269,8 @@ def refit_poles_to_greens(
     fold_tolerance: float = 0.0,
     positivity_weight: float = 0.0,
     pair_bound: bool = False,
+    anchor_A: torch.Tensor | None = None,
+    anchor_weight: float = 0.0,
 ) -> tuple[PoleSet, float, float]:
     r"""Refit a (physical-unit) pole set directly to measured :math:`G(\tau)`.
 
@@ -388,6 +390,8 @@ def refit_poles_to_greens(
     wq = quad.weights
     nodes = quad.nodes
 
+    A_anc = None if anchor_A is None else anchor_A.reshape(1, -1).double()
+
     def objective_of(ps_dimless):
         loss = chi2_of(ps_dimless)
         if positivity_weight > 0.0:
@@ -395,6 +399,14 @@ def refit_poles_to_greens(
             neg = torch.relu(-A)
             pen = ((neg * neg) * wq).sum() / ((A * A) * wq).sum().clamp_min(1e-300)
             loss = loss + positivity_weight * pen
+        if anchor_weight > 0.0 and A_anc is not None:
+            # manifold prior force: chi2 stays the reported/selected number,
+            # the anchor term only shapes the descent (prior never votes in
+            # the LR count test)
+            A = ps_dimless.spectral(nodes)
+            num = (((A - A_anc) ** 2) * wq).sum(-1)
+            den = ((A_anc ** 2) * wq).sum(-1).clamp_min(1e-300)
+            loss = loss + anchor_weight * (num / den).mean()
         return loss
 
     u_e = eps0.clone().requires_grad_(True)
@@ -867,6 +879,10 @@ def rank_scan(
     seed: int = 0,
     gamma_floor: float | None = None,
     ph_symmetric: bool = False,
+    anchor_A: torch.Tensor | None = None,
+    anchor_weight: float = 0.0,
+    pre_refit_steps: int = 0,
+    initial_reduce: str = "merge",
 ) -> tuple[PoleSet, RankScanTrace]:
     r"""Global pole-count selection: refit at every count, pick the elbow.
 
@@ -901,6 +917,24 @@ def rank_scan(
     live = a > 1e-9 * float(a.sum())
     eps, gam, a, b = eps[live], gam[live], a[live], b[live]
 
+    if pre_refit_steps > 0:
+        # refit the FULL live configuration before any reduction: the cold
+        # merge was measured to destroy the proposal's arrangement (the
+        # w = 0 control, 2026-08-26); candidates should inherit a fitted
+        # configuration, not wreckage
+        dt0 = poles.eps.dtype
+        full = PoleSet(eps=eps[None].to(dt0), gamma=gam[None].to(dt0),
+                       a=a[None].to(dt0), b=b[None].to(dt0))
+        fitted0, _, _ = refit_poles_to_greens(
+            full, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R, slices=slices,
+            gamma_floor=gamma_floor, steps=pre_refit_steps, lr=lr,
+            ph_symmetric=ph_symmetric, anchor_A=anchor_A,
+            anchor_weight=anchor_weight)
+        eps = fitted0.eps.reshape(-1).double()
+        gam = fitted0.gamma.reshape(-1).double()
+        a = fitted0.a.reshape(-1).double()
+        b = fitted0.b.reshape(-1).double()
+
     # cold-merge the amortized set down to n_max, then descend in n with a
     # WARM start: each n-pole candidate is the fitted (n+1)-pole result with
     # its closest pair merged.  Every fit therefore starts from a
@@ -909,7 +943,13 @@ def rank_scan(
     # cold merge-tree init cannot make.
     dt = poles.eps.dtype
     while eps.numel() > n_max:
-        eps, gam, a, b = _merge_closest_pair(eps, gam, a, b)
+        if initial_reduce == "drop":
+            k = int(a.argmin())
+            keep = [i for i in range(a.numel()) if i != k]
+            scale = float(a.sum() / a[keep].sum().clamp_min(1e-30))
+            eps, gam, a, b = eps[keep], gam[keep], a[keep] * scale, b[keep]
+        else:
+            eps, gam, a, b = _merge_closest_pair(eps, gam, a, b)
 
     ns: list[int] = []
     fits: dict[int, tuple[PoleSet, float]] = {}
@@ -941,7 +981,8 @@ def rank_scan(
                 cand, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R,
                 slices=slices, gamma_floor=gamma_floor, steps=refit_steps,
                 lr=lr, ph_symmetric=ph_symmetric,
-                fold_tolerance=0.1 if ph_symmetric else 0.0)
+                fold_tolerance=0.1 if ph_symmetric else 0.0,
+                anchor_A=anchor_A, anchor_weight=anchor_weight)
             if float(c_end) < best_c:
                 best_fit, best_c = fitted, float(c_end)
         fitted, c_end = best_fit, best_c
@@ -986,7 +1027,8 @@ def rank_scan(
         refit, _, c_ = refit_poles_to_greens(
             fits[n_][0], beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R,
             slices=slices, gamma_floor=gamma_floor, steps=polish_steps,
-            lr=0.5 * lr, ph_symmetric=ph_symmetric)
+            lr=0.5 * lr, ph_symmetric=ph_symmetric,
+            anchor_A=anchor_A, anchor_weight=anchor_weight)
         if float(c_) < chi2s[idx]:
             fits[n_] = (refit, float(c_))
             chi2s[idx] = float(c_)
@@ -1012,7 +1054,8 @@ def rank_scan(
     selected, _, c_sel = refit_poles_to_greens(
         fits[sel][0], beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R,
         slices=slices, gamma_floor=gamma_floor, steps=polish_steps, lr=0.5 * lr,
-        ph_symmetric=ph_symmetric)
+        ph_symmetric=ph_symmetric, anchor_A=anchor_A,
+        anchor_weight=anchor_weight)
     trace = RankScanTrace(ns=ns, chi2s=chi2s,
                           fits_by_n={n: fits[n][0] for n in ns},
                           selected_n=sel, chi2_selected=float(c_sel),
