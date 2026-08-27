@@ -260,6 +260,22 @@ Holstein w-sensitivity flag flattens; dual-output full renderings lose
 their spikes at equal calibration (the current gold Holstein curve is
 the "before" picture).
 
+**Coverage protocol** (how "wide, rich, meaningful enough" is made a
+measured property): (1) mechanism vocabulary + composition (K ≤ 3,
+mirroring, physics-scaled ranges) — coverage in mechanism space, not
+function space; (2) a literature audit table: published DQMC spectral
+phenomenology per target model → motif composition, gaps becoming new
+families with menu entries and probes; (3) leave-one-family-out
+training arms — the generalization matrix replacing coverage claims;
+(4) real data as permanent auditor via the manifold floor and the
+w-sensitivity flag, closing the loop gap → mechanism → family →
+retrain; (5) no prior-hacking: ranges from physics scales, every
+distribution change A/B'd (the ρ lesson); (6) stratified judging:
+per-family streams, per-family probes, rotating canary, AU vs latent
+width.  Label-truncation residual: estimated 10⁻⁴–10⁻⁶ from geometric
+rational-approximation decay + measured MPM ladders; pinned per family
+by the bank's first unit test.
+
 **Grid convention hardened NOW, not deferred** (user directive): the
 80/81 lesson is enforced by construction — `prepare_inference(mg)` is
 the blessed real-data entry point (encoder = full native grid, fits =
