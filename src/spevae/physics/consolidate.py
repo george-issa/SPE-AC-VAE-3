@@ -835,6 +835,8 @@ class RankScanTrace:
     chi2_selected: float
     chi2_best: float
     tolerance: float
+    n_LR: int | None = None       #: pure-statistics count (always reported)
+    capacity_w: float = 0.0       #: temper weight used in tempered selection
 
     def __str__(self) -> str:
         curve = "  ".join(f"{n}:{c:.3g}" for n, c in zip(self.ns, self.chi2s))
@@ -860,6 +862,11 @@ def _merge_closest_pair(eps, gam, a, b):
             torch.cat([b[keep], (b[i] + b[j])[None]]))
 
 
+def chi2_quantile_95_local(k: int) -> float:
+    """Per-parameter LR price consistent with the chi^2_4 = 9.49 pole rule."""
+    return 9.4877 / 4.0 * k
+
+
 def rank_scan(
     poles: PoleSet,
     beta: float,
@@ -883,6 +890,7 @@ def rank_scan(
     anchor_weight: float = 0.0,
     pre_refit_steps: int = 0,
     initial_reduce: str = "merge",
+    capacity_c: list | None = None,
 ) -> tuple[PoleSet, RankScanTrace]:
     r"""Global pole-count selection: refit at every count, pick the elbow.
 
@@ -934,6 +942,7 @@ def rank_scan(
         gam = fitted0.gamma.reshape(-1).double()
         a = fitted0.a.reshape(-1).double()
         b = fitted0.b.reshape(-1).double()
+        _top_rung = fitted0
 
     # cold-merge the amortized set down to n_max, then descend in n with a
     # WARM start: each n-pole candidate is the fitted (n+1)-pole result with
@@ -953,6 +962,7 @@ def rank_scan(
 
     ns: list[int] = []
     fits: dict[int, tuple[PoleSet, float]] = {}
+
     rng = torch.Generator().manual_seed(seed)
     drop = None
     while True:
@@ -1034,7 +1044,7 @@ def rank_scan(
             chi2s[idx] = float(c_)
 
     polished: set[int] = set()
-    sel = ns[-1]
+    sel_lr = ns[-1]
     for k, n in enumerate(ns[:-1]):
         gain = (chi2s[k] - min(chi2s[k + 1:])) * L_eff
         # Borderline decisions are settled on floor-quality fits: Adam's
@@ -1049,8 +1059,21 @@ def rank_scan(
                     polished.add(ns[idx])
             gain = (chi2s[k] - min(chi2s[k + 1:])) * L_eff
         if gain < prune_quantile:
-            sel = n
+            sel_lr = n
             break
+    sel = sel_lr
+    if capacity_c is not None and anchor_weight > 0.0:
+        # tempered selection: S(n) = chi2_tot + lambda0 k(n) + w c(n).
+        # The LR price (lambda0 per parameter, from the same quantile
+        # doctrine) is NEVER scaled; w scales only the prior's capacity
+        # belief.  n_LR stays reported alongside.
+        lam0 = chi2_quantile_95_local(1)
+        S = []
+        for k, n in enumerate(ns):
+            kk = 4 * n - 2
+            c_n = capacity_c[n - 1] if n - 1 < len(capacity_c) else 1e9
+            S.append(chi2s[k] * L_eff + lam0 * kk + anchor_weight * c_n)
+        sel = ns[int(min(range(len(S)), key=lambda i: S[i]))]
     selected, _, c_sel = refit_poles_to_greens(
         fits[sel][0], beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R,
         slices=slices, gamma_floor=gamma_floor, steps=polish_steps, lr=0.5 * lr,
@@ -1058,6 +1081,7 @@ def rank_scan(
         anchor_weight=anchor_weight)
     trace = RankScanTrace(ns=ns, chi2s=chi2s,
                           fits_by_n={n: fits[n][0] for n in ns},
+                          n_LR=sel_lr, capacity_w=float(anchor_weight),
                           selected_n=sel, chi2_selected=float(c_sel),
                           chi2_best=best, tolerance=tolerance)
     return selected, trace

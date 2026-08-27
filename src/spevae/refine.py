@@ -66,7 +66,7 @@ from .data.real import MeasuredGreens
 from .models.vae import SPEVAE
 
 __all__ = ["RefineConfig", "RefineResult", "refine_latent", "z_descend",
-           "manifold_refit"]
+           "manifold_refit", "prior_count_belief"]
 
 
 @dataclass
@@ -520,3 +520,46 @@ def manifold_refit(
         info["weight"] = float(weight)
     return PoleSet(eps=ps.eps / beta, gamma=ps.gamma / beta,
                    a=ps.a, b=ps.b).detach(), info
+
+
+def prior_count_belief(
+    model: SPEVAE,
+    G: torch.Tensor,
+    x: torch.Tensor,
+    beta: float,
+    sigma: torch.Tensor | None = None,
+    n_samples: int = 64,
+    n_max: int = 16,
+    seed: int = 0,
+    kernel_width: float = 0.75,
+) -> list[float]:
+    r"""The trained prior's dataset-conditioned belief over pole counts.
+
+    Samples the posterior, decodes, reads each sample's effective pole count
+    (participation ratio), and returns ``c(n) = -2 ln P(n | G)`` for
+    n = 1..n_max via a Gaussian kernel density (add-one smoothed).  This is
+    the capacity half of the tempered prior: the same w that scales the
+    arrangement force scales this belief in the selection rule -- the
+    likelihood-ratio price is never touched.
+    """
+    from .physics.poles import effective_pole_count
+    G2 = G.reshape(1, -1).float()
+    x2 = x.reshape(-1).float()
+    s2 = None if sigma is None else sigma.reshape(1, -1).float()
+    model.eval()
+    with torch.no_grad():
+        mu, logvar, norm = model.encode(G2, x2, beta, sigma=s2)
+        std = (0.5 * logvar).exp()
+        gen = torch.Generator().manual_seed(seed)
+        effs = []
+        for _ in range(n_samples):
+            z = mu + std * torch.randn(mu.shape, generator=gen)
+            ps = model.decode(z, norm, beta)
+            a = ps.a / ps.a.sum(-1, keepdim=True).clamp_min(1e-30)
+            effs.append(float(effective_pole_count(a).mean()))
+    effs = torch.tensor(effs)
+    ns = torch.arange(1, n_max + 1, dtype=torch.float64)
+    dens = torch.exp(-0.5 * ((ns.unsqueeze(1) - effs.unsqueeze(0))
+                             / kernel_width) ** 2).sum(1)
+    p = (dens + 1.0) / float(dens.sum() + n_max)
+    return (-2.0 * torch.log(p)).tolist()
