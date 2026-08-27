@@ -229,12 +229,21 @@ spectra — the measured deficiency behind every remaining gap.
 
 **What changes**: the pole prior gains MPM-labeled smooth families
 (Gaussian mixtures, semicircle, box, gapped pairs, pseudogap — the
-legacy catalog), each truth labeled by its noise-matched minimal pole
-representation from an offline label bank (machine-precision Matsubara
-moments → per-rank MPM pole sets stored once → rank selected by the
-drawn noise at batch time → canonicalized).  Pole-loss only; no ω-grid
-enters training.  **What stays frozen**: architecture (latent 24, fast
-preset), objective (width metric, no concentration), β = 8, all judges.
+legacy catalog).  **Labels are noise-INDEPENDENT** (user correction
+2026-08-26, consistent with step 1's exact labels and with real data
+where σ is only estimated): one fixed label per truth — the
+machine-precision MPM extraction, canonically truncated by weight to
+P_max (capacity-matched; truncation residual ~10⁻⁴–10⁻⁶, far below any
+realistic noise; deterministic extraction protocol = the canonical
+label).  The noise does its teaching on the INPUT side only, exactly as
+in step 1 — the mass-weighted OT loss absorbs unresolvable detail and
+the network learns σ-calibrated hedging.  Pole-loss only; no ω-grid
+enters training.  **What stays frozen**: objective (width metric, no
+concentration), β = 8, all judges.  **Latent width is the one
+in-step factorial** (user remark: AU has been pinned at cap in every
+run): arms at latent 24 (control) and 32/48, judged identically — the
+data change is the step; capacity is swept within it, as the objective
+was within step 1.
 
 **Build order**: (1) label bank + unit tests (bank reproduces A_true to
 noise-resolution tolerance; rank grows with SNR); (2) generator
@@ -251,9 +260,15 @@ Holstein w-sensitivity flag flattens; dual-output full renderings lose
 their spikes at equal calibration (the current gold Holstein curve is
 the "before" picture).
 
+**Grid convention hardened NOW, not deferred** (user directive): the
+80/81 lesson is enforced by construction — `prepare_inference(mg)` is
+the blessed real-data entry point (encoder = full native grid, fits =
+statistical slices, whitener attached), z_descend carries the warning,
+and a regression test pins the convention on sum-rule-redundant data.
+
 **Deferred, in order, each its own arm**: latent-organization heads
 (on/off A/B on the step-2 checkpoint); β-extension 8 → [6,10] → [2,20]
-with grid-robustness augmentation (the 80/81 lesson); Perlmutter port +
+with grid-robustness augmentation; Perlmutter port +
 production run; UQ calibration; MaxEnt/SmoQyDEAC benchmarks; release
 gates.
 

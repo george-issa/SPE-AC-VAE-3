@@ -66,7 +66,7 @@ from .data.real import MeasuredGreens
 from .models.vae import SPEVAE
 
 __all__ = ["RefineConfig", "RefineResult", "refine_latent", "z_descend",
-           "manifold_refit", "prior_count_belief"]
+           "manifold_refit", "prior_count_belief", "prepare_inference"]
 
 
 @dataclass
@@ -313,6 +313,12 @@ def z_descend(
     patience: int = 200,
 ) -> "RefineResult":
     r"""Raw-tensor twin of :func:`refine_latent` for synthetic pipelines.
+
+    REAL DATA: do not hand-slice the inputs -- the encoder must see the
+    full native grid (pass ``slices`` for the fit restriction instead, or
+    use :func:`refine_latent` / :func:`prepare_inference`).  A one-token
+    grid change was measured to degrade the proposal enough to re-collapse
+    the rank scan.
 
     Same MAP objective and conventions -- weights frozen, best-z tracked,
     prior anchor at ``prior_weight`` -- but takes ``(G, x, sigma,
@@ -563,3 +569,29 @@ def prior_count_belief(
                              / kernel_width) ** 2).sum(1)
     p = (dens + 1.0) / float(dens.sum() + n_max)
     return (-2.0 * torch.log(p)).tolist()
+
+
+def prepare_inference(mg, min_eigenvalue: float = 1e-10,
+                      cov_method: str = "structured") -> dict:
+    r"""The blessed entry point for real-data inference inputs.
+
+    Returns everything the pipeline stages need, with the grid convention
+    enforced by construction (the 80/81 lesson, 2026-08-26: a one-token
+    grid change degraded the proposal enough to re-collapse the scan):
+
+    - ``G_full, x_full, sigma_encoder``: the ENCODER always sees the
+      dataset's complete native grid;
+    - ``slices, G_fit, x_fit, sigma_fit, inv_sqrt_R``: every FIT sees the
+      statistical slices with the calibrated whitener.
+
+    Scripts must not hand-slice encoder inputs; use these fields.
+    """
+    cov = mg.covariance(min_eigenvalue, method=cov_method)
+    sl = mg.statistical_slices
+    return {
+        "G_full": mg.mean.unsqueeze(0), "x_full": mg.x,
+        "sigma_encoder": mg.sigma_encoder.unsqueeze(0),
+        "slices": sl, "G_fit": mg.mean[sl], "x_fit": mg.x[sl],
+        "sigma_fit": mg.sigma_mean[sl], "inv_sqrt_R": cov["inv_sqrt_R"],
+        "chi2_target": cov["chi2_target"], "cov": cov,
+    }

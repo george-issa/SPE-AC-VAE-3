@@ -294,3 +294,26 @@ def test_manifold_refit_dial_behaves():
     assert outs[50.0]["penalty"] < outs[2.0]["penalty"] < outs[0.0]["penalty"], outs
     for w in outs:
         assert outs[w]["chi2"] < 0.5 * zr.chi2 + 2.0, (w, outs[w], zr.chi2)
+
+
+def test_prepare_inference_enforces_the_grid_convention():
+    """Encoder inputs = full native grid; fit inputs = statistical slices;
+    and the two must NOT silently be the same object on data with excluded
+    slices (the 80/81 regression)."""
+    import torch
+    from spevae.data.real import MeasuredGreens
+    from spevae.refine import prepare_inference
+    torch.manual_seed(0)
+    L, N, beta = 41, 60, 4.0
+    tau = torch.linspace(0, beta, L, dtype=torch.float64)
+    base = 0.5 * torch.exp(-tau) + 0.5 * torch.exp(-(beta - tau))
+    bins = base.unsqueeze(0) + 1e-3 * torch.randn(N, L, dtype=torch.float64)
+    # enforce the sum-rule identity so one endpoint is redundant
+    bins[:, -1] = 1.0 - bins[:, 0]
+    mg = MeasuredGreens(bins=bins, tau=tau, beta=beta)
+    d = prepare_inference(mg, cov_method="lw")
+    assert d["x_full"].numel() == L
+    assert d["x_fit"].numel() == d["slices"].numel() < L
+    assert d["G_full"].shape[-1] == L
+    assert d["inv_sqrt_R"].shape[0] == d["x_fit"].numel()
+    assert 0 < d["chi2_target"] <= 1.5
