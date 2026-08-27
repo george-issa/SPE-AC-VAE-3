@@ -206,6 +206,22 @@ surfaces a genuine equal-k tie — free(3) at 0.920 vs peaks_asym(3) at
 complexity and equal fit is an open selection-policy question,
 deliberately not auto-decided.
 
+**The anchored rank scan** (*measured*, built from the merge-confound
+finding + the χ²+L2 question): per-n refits carry the manifold anchor
+term in their descent objective while the LR count test reads pure χ²
+(the prior shapes optimisation, never votes on evidence); candidates
+descend by drop-lightest from a pre-refit of the FULL configuration
+(the cold merge is gone from the anchored path).  Same seeds, same LR
+rule as the old scan: identical certified counts (5/3/6 — all true or
+band-consistent), better χ² everywhere, and **2–3× better minimal-form
+W₁** (fano 0.054 → 0.024, triplet 0.062 → 0.023); the Holstein reaches
+χ² 0.106 — inside the calibration band — in one integrated pass,
+matching the refit-then-gate answer with cleaner machinery.  The
+remaining gap to the 16-pole prior-started results (fano 0.011) is
+representational (5 vs 16 poles), not procedural.  Canonical per-dataset
+order is now: z-descent → **anchored rank scan** (pre-refit, drop init,
+w ≈ 0.5–1) → menu.
+
 **The w = 0 control resolves the phase comparison: the cold merge was
 the confound** (*measured*, user-demanded fairness check).  Pure χ²
 refit of the UNMERGED 16-pole z-descent configuration reproduces the
