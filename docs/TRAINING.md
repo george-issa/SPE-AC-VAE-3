@@ -222,6 +222,22 @@ representational (5 vs 16 poles), not procedural.  Canonical per-dataset
 order is now: z-descent → **anchored rank scan** (pre-refit, drop init,
 w ≈ 0.5–1) → menu.
 
+**Ladder length settled: n_max = 8 stays the default** (*measured*,
+n_max = 16 vs 8 at matched anchor weights — the "isn't a fitted descent
+more prudent than a cold drop?" question, answered empirically NO at
+every tested w).  The long fitted descent degrades the minimal forms
+(triplet W₁ 0.023 → 0.056, fano 0.024 → 0.033; Holstein unchanged,
+n = 6 in-band) even with the anchor force on: at the low rungs the
+anchor is a 16-pole spectrum that few-pole fits cannot represent, so
+its gradient pulls toward coverage compromises rather than the crisp
+arrangement, and every extra fitted rung is a diffusion step among
+floor-equivalent basins.  The unfitted drop-reduction cannot corrupt
+what it keeps — the winning principle at all w, not only w → 0.
+Standing protocol: the anchored scan with n_max = 8, unfitted drop
+init, w ≈ 0.5–1, pure-χ² LR.  The 16-rung ladder and the tempered
+selection remain diagnostic instruments (the fano n = 11 result shows
+what they can find), not the default path.
+
 **The tempered-prior scan** (*measured*, S(n) = χ²_tot + λ₀k(n) +
 w·c(n), c(n) from posterior sampling, ladder to 16, λ₀ never scaled,
 n_LR always reported).  The prior's measured count beliefs: fano
