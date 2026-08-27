@@ -222,6 +222,18 @@ representational (5 vs 16 poles), not procedural.  Canonical per-dataset
 order is now: z-descent → **anchored rank scan** (pre-refit, drop init,
 w ≈ 0.5–1) → menu.
 
+**The user's resolution of the whole capacity question: the scan's top
+rung IS the prior-started optimization, and reporting was the only
+gap** (*verified*: the pre-refit rung reproduces the prior-start curve
+— fano χ² 0.879 / W₁ 0.0118 vs 0.876 / 0.0113).  The good full-capacity
+rendering was computed inside every anchored scan and discarded by the
+minimal-form selection.  RankScanTrace now exposes it (`full_fit`,
+`full_chi2`): the standing n_max = 8 protocol returns BOTH named
+outputs from one scan — the LR-certified minimal skeleton and the
+prior-started full rendering — no tempered selection, no second dial,
+no extra compute.  The tempered machinery remains a diagnostic (its
+unique contribution stays the mid-capacity fano n = 11 point).
+
 **Ladder length settled: n_max = 8 stays the default** (*measured*,
 n_max = 16 vs 8 at matched anchor weights — the "isn't a fitted descent
 more prudent than a cold drop?" question, answered empirically NO at
