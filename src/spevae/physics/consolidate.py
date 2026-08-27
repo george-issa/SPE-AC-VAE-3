@@ -837,6 +837,10 @@ class RankScanTrace:
     tolerance: float
     n_LR: int | None = None       #: pure-statistics count (always reported)
     capacity_w: float = 0.0       #: temper weight used in tempered selection
+    full_fit: object = None       #: the pre-refit full-capacity configuration
+    full_chi2: float | None = None  #: its whitened chi2 -- the prior-started
+                                    #: rendering, reported alongside the
+                                    #: minimal form (user insight 2026-08-26)
 
     def __str__(self) -> str:
         curve = "  ".join(f"{n}:{c:.3g}" for n, c in zip(self.ns, self.chi2s))
@@ -933,7 +937,7 @@ def rank_scan(
         dt0 = poles.eps.dtype
         full = PoleSet(eps=eps[None].to(dt0), gamma=gam[None].to(dt0),
                        a=a[None].to(dt0), b=b[None].to(dt0))
-        fitted0, _, _ = refit_poles_to_greens(
+        fitted0, _c0_full, _c_full = refit_poles_to_greens(
             full, beta, x, G_obs, sigma, inv_sqrt_R=inv_sqrt_R, slices=slices,
             gamma_floor=gamma_floor, steps=pre_refit_steps, lr=lr,
             ph_symmetric=ph_symmetric, anchor_A=anchor_A,
@@ -942,7 +946,6 @@ def rank_scan(
         gam = fitted0.gamma.reshape(-1).double()
         a = fitted0.a.reshape(-1).double()
         b = fitted0.b.reshape(-1).double()
-        _top_rung = fitted0
 
     # cold-merge the amortized set down to n_max, then descend in n with a
     # WARM start: each n-pole candidate is the fitted (n+1)-pole result with
@@ -1083,5 +1086,8 @@ def rank_scan(
                           fits_by_n={n: fits[n][0] for n in ns},
                           n_LR=sel_lr, capacity_w=float(anchor_weight),
                           selected_n=sel, chi2_selected=float(c_sel),
-                          chi2_best=best, tolerance=tolerance)
+                          chi2_best=best, tolerance=tolerance,
+                          full_fit=(fitted0 if pre_refit_steps > 0 else None),
+                          full_chi2=(float(_c_full) if pre_refit_steps > 0
+                                     else None))
     return selected, trace
