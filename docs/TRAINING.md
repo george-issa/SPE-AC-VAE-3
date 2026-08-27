@@ -222,6 +222,27 @@ representational (5 vs 16 poles), not procedural.  Canonical per-dataset
 order is now: z-descent → **anchored rank scan** (pre-refit, drop init,
 w ≈ 0.5–1) → menu.
 
+**The tempered-prior scan** (*measured*, S(n) = χ²_tot + λ₀k(n) +
+w·c(n), c(n) from posterior sampling, ladder to 16, λ₀ never scaled,
+n_LR always reported).  The prior's measured count beliefs: fano
+n ≈ 11, triplet n ≈ 10, Holstein n ≈ 13.  Headline: **fano at w = 16
+selects n = 11 and reaches W₁ 0.0077 — the best reconstruction of the
+campaign, better than BOTH limits of the interpolation** (minimal form
+0.024–0.035, full 16-pole 0.011): the tempered middle found a point
+neither endpoint contained.  The triplet behaves as registered — large
+w climbs to n = 10 and degrades toward the 16-pole value (0.045), the
+counter-case proving the dial is informative, not uniformly helpful.
+The Holstein climbs 6 → 7 → 13 while staying in the calibration band
+until w = 64 overreaches (χ² 0.32, anchor force distorting fits).
+Negative finding, recorded: at w = 0 on the 16-rung ladder the
+triplet's minimal form came back at 0.056, NOT the short-ladder 0.023 —
+initialization alone carries the arrangement only a few rungs; over a
+13-stage drop-descent the anchor FORCE is needed to maintain it.
+Practical recipe: arrangement force floored at w_arr = max(w, 0.5)
+(the measured corner where decoupling the two dials genuinely matters);
+crossover w* (where selection departs n_LR, here between 4 and 16 for
+all three cases) joins the truth-free per-dataset diagnostics.
+
 **Anchored-scan weight sweep: no sharp optimum, and that is the
 result** (*measured*, w = 0.1…5 on all three cases).  Certified counts
 are w-INVARIANT (5/3/6 at every weight — the pure-χ² LR rule delivers
