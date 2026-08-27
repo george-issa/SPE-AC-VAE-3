@@ -222,6 +222,41 @@ representational (5 vs 16 poles), not procedural.  Canonical per-dataset
 order is now: z-descent → **anchored rank scan** (pre-refit, drop init,
 w ≈ 0.5–1) → menu.
 
+## Step 2 roadmap (locked scope: one variable — the training data)
+
+**Goal**: grow the decoder manifold to express smooth, non-pole-closed
+spectra — the measured deficiency behind every remaining gap.
+
+**What changes**: the pole prior gains MPM-labeled smooth families
+(Gaussian mixtures, semicircle, box, gapped pairs, pseudogap — the
+legacy catalog), each truth labeled by its noise-matched minimal pole
+representation from an offline label bank (machine-precision Matsubara
+moments → per-rank MPM pole sets stored once → rank selected by the
+drawn noise at batch time → canonicalized).  Pole-loss only; no ω-grid
+enters training.  **What stays frozen**: architecture (latent 24, fast
+preset), objective (width metric, no concentration), β = 8, all judges.
+
+**Build order**: (1) label bank + unit tests (bank reproduces A_true to
+noise-resolution tolerance; rank grows with SNR); (2) generator
+integration (smooth families as new motif classes); (3) training A/B vs
+s1_metric at 60k; (4) smooth-shape probes (gaussian pair, semicircle,
+gapped) + their menu templates via the same noise-matched pole maps;
+(5) real-data checkpoint B.
+
+**Pass gates (all banked numbers)**: manifold floor on Holstein
+24.0 → down materially (THE gate); legacy canary 0.438 → down (its
+families become in-distribution — now a direct target); seven step-1
+probes stay green; new smooth probes recover their noise-matched labels;
+Holstein w-sensitivity flag flattens; dual-output full renderings lose
+their spikes at equal calibration (the current gold Holstein curve is
+the "before" picture).
+
+**Deferred, in order, each its own arm**: latent-organization heads
+(on/off A/B on the step-2 checkpoint); β-extension 8 → [6,10] → [2,20]
+with grid-robustness augmentation (the 80/81 lesson); Perlmutter port +
+production run; UQ calibration; MaxEnt/SmoQyDEAC benchmarks; release
+gates.
+
 **The user's resolution of the whole capacity question: the scan's top
 rung IS the prior-started optimization, and reporting was the only
 gap** (*verified*: the pre-refit rung reproduces the prior-start curve
