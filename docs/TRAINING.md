@@ -222,6 +222,17 @@ representational (5 vs 16 poles), not procedural.  Canonical per-dataset
 order is now: z-descent → **anchored rank scan** (pre-refit, drop init,
 w ≈ 0.5–1) → menu.
 
+**Anchored-scan weight sweep: no sharp optimum, and that is the
+result** (*measured*, w = 0.1…5 on all three cases).  Certified counts
+are w-INVARIANT (5/3/6 at every weight — the pure-χ² LR rule delivers
+exactly the intended robustness); probe W₁ is a broad plateau (fano
+0.0222–0.0245, triplet 0.0230–0.0251 — ±5% over 50× in w, opposite
+gentle trends); the only meaningful gradient is real-data calibration:
+the Holstein's certified fit moves from 1.7σ below the perfect-fit band
+at w = 0.1 into the band at w = 2 (χ² 0.148).  Default w = 1; the
+per-dataset tuner, when wanted, is truth-free: choose w to centre the
+certified fit in the calibration band.
+
 **The w = 0 control resolves the phase comparison: the cold merge was
 the confound** (*measured*, user-demanded fairness check).  Pure χ²
 refit of the UNMERGED 16-pole z-descent configuration reproduces the
