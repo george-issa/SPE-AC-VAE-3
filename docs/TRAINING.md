@@ -288,6 +288,275 @@ with grid-robustness augmentation; Perlmutter port +
 production run; UQ calibration; MaxEnt/SmoQyDEAC benchmarks; release
 gates.
 
+**Step-2 build (1): the smooth-family label bank — built, judged,
+pinned** (*measured*, 2026-08-27).  `data/label_bank.py` +
+`tests/test_label_bank.py` (10 tests) + `scripts/step2/
+build_label_bank.py`; the bank is 1280 labels (256/family, seed 1,
+β ∈ [2, 20], P_max = 12) with report, judge arrays and three figures in
+`out/step2/`.  The canonical protocol is module constants, and every
+clause was forced by a measurement: (i) exact Matsubara data from
+closed-form Stieltjes transforms (Faddeeva w for Gaussian components;
+Gauss-Legendre with the edge-absorbing u = D sinθ substitution for the
+broadened semicircle/box; verified to 1e-15 against brute force — no
+τ-grid, no spline transform, no noise); (ii) the fit lives in the
+decoder's constrained output space (softmax a, centred-tanh b, width
+floor) inside a hard parameter box — two ghost-pole failures are on
+record: an unconstrained-sum fit parked 4% of the weight invisibly, and
+a softmax'd-but-unbounded fit parked 1e-3 of weight at |ε| ~ 1e20,
+invisible in the Matsubara residual (3e-7) but a 1e-3 error in G(0);
+(iii) AAA supplies *seeds only* — its interpolation stopping rule says
+nothing about the causal-pole-sum error (interpolation at 1e-12 with
+the causal subset stuck at 1e-1 for Gaussian tails at β ≥ 8); each
+rank rung 1…12 is an analytic-Jacobian trust-region fit
+(finite-difference-verified); (iv) the **smoothness budget**: the pure
+data objective returned spike combs — floor-width poles peaking 10×
+above a smooth truth at residual 1e-7, caught by the rendered overlays
+— so every polish carries a mollified-A block at the resolution scale
+π/β whose weight descends a homotopy, and the label is the smoothest
+fit whose PURE Matsubara residual meets max(1e-6, 1.5× the rank's own
+floor).  A fixed weight fails both ways (0.5 alone cost 1e-4–8e-3 in
+data fidelity; a pure re-polish afterwards re-sharpened the spikes),
+and stopping the ladder at the first in-budget rung cost 2–3× in W₁;
+(v) dips bounded, not banned: > 0.5% negative weight triggers a
+re-polish under a tightened asymmetry cap — post-hoc b-shrinking cost
+17× in residual; merges are fidelity-gated (a stacked pair at one
+centre can BE the minimal representation).
+
+**The label A-fidelity floor is the residue-phase bound, NOT
+information content** (*measured*, 2026-09-01, forced by the user's
+challenge against Zhang & Gull PRB 110, 035154 / arXiv:2504.01163).
+The papers reconciled first: arXiv:2504.01163 fits poles to A(ω) GIVEN
+on the real axis (1e5 real-frequency points — no continuation; 1e-12
+with 9–19 poles), and PRB 110, 035154's own Fig. 2 splits by spectral
+type — the near-exact recoveries are its *discrete* (pole-representable)
+cases, matching our step-1 exact-recovery tests, while its *continuum*
+case reaches err(A) ≈ 1e-3 (L1) at machine-precision ε with M = 11
+free complex poles, β = 200, N_ω = 2001.  Then the decisive local
+experiment: on OUR truths at β = 8 with only 64 Matsubara points,
+UNCONSTRAINED Prony (free complex residues, no cap, no floor) reaches
+machine data-residual (1e-12–1e-13) with 7–8 poles and L1(A) =
+1e-3 (gauss pair) / 0.014 (semicircle) / 0.016 (box) — so the noiseless
+data DOES pin A down, and the earlier "null-space" reading of the label
+wiggles was wrong in emphasis.  What binds is the SPE residue
+constraint set, isolated dial by dial: the width floor does NOT bind
+(free pole depths ≥ 0.11 vs floor 0.041); rank does NOT bind (free fits
+use ≤ 8 ≤ P_max); positivity barely binds (free weights all positive,
+Σa = 1, dips ≤ 1e-3).  The binding constraint is **|b| ≤ a**: optimal
+band-edge poles carry |b|/a ≈ 1.9–2.1, and Gaussian bulk wants
+dispersive-dominant poles (b finite as a → 0) that the decoder's
+b = a(t − ⟨t⟩ₐ) map cannot express at any cap.  Cap isolation on the
+floor-broadened semicircle (t_cap 0.5 / 1.0 / 2.5, all else fixed):
+L1 0.187 / 0.041 / 0.014 with residual 4.9e-7 / 1.1e-7 / 7.1e-14 and
+negative weight 8.3e-4 / 1.6e-5 / 1.7e-5 — the cap alone recovers
+free-fit quality for edge-type spectra WITH positivity essentially
+intact.  Consequences: (i) the bank v1 labels stay as built — they are
+capacity-matched to the CURRENT decoder, and a label the decoder cannot
+emit teaches an unreachable target; (ii) the residue-phase bound is now
+a measured expressiveness ceiling of the architecture itself (plausibly
+part of the Holstein manifold-floor 24.0 story) and joins the deferred
+arms as a candidate: raise the asymmetry cap jointly in the decoder
+constraint layer, the pole prior, and the label protocol — one
+variable, its own A/B, dips still bounded by the exact certificate at
+the standing 0.5% tolerance.
+
+**The candidate residue map, designed and measured** (*measured*,
+2026-09-01, follow-up).  Broad sampling first killed the naive option:
+free Prony sets are NOT safe to adopt — for Gaussian-bulk and
+pseudogap truths the machine-precision representation uses poles with
+large NEGATIVE spectral weight (a down to −5.9 behind cancellations),
+brittle as targets and meaningless as OT mass; only the edge families
+come out all-positive (their transforms are Markov-function-like).
+The safe candidate keeps the mass doctrine and decouples only the
+dispersive channel: a = softmax (positive, Σa = 1), γ ≥ floor, ε in
+the box, and **b_p = d_p − (Σ_q d_q)·a_p with |d_p| ≤ D** — zero-sum
+exact by construction, b no longer tied to a (today's map is
+b = a(t − ⟨t⟩ₐ), |t| ≤ ½, which both caps |b|/a below 1 AND forces
+b → 0 with a).  Measured reachable fidelity of that space at β = 8,
+64 noiseless points, pure data objective (L1(A) vs truth; current
+label / safe space / unsafe free): gauss pair 0.29 / **0.010–0.015** /
+0.001; semicircle 0.055→(this probe) 0.187 / **0.014** / 0.014; box
+0.087 / **0.016** / 0.016; pseudogap — / **0.004–0.015** / —; data
+residuals 1e-8 to 9e-14, and certified negative weight ≤ 3e-4
+everywhere, 20× below the dip tolerance, with NO per-pole surrogate.
+D = 0.3 suffices for edge families; D = 0.8 buys the bulk families
+(free-fit |b| ≤ 0.2 for edges; safe fits spend |b| ≤ 0.8 where the
+unsafe optimum spent negative weight).  Still an arm, not an act: the
+change touches the decoder constraint layer + pole prior + label
+protocol together, and the open risk is behaviour under noise (the
+dispersive channel adds freedom noise can excite) — exactly what the
+standing judges measure.
+
+**The map arm, screened on the step-1 world** (*measured*, 2026-09-01;
+scope amendment by user directive: the residue-map arm runs BEFORE the
+step-2 data arm, on the discrete step-1 prior, so the noise-excitation
+question is answered where the channel adds zero needed expressiveness
+and any degradation is unambiguous).  Implementation:
+`residue_mode="dispersive"` in the decoder constraint layer
+(D = 0.8 = `physics.poles.DISPERSIVE_SCALE`), matching d-draws in the
+pole prior (`--prior-residue-mode`), unit-tested (reaches |b|/a > 2 and
+dispersive-dominant poles; Σb = 0 exact; PH mirror pairwise; prior dips
+certificate-bounded).  Three 6k screens, s1_metric recipe otherwise
+(β = 8, data poles, width metric, no concentration, seed 1): ctrl
+(step-1 map), M0 (dispersive decoder, step-1 prior — pure architecture),
+M1 (dispersive decoder + widened prior).  Judged on common fixed probes
+via z-descent with PAIRED noise realisations
+(`out/step2/map_screen6k.*`): (i) **no noise excitation** — paired-
+realisation consistency W₁ is equal or better for M0/M1 on every probe
+at both noise levels (e.g. triplet 0.0087/0.0084/0.0081 at 1e-3), and
+every reconstruction certifies exactly positive (negw = 0); (ii)
+pole-closed probes neutral-to-better (fano W₁ 0.028 → 0.022/0.021;
+triplet 0.051 → 0.059 M0 / 0.047 M1 at 1e-4); (iii) the smooth
+out-of-vocabulary payoff is large: **semicircle W₁ 0.199 → 0.144 (M0)
+→ 0.056 (M1)** at noise 1e-3, and at quiet noise χ² 58.2 → 9.2 → 3.0 —
+M0's gain at IDENTICAL training data is the predicted free bonus:
+z-descent exploiting the wider reachable manifold.  The ctrl semicircle
+render is a spike comb peaking 3× above the truth; M1's is a mildly
+rippled semicircle.  Screen verdict: M1 promoted to the judged 60k
+tier against s1_metric (the banked 60k control with the same recipe).
+
+**M1 at the judged 60k tier: THE gate falls 6.3x; one probe regression
+on record** (*measured*, 2026-09-01, `out/step2/holstein_floor.json`,
+`map_judge60k*.json`).  Headline: the Holstein manifold floor (z-refine,
+anchor released, 10k steps) drops **23.89 → 3.77** (136x → 21.5x the
+calibrated target) — the harness first reproduced the banked s1_metric
+number (23.89 vs 23.96), so the drop is real and attributable to the
+residue map + widened prior ALONE, with zero smooth training data.  A
+substantial part of the step-1 "manifold floor 24" was the |b| <= a
+bound, as the free-Prony diagnosis predicted; the remaining 3.77 → 0.56
+gap (6.7x) is what the smooth-family data arm now owns.  The anchored
+MAP refine also improves 45.9 → 14.4.  Probes, with a step-budget
+control (800 vs 3000 z-descent steps, which matters for M1's sharper
+landscape): at quiet noise (1e-4) M1-60k is better or equal — fano W1
+0.0139 vs 0.0263, semicircle 0.094 vs 0.216 (2.3x), triplet mildly
+worse (0.061 vs 0.049); consistency and dips stay clean everywhere
+(negw <= 2.9e-3).  BUT at noise 1e-3 the fano band genuinely regresses
+(chi2 4.4 vs 1.0, W1 0.102 vs 0.028, budget-independent) — and
+M1-6k did NOT show this (0.0215), so it is a training-length effect
+under the widened prior, not the map per se.  Open item for the
+promotion decision: seed/length replicates (is 60k past a sweet spot
+for this prior mix?), an eval-checkpointed rerun, or proceed to the
+data arm (whose labels and curriculum change the mix anyway) with the
+fano@1e-3 number tracked as a regression canary.
+
+**SOS residue sampler, prototyped against the current priors**
+(*measured*, 2026-09-01, `scripts/step2/proto_sos_prior.py`,
+`out/step2/sos_prior_proto.*`; motivation: the prior's residue
+constraints should not silently bias coverage of the physical set — a
+nonneg univariate polynomial is a sum of two squares, so at fixed pole
+locations P = q1²+q2² parameterises the ENTIRE positive set: positivity
+exact by construction, Σb = 0 automatic, no certificate, no shrink
+bias; residues r_p = −2i P(z_p)/Q'(z_p), verified).  Matched
+position/width draws at β = 8, 300 truths per sampler: step-1 map
+max|b|/a med/p95 0.21/0.50, never > 1, dips 1%; M1 rescaled-t
+dispersive 0.77/3.30, 40% exercise |b| > a, dips 13% (all within the
+0.5% bound) at 2.2 certificate calls/truth (the shrink-loop cost and
+bias, now quantified); SOS 2.98/41.5, 80% exercise |b| > a, dips
+EXACTLY zero, fastest — and produces qualitatively new physical shapes
+neither prior reaches (smooth two-hump backgrounds, one-sided sharp
+band edges).  Two measured limitations: (i) 36% of pole arrangements
+rejected outright (40 tries never yield all-positive weights — an
+arrangement-coverage bias of its own); (ii) the induced weight
+structure collapses (effective pole count med 2.3 vs 4.6 — random
+numerators concentrate mass, losing the designed envelopes).  Verdict:
+a valuable third STREAM, not a replacement.  Queued design that fixes
+both at once, pending its own prototype: **SOS-perturbed motif truths**
+— P = (1−λ)·P_motif + λ·(q1²+q2²): convex combinations of nonneg
+numerators stay nonneg, so exact positivity survives while the motif
+envelope and arrangement coverage are inherited at small λ; λ becomes
+the fairness dial, A/B'd like every distribution change.
+
+**Reconstruction gallery, nine truths x two models x two stages**
+(*measured*, 2026-09-01, `out/step2/recon_gallery_nz*.{json,png}`;
+amortized ~2 ms forward pass + z-descent 3000, no scans).  Standing
+picture at quiet noise (1e-4), z-descent W₁ s1_metric vs M1-60k: M1
+wins the smooth world ~2x (gauss pair 0.183/0.096, semicircle
+0.216/0.094, box 0.222/0.111) and the fano band (0.026/0.014), ties
+pseudogap (0.21 both — neither map helps its dip structure; the data
+arm owns it), cedes ~20% on the discrete probes (triplet 0.049/0.061,
+ladder 0.052/0.062).  At loud noise (1e-3) s1 leads most pole probes
+(fano 0.028/0.102 — the known 60k regression) while M1 still renders
+semicircle/box mildly better AND visibly comb-free where s1 produces
+violent spike combs at the chi2 floor.  The amortized stage is rough
+everywhere (W₁ 0.09–0.55, chi2 up to 4e3 at quiet noise) and slightly
+worse for M1 — the pipeline's quality lives in z-descent onward, as
+designed.  Two pipeline-level artifacts caught and measured: (i) the
+gapped-pair reconstructions spike 4x above truth AT the chi2 floor
+(null-space behaviour at 1e-3, both models); (ii) the lorentz-pair
+probe sticks at chi2 ~12 under the default z-prior weight 1.0 for BOTH
+models, seed-independent, and releasing to 0.2 reaches chi2 1.7 / W₁
+halved — the encoder mis-centres this simple input and the anchor pins
+the descent there; prior-weight sensitivity of z-descent joins the
+diagnostics watchlist.
+
+**The mis-centering mechanism, isolated: a mirror-symmetry attractor in
+the encoder** (*measured*, 2026-09-01, s1_metric — i.e., pre-existing
+step-1 behaviour, not a map-arm effect).  Amortized chi2 on two-sided
+Lorentzian pairs grows MONOTONICALLY as the side weights balance: 6.6
+(a = 80/20) → 18 (65/35) → 36 (55/45) → 97 (50/50), while for the
+balanced cases best-of-64 posterior samples barely help (97 → 53: the
+posterior fails to COVER, not merely to centre) yet a one-sided pair is
+rescued by sampling (30 → 8.7).  The smoking gun: the proposal's mirror
+asymmetry is shrunk toward zero by exactly the amount that predicts the
+failure — truth/proposal asymmetry 0.540/0.540 at 80/20 (no shrink),
+0.331/0.306, 0.253/0.163 (−36%), 0.227/0.104 (−54%) at 50/50.  The
+encoder snaps near-balanced two-sided inputs toward the PH-symmetric
+submanifold — an amortization prior plausibly trained in by the pole
+prior's 30% exactly-mirrored draws.  This retro-explains the banked
+step-1 observations (encoder "mis-centred more than multimodal", probe
+z-descent floors 6–15, amortized proposal seeding bad basins) and
+matters for real data: the Holstein is exactly a near-symmetric-but-
+not cell (PH-asymmetric at 4-sigma).  Candidate fixes, each its own
+A/B: training side — soften the exact-mirror subpopulation (symmetry-
+breaking jitter on the ph draws); inference side — adaptive z-prior
+weight or best-of-K seeding when the input is near tau-symmetric.
+2026-09-01*).  (i) *Rank-ladder shape verdicts*
+(`physics.consolidate.ladder_verdict`, judged in
+`out/step2/ladder_verdicts.*`): the discrete-vs-continuum dichotomy of
+the noiseless ladders (crash-to-floor vs geometric decay; cf. Zhang &
+Gull Fig. 2) applied to the banked dual-output chi2(n) traces.  Arrival
+SPEED is not a discriminator (measured overlap: the triplet crash
+arrives x9.8 while a semicircle's geometric rungs run x10-40); cliff
+DOMINANCE plus the post-arrival shelf is.  Verdicts: asym triplet
+**pole-closed at n=3** (cliff share 76%, shelf 4); fano band
+**ambiguous** (a resolved band at the comb/smooth boundary -- the
+honest answer); **Holstein: continuum-like** (arrives at the
+calibration floor still improving x4.9, no shelf, cliff share 36%) --
+independent support for the step-2 thesis that the cell carries smooth
+spectral content the pole vocabulary lacks.  (ii) *Capacity vs beta*
+(`out/step2/capacity_vs_beta.*`, ladders to n=20, 160 labels): with the
+cap lifted, 45% (beta=8) to 70% (beta>=12) of smooth labels select
+n>12, BUT the cost of capping at 12 is a median 4-7x on residuals
+sitting at 1e-7 -- invisible at any training noise -- and the worst
+n=12 residual stays <=1e-5 everywhere except one gauss_mixture draw at
+beta=20 (1.5e-4, marginally above the 3e-5 quietest noise).  Design
+number: **P_max=12 stands through beta=20**; the thin beta=20 tail says
+re-run this sweep before any beta-extension beyond 20.  Caveat on
+record: the verdict is at the data-residual level; the extra rungs were
+separately measured to keep buying A-space W1, so the rendering-level
+capacity question reopens if step-2 training shows W1 saturation.
+
+Bank numbers, pinned (also asserted by the unit tests): median
+Matsubara residual **1.0e-7** — the roadmap's 1e-4–1e-6 truncation
+estimate, beaten; per-family med/p95: gauss 1.6e-7/1.0e-6, gapped
+1.4e-7/9.4e-6, semicircle 6.1e-8/2.8e-7, box 6.9e-8/2.7e-7, pseudogap
+1.5e-7/8.3e-7.  G-space through the training forward map: **98.8% of
+entries below the quietest training noise (3e-5)**; the 15 exceptions
+are 12 floor-limited truths at β ≲ 6.5 (features AT the resolution
+floor; resid honestly recorded, up to 6.5e-2) plus 3 high-β
+amplification cases ≤ 4.8e-5.  W₁(label, truth) median 0.023
+(per-family 0.0096–0.049).  Label rank: median n = 10 at cap 12; rank
+ladders decay geometrically through the noise band and the supported
+rank grows as tolerance tightens — the roadmap's rank-vs-SNR unit test.
+97.9% of labels carry a dip (asymmetry is load-bearing for smooth
+shapes), every one ≤ the 5e-3 bound; minimum dimensionless width sits
+exactly at the 1.05 × 0.1π floor in every family.  Floor-limited
+regime documented: truths with features at the floor at β ≈ 2–3 are
+representable only to ~1e-3–1e-2 with ~1.4× sub-resolution overshoot —
+measured to be representability, not protocol (invariant under block
+weight, mollification scale, and extra rank) — and the per-entry
+``resid`` records exactly how far the output space can follow each
+truth; training can weight by it.
+
 **The user's resolution of the whole capacity question: the scan's top
 rung IS the prior-started optimization, and reporting was the only
 gap** (*verified*: the pre-refit rung reproduces the prior-start curve

@@ -849,6 +849,87 @@ class RankScanTrace:
                 f"tol x{self.tolerance:g})")
 
 
+@dataclass
+class LadderVerdict:
+    """Shape classification of a chi^2(n) rank ladder.
+
+    The noiseless dichotomy is exact (measured on the step-2 label bank
+    and in Zhang & Gull's Fig. 2): a pole-closed spectrum CRASHES to the
+    floor at its true count and shelves there; a continuum decays
+    geometrically, every rung buying a steady factor.  Noise blurs it --
+    both kinds stop at the calibrated floor -- so the verdict here reads
+    the *arrival*: a cliff followed by a flat shelf is pole-closed-
+    consistent, a steady multiplicative approach that is still improving
+    when it enters the floor, with no shelf, is continuum-consistent.
+    This is a descriptive diagnostic (calibrated on the three banked
+    dual-output cases), not a certificate; the LR count remains the
+    statistics.
+    """
+
+    verdict: str          #: "pole-closed" | "continuum-like" | "ambiguous"
+    n_arrival: int        #: first count whose chi^2 enters the floor band
+    r_arrival: float      #: improvement factor of the arriving step
+    shelf: int            #: rungs that stay inside the floor band after it
+    cliff_share: float    #: largest single-step share of the pre-arrival drop
+    floor: float          #: the floor level used (calibrated target or best)
+
+    def __str__(self) -> str:
+        return (f"{self.verdict} (arrive n={self.n_arrival} x{self.r_arrival:.1f}, "
+                f"shelf {self.shelf}, cliff share {self.cliff_share:.0%})")
+
+
+def ladder_verdict(ns, chi2s, floor_target: float | None = None,
+                   band: float = 2.0) -> LadderVerdict:
+    """Classify a rank ladder's shape; see :class:`LadderVerdict`.
+
+    ``floor_target`` is the calibrated perfect-fit chi^2 when known (the
+    honest floor for noisy data); otherwise the curve's own minimum.
+    ``band`` scales the floor into the arrival band.  Thresholds are
+    calibrated on the banked exemplars: the asym triplet (pole-closed
+    truth: arrival x9.8 after a x1300 cliff, shelf 4), the Holstein
+    (arrival x4.9 still in a steady multiplicative regime, shelf <= 1),
+    and the fano band (a resolved band at the comb/smooth boundary --
+    genuinely ambiguous, and classified as such).
+    """
+    ns = list(ns)
+    c = [float(v) for v in chi2s]
+    floor = float(floor_target) if floor_target is not None else min(c)
+    level = band * floor
+    inside = [i for i, v in enumerate(c) if v <= level]
+    if not inside:
+        return LadderVerdict("ambiguous", ns[int(min(range(len(c)),
+                             key=lambda i: c[i]))], 1.0, 0, 0.0, floor)
+    k = inside[0]
+    r_arr = c[k - 1] / c[k] if k > 0 else float("inf")
+    # A shelf rung sits inside the floor band WITHOUT continuing to improve
+    # materially -- on noisy data chi^2 hovers at the floor; a noiseless
+    # curve that keeps dropping below a synthetic floor has not shelved.
+    shelf = 0
+    for i in range(k + 1, len(c)):
+        if c[i] <= level and c[i] > c[k] / band**2:
+            shelf += 1
+        else:
+            break
+    drops = [math.log(max(c[i] / c[i + 1], 1.0)) for i in range(k)]
+    total = sum(drops)
+    cliff = max(drops) / total if total > 0 else 1.0 if k == 0 else 0.0
+    # "steady": the arriving step's rate is consistent with the rung before
+    # it -- a curve still in its multiplicative regime.  Deliberately
+    # relative: a continuum converging at a steep 20x/rung is still a
+    # continuum, which is also why arrival SPEED is not a discriminator
+    # (measured overlap: the triplet crash arrives x9.8, a semicircle's
+    # geometric rungs run x10-40); cliff DOMINANCE is the robust one.
+    steady = (len(drops) >= 2 and drops[-1] > 0 and drops[-2] > 0
+              and max(drops[-1], drops[-2]) / min(drops[-1], drops[-2]) <= 3.0)
+    if shelf >= 2 and cliff >= 0.6:
+        v = "pole-closed"
+    elif shelf <= 1 and steady and cliff < 0.6:
+        v = "continuum-like"
+    else:
+        v = "ambiguous"
+    return LadderVerdict(v, ns[k], float(r_arr), shelf, float(cliff), floor)
+
+
 def _merge_closest_pair(eps, gam, a, b):
     """Merge the closest pair (positions in units of the narrower width)."""
     P = eps.numel()

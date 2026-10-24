@@ -46,7 +46,7 @@ def physical_greens(B=4, L=41, beta=10.0, seed=0):
 # The constraint layer
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize("residue_mode", ["real", "complex"])
+@pytest.mark.parametrize("residue_mode", ["real", "complex", "dispersive"])
 def test_constraints_hold_for_arbitrary_raw_outputs(residue_mode):
     """Causality, positivity, sum rule and zero-sum tail, for wild activations."""
     con = PoleConstraints(residue_mode=residue_mode, nu_max=200.0)
@@ -61,7 +61,41 @@ def test_constraints_hold_for_arbitrary_raw_outputs(residue_mode):
         assert torch.allclose(poles.a.sum(-1), torch.ones(B, dtype=DT), atol=1e-12)
         assert torch.allclose(poles.b.sum(-1), torch.zeros(B, dtype=DT), atol=1e-12)
         assert (poles.eps.abs() <= 200.0 * (1 + 1e-9)).all(), "position bound violated"
-        assert (poles.b.abs() <= poles.a + 1e-12).all(), "|b| <= a violated"
+        if residue_mode == "dispersive":
+            D = con.dispersive_scale
+            assert (poles.b.abs() <= D * (1 + P * poles.a) + 1e-12).all(), \
+                "dispersive amplitude rail violated"
+        else:
+            assert (poles.b.abs() <= poles.a + 1e-12).all(), "|b| <= a violated"
+
+
+def test_dispersive_mode_reaches_what_the_complex_map_cannot():
+    """The measured motivation: |b|/a ~ 2 at band edges and dispersive-
+    dominant poles (b finite as a -> 0) are reachable in "dispersive" mode
+    and structurally excluded in "complex" mode."""
+    B, P = 1, 6
+    u_eps = torch.zeros(B, P, dtype=DT)
+    u_gamma = torch.zeros(B, P, dtype=DT)
+    u_a = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, -8.0]], dtype=DT)
+    u_b = torch.tensor([[2.0, -2.0, 1.0, -1.0, 0.0, 3.0]], dtype=DT)
+    disp = PoleConstraints(residue_mode="dispersive")(u_eps, u_gamma, u_a, u_b)
+    comp = PoleConstraints(residue_mode="complex")(u_eps, u_gamma, u_a, u_b)
+    ratio_d = (disp.b.abs() / disp.a).max()
+    ratio_c = (comp.b.abs() / comp.a).max()
+    assert float(ratio_d) > 2.0, float(ratio_d)
+    assert float(ratio_c) <= 1.0 + 1e-9
+    # the near-weightless pole carries finite dispersive amplitude
+    i = int(disp.a.argmin())
+    assert float(disp.a[0, i]) < 1e-3
+    assert float(disp.b[0, i].abs()) > 0.1
+    # and the sum rules hold exactly in both modes
+    assert torch.allclose(disp.b.sum(-1), torch.zeros(1, dtype=DT), atol=1e-12)
+    # PH-symmetric doubling keeps the zero-sum pairwise
+    ph = PoleConstraints(residue_mode="dispersive", ph_symmetric=True)(
+        u_eps, u_gamma, u_a, u_b)
+    assert torch.allclose(ph.b.sum(-1), torch.zeros(1, dtype=DT), atol=1e-12)
+    assert torch.allclose(ph.b[:, :P], -ph.b[:, P:], atol=1e-12)
+    assert torch.allclose(ph.a.sum(-1), torch.ones(1, dtype=DT), atol=1e-12)
 
 
 def test_real_mode_gives_pointwise_positive_spectra():

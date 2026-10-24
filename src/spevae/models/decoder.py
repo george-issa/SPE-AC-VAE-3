@@ -111,7 +111,7 @@ class PoleDecoder(nn.Module):
         # In "real" mode b is identically zero, so a dispersive head would be a
         # parameter that can never receive a gradient.  Omit it rather than
         # carry dead weights that quietly inflate the parameter count.
-        self.head_b = nn.Linear(d_model, 1) if residue_mode == "complex" else None
+        self.head_b = nn.Linear(d_model, 1) if residue_mode != "real" else None
 
         self.constraints = PoleConstraints(
             residue_mode=residue_mode, gamma_min=gamma_min,

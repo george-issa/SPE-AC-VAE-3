@@ -72,6 +72,7 @@ import torch
 
 __all__ = [
     "PoleSet",
+    "DISPERSIVE_SCALE",
     "spectral_from_poles",
     "tail_coefficients",
     "windowed_moments",
@@ -79,6 +80,16 @@ __all__ = [
     "per_pole_extrema",
     "spectral_norm",
 ]
+
+#: Cap on the per-pole dispersive amplitude in the ``"dispersive"`` residue
+#: map, :math:`b_p = d_p - (\sum_q d_q) a_p` with :math:`|d_p| \le D`.
+#: *Measured* (2026-09-01): free Prony fits of the step-2 smooth families
+#: spend :math:`|b| \le 0.2` on edge spectra and :math:`\le 0.8` on Gaussian
+#: bulk; with :math:`D = 0.8` the constrained space reaches L1(A) of
+#: 0.004--0.016 across all families at data residuals :math:`\le 10^{-8}`
+#: with certified dips :math:`\le 3\times10^{-4}`.  The bound is the safety
+#: rail: it caps how hard noise can excite the dispersive channel.
+DISPERSIVE_SCALE: float = 0.8
 
 
 @dataclass

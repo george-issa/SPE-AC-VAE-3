@@ -33,7 +33,7 @@ import math
 import torch
 
 from ..physics.forward import PoleGreens, SpectralQuadrature
-from ..physics.poles import PoleSet
+from ..physics.poles import DISPERSIVE_SCALE, PoleSet
 from ..physics.positivity import certify
 from .noise import NoiseModel, sample_correlated_noise, whitener
 from .synthetic import TrainingBatch
@@ -65,6 +65,7 @@ class PolePriorGenerator:
         P_max: int = 12,
         dip_tol: float = 5e-3,
         motifs: tuple[str, ...] = MOTIFS,
+        residue_mode: str = "complex",
         rho_range: tuple[float, float] | None = None,
         quad_nodes_per_width: float = 3.5,
         quad_tail_nodes: int = 32,
@@ -94,6 +95,16 @@ class PolePriorGenerator:
         if unknown:
             raise ValueError(f"unknown motifs: {sorted(unknown)}")
         self.motifs = tuple(motifs)
+        # "complex": b = a (t - <t>_a), the step-1 map (|b| <= a).
+        # "dispersive": b = d - (sum d) a with the motif t-patterns rescaled
+        # to amplitudes d in +-DISPERSIVE_SCALE -- truths that exercise the
+        # widened decoder channel (|b|/a uncapped, dispersive-dominant poles
+        # reachable).  The dip certificate below bounds either mode the same
+        # way, which is what confines large-d draws to clustered motifs:
+        # an isolated pole's dispersive tail has nothing nearby to cancel it.
+        if residue_mode not in ("complex", "dispersive"):
+            raise ValueError(f"residue_mode={residue_mode!r}")
+        self.residue_mode = residue_mode
         self.quad_h = float(gamma_min) / float(quad_nodes_per_width)
         self.quad_tail_nodes = int(quad_tail_nodes)
         self.cache_limit = max(int(cache_limit), 1)
@@ -226,15 +237,23 @@ class PolePriorGenerator:
                 if changed:
                     break
 
-        # residues: b = a (t - <t>_a).  Truths are NOT forced non-negative:
-        # hard positivity biases the prior (small dips are sometimes what a
-        # good reconstruction needs).  The exact certificate is used only to
-        # *measure* the dip, and b shrinks only when the negative weight
-        # exceeds dip_tol -- a bound, not a ban.  Enforcement proper lives at
-        # inference (consolidation refit + certificate gate), not here.
+        # residues from the asymmetry pattern t.  Truths are NOT forced
+        # non-negative: hard positivity biases the prior (small dips are
+        # sometimes what a good reconstruction needs).  The exact certificate
+        # is used only to *measure* the dip, and the pattern shrinks only when
+        # the negative weight exceeds dip_tol -- a bound, not a ban.
+        # Enforcement proper lives at inference (consolidation refit +
+        # certificate gate), not here.
         for shrink in range(4):
-            tm = sum(ai * ti for ai, ti in zip(a, t))
-            b = [ai * (ti - tm) for ai, ti in zip(a, t)]
+            if self.residue_mode == "dispersive":
+                # motif t-patterns rescaled to bounded amplitudes; zero-sum
+                # via the weight-distributed recentering, as in the decoder
+                d = [(DISPERSIVE_SCALE / 0.45) * ti for ti in t]
+                ds = sum(d)
+                b = [di - ds * ai for di, ai in zip(d, a)]
+            else:
+                tm = sum(ai * ti for ai, ti in zip(a, t))
+                b = [ai * (ti - tm) for ai, ti in zip(a, t)]
             rep = certify(eps, gam, a, b, atol=1e-9)
             if (rep.is_positive or rep.negative_weight <= self.dip_tol
                     or all(abs(v) < 1e-12 for v in b)):

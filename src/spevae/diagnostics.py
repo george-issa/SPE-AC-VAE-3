@@ -115,7 +115,7 @@ def ansatz_chi2_floor(
 
     con = PoleConstraints(residue_mode=residue_mode, gamma_min=gamma_min,
                           nu_max=0.8 * beta * omega_c)
-    n_heads = 4 if residue_mode == "complex" else 3
+    n_heads = 3 if residue_mode == "real" else 4
     u = [torch.zeros(1, num_poles, dtype=dtype, requires_grad=True)
          for _ in range(n_heads)]
     with torch.no_grad():

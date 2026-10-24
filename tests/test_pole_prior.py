@@ -227,3 +227,33 @@ def test_concentration_penalizes_mass_splitting():
     l_split0 = float(sinkhorn_pole_loss(split, lab, lam_conc=0.0)[0])
     assert l_split > l_one            # splitting now costs something
     assert l_split > l_split0 + 0.2   # and the cost comes from the new term
+
+
+def test_dispersive_prior_exercises_the_widened_channel():
+    """M1's truths: the dispersive residue mode keeps every constraint and
+    the 0.5% dip bound, and actually uses |b| > a (which the step-1 map
+    structurally excludes) -- predominantly on clustered motifs, since an
+    isolated pole's dispersive tail has nothing nearby to cancel it."""
+    g = PolePriorGenerator(beta_range=(6.0, 10.0), residue_mode="dispersive")
+    g.seed_scalars(11)
+    rng = torch.Generator().manual_seed(11)
+    ratios = []
+    for _ in range(6):
+        b = g.batch(16, rng)
+        lab = b.poles_true
+        for i in range(16):
+            m = int(lab["n_true"][i])
+            a = lab["a"][i, :m]
+            bb = lab["b"][i, :m]
+            assert float(a.sum()) == pytest.approx(1.0, rel=1e-5)
+            assert float(bb.sum()) == pytest.approx(0.0, abs=1e-5)
+            rep = certify((lab["eps"][i, :m] / b.beta).tolist(),
+                          (lab["gamma"][i, :m] / b.beta).tolist(),
+                          a.tolist(), bb.tolist(), atol=1e-6)
+            assert rep.is_positive or rep.negative_weight <= 5.5e-3
+            if m > 0:
+                ratios.append(float((bb.abs() / a.clamp_min(1e-12)).max()))
+    assert max(ratios) > 1.0, "widened channel never exercised"
+
+    with pytest.raises(ValueError):
+        PolePriorGenerator(residue_mode="nope")

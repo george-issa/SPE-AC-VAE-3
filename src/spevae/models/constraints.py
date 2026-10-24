@@ -74,7 +74,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from ..physics.kernel import MATSUBARA_NU0
-from ..physics.poles import PoleSet
+from ..physics.poles import DISPERSIVE_SCALE, PoleSet
 
 __all__ = ["PoleConstraints", "DEFAULT_GAMMA_MIN", "spectral_norm_from_greens"]
 
@@ -94,7 +94,20 @@ class PoleConstraints(nn.Module):
         softly enforced in training and *exactly certified* at inference (see
         the module docstring).  ``"real"`` sets :math:`b \equiv 0`, giving a
         positive mixture of Lorentzians: :math:`A(\omega) \ge 0` pointwise by
-        construction, at the cost of per-pole symmetry.
+        construction, at the cost of per-pole symmetry.  ``"dispersive"``
+        decouples the dispersive channel from the weights,
+        :math:`b_p = d_p - (\sum_q d_q)\,a_p` with
+        :math:`|d_p| \le D =` :data:`~spevae.physics.poles.DISPERSIVE_SCALE`:
+        still exactly zero-sum, but a pole may be dispersive-dominant
+        (:math:`b` finite as :math:`a \to 0`) and the ratio :math:`|b|/a` is
+        no longer capped.  *Measured* motivation (2026-09-01): the
+        :math:`|b| \le a` bound -- not the width floor, rank, or data -- is
+        what kept smooth spectra 4--30x away in L1(A) from what the same
+        noiseless data supports; band edges want :math:`|b|/a \approx 2` and
+        Gaussian bulk wants dispersive-dominant poles.  Positivity control
+        moves entirely to the dip machinery and the exact certificate.
+    dispersive_scale
+        The amplitude cap :math:`D` of the ``"dispersive"`` map.
     gamma_min
         Width floor, dimensionless.  Must exceed the quadrature's
         ``min_resolvable_gamma``.
@@ -119,11 +132,13 @@ class PoleConstraints(nn.Module):
         nu_max: float = 240.0,
         eps_scale: float = MATSUBARA_NU0,
         ph_symmetric: bool = False,
+        dispersive_scale: float = DISPERSIVE_SCALE,
     ) -> None:
         super().__init__()
-        if residue_mode not in ("real", "complex"):
+        if residue_mode not in ("real", "complex", "dispersive"):
             raise ValueError(
-                f"residue_mode={residue_mode!r}; expected 'real' or 'complex'."
+                f"residue_mode={residue_mode!r}; expected 'real', 'complex' "
+                f"or 'dispersive'."
             )
         self.residue_mode = residue_mode
         self.gamma_min = float(gamma_min)
@@ -131,6 +146,7 @@ class PoleConstraints(nn.Module):
         self.nu_max = float(nu_max)
         self.eps_scale = float(eps_scale)
         self.ph_symmetric = bool(ph_symmetric)
+        self.dispersive_scale = float(dispersive_scale)
 
     def forward(
         self,
@@ -186,6 +202,15 @@ class PoleConstraints(nn.Module):
 
         if self.residue_mode == "real" or u_b is None:
             b = torch.zeros_like(a)
+        elif self.residue_mode == "dispersive":
+            # b_p = d_p - (sum_q d_q) a_p with |d_p| <= D.
+            #   sum_p b_p = sum d - (sum d) * sum a = 0            [sum a = 1]
+            #   b is decoupled from a: a dispersive-dominant pole (a -> 0,
+            #   b finite) is reachable, and |b|/a is uncapped -- the two
+            #   restrictions of the "complex" map that were measured binding
+            #   on smooth spectra.  |b_p| <= D (1 + n a_p) is the safety rail.
+            d = self.dispersive_scale * torch.tanh(u_b)
+            b = d - d.sum(dim=-1, keepdim=True) * a
         else:
             # b_p = a_p (t_p - sum_q a_q t_q) with |t| <= 1/2.
             #   sum_p b_p = sum_p a_p t_p - (sum_q a_q t_q) sum_p a_p = 0   [sum a = 1]

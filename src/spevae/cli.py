@@ -354,6 +354,7 @@ def cmd_pretrain(args) -> None:
             pole_kw["rho_range"] = (args.rho_min, args.rho_max)
         gen = PolePriorGenerator(omega_c=args.omega_c,
                                  P_max=args.num_poles - 4,
+                                 residue_mode=args.prior_residue_mode,
                                  device=args.device, **pole_kw, **dist)
         if args.data == "mixed":
             fam = SyntheticGenerator(omega_c=args.omega_c,
@@ -477,7 +478,13 @@ def main(argv=None) -> None:
     p.add_argument("--num-poles", type=int, default=16)
     p.add_argument("--omega-c", type=float, default=20.0)
     p.add_argument("--residue-mode", default="complex",
-                   choices=["complex", "real"])
+                   choices=["complex", "real", "dispersive"])
+    p.add_argument("--prior-residue-mode", default="complex",
+                   choices=["complex", "dispersive"],
+                   help="b construction of the pole-prior truths; "
+                        "'dispersive' widens the drawn asymmetries to the "
+                        "decoder's dispersive channel (the M1 arm), "
+                        "'complex' keeps the step-1 distribution (M0)")
     p.add_argument("--data", default="families",
                    choices=["families", "poles", "mixed"],
                    help="training data: legacy A-space families, or the "

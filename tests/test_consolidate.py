@@ -406,3 +406,33 @@ def test_rank_scan_escapes_the_comb_aliasing_trap():
                            truth.to_dimensionless(beta).spectral(quad2.nodes),
                            quad2, beta=beta))
     assert w1 < 0.06, w1
+
+
+def test_ladder_verdict_classifies_the_banked_exemplars():
+    """The three dual-output chi2(n) curves are the calibration set: the
+    asym triplet is pole-closed (cliff then shelf), the Holstein is
+    continuum-like (steady multiplicative arrival, no shelf), and the
+    fano band -- a resolved band at the comb/smooth boundary -- is
+    honestly ambiguous."""
+    from spevae.physics import ladder_verdict
+    ns = list(range(1, 9))
+    triplet = [12677.2, 9.7518, 0.99002, 0.86568, 1.00604, 1.14400,
+               1.58054, 2.29217]
+    fano = [29181.1, 127.876, 15.3683, 2.21945, 0.93060, 1.08756,
+            1.19818, 22.1196]
+    holstein = [94996.9, 1134.45, 209.754, 1.93786, 0.92890, 0.18872,
+                0.34359, 1.60462]
+    v_t = ladder_verdict(ns, triplet, floor_target=1.0)
+    v_f = ladder_verdict(ns, fano, floor_target=1.0)
+    v_h = ladder_verdict(ns, holstein, floor_target=0.175)
+    assert v_t.verdict == "pole-closed", str(v_t)
+    assert v_t.n_arrival == 3 and v_t.shelf >= 2
+    assert v_f.verdict == "ambiguous", str(v_f)
+    assert v_h.verdict == "continuum-like", str(v_h)
+    assert v_h.n_arrival == 6 and v_h.shelf <= 1
+    # noiseless dichotomy sanity: a machine-crash curve is pole-closed,
+    # a clean geometric decay ending at its floor is continuum-like
+    crash = [1e2, 1e-1, 1e-9, 1.1e-9, 1.2e-9, 1.0e-9]
+    geom = [1e2, 1e1, 1e0, 1e-1, 1e-2, 1e-3]
+    assert ladder_verdict(range(1, 7), crash).verdict == "pole-closed"
+    assert ladder_verdict(range(1, 7), geom).verdict == "continuum-like"
