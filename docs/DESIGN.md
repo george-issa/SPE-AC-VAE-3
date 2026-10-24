@@ -127,8 +127,9 @@ $$G(x) = \int d\nu\; \tilde A(\nu)\, K(x,\nu),
 a family indexed by temperature. Three things follow.
 
 1. **The input-dimension problem dissolves.** $L_\tau = \beta/\Delta\tau + 1$
-   changes with the simulation, but $x \in [0,1]$ does not. Combined with an
-   attention encoder over time slices, one set of weights accepts any grid. The
+   changes with the simulation, but $x \in [0,1]$ does not. Combined with a
+   transformer encoder over time slices (one token per τ point), one set of
+   weights accepts any grid. The
    first attempt used a fixed-width convolutional stack and therefore needed a
    separate model per cell — fatal for a package other people run on their own
    data.
@@ -224,7 +225,10 @@ float64 to patch the $\tau=0$ endpoint. None of that is required here.
 
 ## 6. Architecture
 
-**Encoder** — a transformer over imaginary-time tokens. Each token carries the
+**Encoder** — a transformer over imaginary-time tokens: a pre-LayerNorm
+`nn.TransformerEncoder` stack (GELU feed-forward; depth, width and head count set
+per training preset) with one token per time slice, and the posterior
+$q(z\mid G)$ read off the `CLS` output. Each token carries the
 standardised $\hat G$, a signed-log channel, the local noise level, and
 continuous positional features of $x$; a `CLS` token carries $\log\beta$,
 $\log L_\tau$, the curve's own location and scale, and the leading Matsubara

@@ -2,16 +2,25 @@
 
 Analytic continuation of noisy imaginary-time Green's functions to
 real-frequency spectral functions, using a physics-constrained variational
-autoencoder whose decoder emits a **simple pole expansion** — never a frequency
+autoencoder: a **transformer encoder** reads G(τ) as a sequence of time-slice
+tokens, and the decoder emits a **simple pole expansion** — never a frequency
 grid.
 
 ```
-G(τ) from DQMC ──▶ encoder ──▶ q(z|G) ──▶ decoder ──▶ {ε_p − iγ_p,  a_p + i b_p}
-  any β, any Δτ                (sample)                       │
-                                                              ▼
-                               A(ω) = −(1/π) Σ_p Im[ r_p / (ω − z_p) ]
-                               causal · normalised · asymmetric · certified ≥ 0
+G(τ) from DQMC ──▶ transformer ──▶ q(z|G) ──▶ decoder ──▶ {ε_p − iγ_p,  a_p + i b_p}
+  any β, any Δτ      encoder       (sample)                       │
+                                                                  ▼
+                                   A(ω) = −(1/π) Σ_p Im[ r_p / (ω − z_p) ]
+                                   causal · normalised · asymmetric · certified ≥ 0
 ```
+
+**The encoder is a transformer.** Every imaginary-time slice is one token — its
+value of G (standardised and signed-log), its error bar, and continuous position
+features of x = τ/β — and a `CLS` token adds β, L_τ, the noise level and the
+leading Matsubara coefficients. Self-attention over the slices, with a padding
+mask for ragged lengths, is what lets one set of weights read any grid; q(z|G)
+is read off the `CLS` output (`src/spevae/models/encoder.py`,
+[`docs/DESIGN.md`](docs/DESIGN.md) §6).
 
 The pole set **is** the result: evaluate `A(ω)` anywhere, at any resolution,
 after the fact — and reuse the poles directly in downstream many-body codes.

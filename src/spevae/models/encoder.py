@@ -1,4 +1,4 @@
-r"""Encoder: a variable-length, β-agnostic, noise-aware map :math:`G(\tau) \to q(z\mid G)`.
+r"""Transformer encoder: a variable-length, β-agnostic, noise-aware map :math:`G(\tau) \to q(z\mid G)`.
 
 The problem this solves
 -----------------------
@@ -17,7 +17,7 @@ Two changes remove the dependence entirely:
    actually cares about.  β is supplied separately as a conditioning scalar,
    because it still sets the *prior* over spectra (bandwidth in units of
    temperature) even though it does not change the map.
-2. **Attention over time slices instead of a fixed-width stack.**  Each
+2. **A transformer over time slices instead of a fixed-width stack.**  Each
    :math:`\tau` point is a token; a padding mask handles ragged lengths.  Any
    :math:`L_\tau`, uniform or not, is a valid input, and nothing about the
    architecture changes between :math:`\beta = 5` and :math:`\beta = 20`.
@@ -124,6 +124,10 @@ class TimeFeatures(nn.Module):
 
 class GreensEncoder(nn.Module):
     r"""Transformer encoder over imaginary-time slices.
+
+    A pre-LayerNorm :class:`torch.nn.TransformerEncoder` (GELU feed-forward)
+    reads one token per slice plus a ``CLS`` summary token; ``mu`` and
+    ``logvar`` are read off the ``CLS`` output.
 
     Parameters
     ----------
