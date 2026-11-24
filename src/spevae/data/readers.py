@@ -101,9 +101,10 @@ def _read_smoqy_v1_bins(sim_dir: str, r1: int, r2: int) -> np.ndarray:
     return np.stack(rows, axis=0)                       # (N_bins, L_tau+1)
 
 
-def _read_smoqy_v2_bins(sim_dir: str, r1: int, r2: int) -> np.ndarray:
+def _read_smoqy_v2_bins(sim_dir: str, r1: int, r2: int, pair: int = 0) -> np.ndarray:
     """v2.x layout: bins/bins_pID-*.h5, axes reversed from the Julia shape
-    (N_bins, Lx, Ly, L_tau+1, N_pairs) -> (N_pairs, L_tau+1, Ly, Lx, N_bins)."""
+    (N_bins, Lx, Ly, L_tau+1, N_pairs) -> (N_pairs, L_tau+1, Ly, Lx, N_bins).
+    One-dimensional lattices carry a single spatial axis (``r1``)."""
     import h5py
 
     bin_dir = os.path.join(sim_dir, "bins")
@@ -117,10 +118,13 @@ def _read_smoqy_v2_bins(sim_dir: str, r1: int, r2: int) -> np.ndarray:
     for name in files:
         with h5py.File(os.path.join(bin_dir, name), "r") as f:
             data = f["CORRELATIONS/STANDARD/TIME-DISPLACED/greens/POSITION"]
-            if data.ndim != 5:
-                raise ValueError(f"{name}: expected a 5-axis POSITION dataset, "
+            if data.ndim == 5:
+                blocks.append(data[pair, :, r2, r1, :].real.T)  # (N_bins, L_tau+1)
+            elif data.ndim == 4:                                # 1D lattice
+                blocks.append(data[pair, :, r1, :].real.T)
+            else:
+                raise ValueError(f"{name}: expected a 4- or 5-axis POSITION dataset, "
                                  f"got shape {data.shape}")
-            blocks.append(data[0, :, r2, r1, :].real.T)  # (N_bins, L_tau+1)
     return np.concatenate(blocks, axis=0)
 
 
@@ -129,9 +133,13 @@ def read_smoqy_dir(
     r1: int = 0,
     r2: int = 0,
     dtype: torch.dtype = torch.float64,
+    pair: int | tuple[int, ...] = 0,
 ) -> MeasuredGreens:
     r"""Read the local (or ``(r1, r2)``-displaced) :math:`G(\tau)` bins from a
     SmoQyDQMC simulation directory, either storage layout.
+
+    ``pair`` selects which measured orbital pair to read (v2.x); a tuple
+    averages symmetry-equivalent pairs bin by bin.
 
     The endpoint-inclusive grid :math:`\tau = 0 \dots \beta` is kept: the
     :math:`\tau=\beta` slice is what makes the spectral norm readable, and
@@ -140,7 +148,8 @@ def read_smoqy_dir(
     """
     params = read_model_params(sim_dir)
     if os.path.isdir(os.path.join(sim_dir, "bins")):
-        bins = _read_smoqy_v2_bins(sim_dir, r1, r2)
+        pairs = (pair,) if isinstance(pair, int) else tuple(pair)
+        bins = np.mean([_read_smoqy_v2_bins(sim_dir, r1, r2, p) for p in pairs], axis=0)
         layout = "v2.x (bins_pID-*.h5)"
     elif os.path.isdir(os.path.join(sim_dir, "time-displaced")):
         bins = _read_smoqy_v1_bins(sim_dir, r1, r2)

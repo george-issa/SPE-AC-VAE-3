@@ -52,7 +52,7 @@ from .constraints import DEFAULT_GAMMA_MIN, spectral_norm_from_greens
 from .encoder import GreensEncoder
 
 __all__ = ["FlowPosterior", "PoleCoords", "save_flow", "load_flow", "refine_samples",
-           "A_DUST"]
+           "add_pole", "A_DUST"]
 
 #: Log-weight of a dust token (an empty slot).  exp(-14) ~ 8e-7.
 A_DUST = -14.0
@@ -280,7 +280,8 @@ def refine_samples(flow: FlowPosterior, z0: torch.Tensor, norm: torch.Tensor, be
                    perturb: bool = False, generator: torch.Generator | None = None,
                    anneal: float | None = None, lr_final: float | None = None,
                    anneal_from: float | None = None, solver: str = "lm",
-                   lm_iters: int = 40, lm_stages: int = 6, lm_stage_iters: int = 6):
+                   lm_iters: int = 40, lm_stages: int = 6, lm_stage_iters: int = 6,
+                   return_coords: bool = False):
     r"""Sample-then-refine: pull each flow sample onto the data.
 
     Each sample's token coordinates ``u`` minimise
@@ -324,7 +325,9 @@ def refine_samples(flow: FlowPosterior, z0: torch.Tensor, norm: torch.Tensor, be
 
     ``G_fit, sigma_fit`` are ``(N, L)`` (already repeated per sample),
     ``x_fit`` ``(L,)``, ``inv_sqrt_R`` ``(L, L)``.  Returns
-    ``(PoleSet, chi2 per point (N,) against the UNperturbed data)``.
+    ``(PoleSet, chi2 per point (N,) against the UNperturbed data)``, plus the
+    refined token coordinates ``(N, P, 4)`` when ``return_coords`` is set
+    (what a second pass -- e.g. after a pole birth -- starts from).
     """
     from ..physics import PoleGreens, SpectralQuadrature
     quad = SpectralQuadrature.for_beta(beta).to(z0.device)
@@ -392,7 +395,50 @@ def refine_samples(flow: FlowPosterior, z0: torch.Tensor, norm: torch.Tensor, be
         ps = flow.coords.decode(torch.cat([best_u, pres], -1), norm=norm, nu_max=nu_max)
         d = ((fwd(ps, x_fit, kernel_matrix=K) - G_fit.to(dt)) / sigma_fit.to(dt)) @ W.T
         chi2 = (d * d).mean(-1)
+    if return_coords:
+        return ps, chi2, best_u.detach()
     return ps, chi2
+
+
+@torch.no_grad()
+def add_pole(flow: FlowPosterior, z: torch.Tensor, donors: PoleSet,
+             generator: torch.Generator | None = None, weight: float = 0.03) -> tuple:
+    """Switch on one dormant pole slot in each row of ``z`` (a *birth*).
+
+    The refinement keeps each sample's pole count, so a sample the flow gave
+    too few poles can never reach the data.  A birth places a new, light
+    pole at the position and width of a pole borrowed at random from
+    ``donors`` -- pole sets that DO fit the same data -- and leaves the fit to
+    move it.  Rows with no dormant slot are returned unchanged.
+
+    ``z`` is ``(N, P, 5)`` token coordinates (refined coordinates with their
+    presence channel); ``donors`` a dimensionless :class:`PoleSet` whose
+    non-zero-weight poles form the pool.  Returns ``(z_new, born)`` with
+    ``born`` an ``(N,)`` bool mask.
+    """
+    c = flow.coords
+    z = z.clone()
+    live = donors.a != 0
+    pool_e, pool_g = donors.eps[live], donors.gamma[live]
+    present = z[..., 4] > 0
+    born = ~present.all(-1) & (pool_e.numel() > 0)
+    if not bool(born.any()):
+        return z, born
+    N = z.shape[0]
+    pick = torch.randint(pool_e.numel(), (N,), generator=generator)
+    u_e = torch.asinh(pool_e[pick].to(z.dtype) / math.pi)
+    u_g = torch.log((pool_g[pick].to(z.dtype) - c.gamma_min).clamp_min(1e-6))
+    # log-weight relative to the row's present poles: softmax share ~ `weight`
+    raw_a = z[..., 2] * c.std[2] + c.mean[2]
+    lse = torch.logsumexp(torch.where(present, raw_a, torch.full_like(raw_a, -float("inf"))), -1)
+    u_a = lse + math.log(weight / (1.0 - weight))
+    new = torch.stack([(u_e - c.mean[0]) / c.std[0], (u_g - c.mean[1]) / c.std[1],
+                       (u_a - c.mean[2]) / c.std[2], (0.0 - c.mean[3]) / c.std[3] + 0 * u_a,
+                       torch.ones_like(u_a)], -1)                       # (N, 5)
+    slot = torch.where(present, torch.full_like(z[..., 4], -float("inf")), z[..., 4]).argmax(-1)
+    rows = torch.nonzero(born).flatten()
+    z[rows, slot[rows]] = new[rows]
+    return z, born
 
 
 def _refine_lm(flow: FlowPosterior, z0: torch.Tensor, norm: torch.Tensor, beta: float,

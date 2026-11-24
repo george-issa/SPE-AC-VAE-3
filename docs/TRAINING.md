@@ -665,6 +665,33 @@ as a number and is not a warning.
 above; Δτ from {0.02, 0.05, 0.1, 0.125, 0.2, 0.25, 0.5} with 9–401 slices
 (finer grids are thinned at inference: beyond ~400 slices neighbouring
 points add no resolvable information); relative error bars 1e-5–3e-2.
+(viii) **Pole births** (`models/flow.add_pole`, `scripts/flow/birth_test.py`,
+`out/flow/review_20261124/birth_test.{json,png}`): a sample still above the
+accept threshold after least squares gets one more pole — light, at the
+position and width of a pole borrowed from a sample that fits the same
+data — and a second fit from where the first ended, up to two rounds, kept
+only when it fits better.  Same flow samples and redrawn targets, 16 truths
+× 16 samples per level: the share of samples that fit rises 0.68 → 0.88 at
+noise 3e-5, 0.85 → 0.95 at 1e-4, 0.96 → 1.00 at 3e-4, 0.95 → 1.00 at 1e-3;
+W₁ of the accepted ensemble 0.0185 → 0.0203, 0.048 → 0.040, 0.105 → 0.098,
+0.070 → 0.070; coverage unchanged.  It repairs the "cannot fit" samples; it
+does not narrow the bands.  On by default in `continue_posterior`
+(`max_births=2`).
+(ix) **First real DQMC data with a known answer**
+(`scripts/dqmc/{hubbard_dimer.jl,judge_dimer.py}`, `out/dqmc/`; SmoQyDQMC
+2.0.11 in its own Julia project).  Half-filled Hubbard dimer, U = 4t,
+β = 8, Δτ = 0.05, symmetric Trotter, 400 bins of 50 measurements; exact
+spectrum by diagonalisation (four lines: ±1.83 with weight 0.42 each,
+±3.83 with 0.08 each).  The measured G(τ) agrees with the exact one at
+the level of the error bars (relative error bar 1.1e-3, rms z 0.91, max
+2.5; χ² of the exact G against the data 1.34× target) — no Trotter bias
+visible at this precision.  Continuation of the measured data, W₁ to the
+exact cumulative weight: refined flow posterior **0.328**, VAE latent MAP
+0.405, MaxEnt 0.777.  All 200 flow samples fit (χ²/target 0.61, none
+needed a birth); the two main lines are placed correctly, the ±3.83
+satellites are not resolved by any method (the flow's band has a shoulder
+there); the samples use all 12 pole slots, which the report flags.  One
+model, one parameter point: a first data point, not a validation.
 **Gates for calling it shippable** (none claimed yet): known-answer W₁ on
 held-out parameters at or below MaxEnt on every family, and a
 leave-one-family-out arm; PIT coverage within ±0.03 of nominal per noise
