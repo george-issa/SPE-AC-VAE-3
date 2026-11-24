@@ -161,12 +161,14 @@ class FlowPosterior(nn.Module):
                  flow_layers: int = 4, n_heads: int = 8, d_ff: int = 512,
                  n_matsubara: int = 24, omega_c: float = 20.0,
                  gamma_min: float = DEFAULT_GAMMA_MIN,
-                 dispersive_scale: float = DISPERSIVE_SCALE) -> None:
+                 dispersive_scale: float = DISPERSIVE_SCALE,
+                 feedback: bool = False) -> None:
         super().__init__()
         self.config = dict(num_poles=num_poles, d_model=d_model, enc_layers=enc_layers,
                            flow_layers=flow_layers, n_heads=n_heads, d_ff=d_ff,
                            n_matsubara=n_matsubara, omega_c=omega_c, gamma_min=gamma_min,
-                           dispersive_scale=dispersive_scale)
+                           dispersive_scale=dispersive_scale, feedback=bool(feedback))
+        self.feedback = bool(feedback)
         self.P = int(num_poles)
         self.omega_c = float(omega_c)
         self.coords = PoleCoords(gamma_min, dispersive_scale)
@@ -184,6 +186,21 @@ class FlowPosterior(nn.Module):
         self.out = nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, 5))
         nn.init.zeros_(self.out[1].weight)
         nn.init.zeros_(self.out[1].bias)
+        if self.feedback:
+            # Simulator feedback (cf. Holzschuh & Thuerey, arXiv:2410.22573).  The
+            # amortized flow never learns to use the data's precision: its raw samples
+            # miss the data by 10^2-10^5 in chi^2 at low noise (measured), because the
+            # information sits in the 4th-5th digit of G.  With feedback the velocity
+            # network is shown, at every step, what the exact likelihood says about its
+            # own current estimate -- one damped Gauss-Newton step in token coordinates
+            # and the misfit, both in units of the error bar -- and learns how far to
+            # follow it.  Zero-initialised: training starts from the plain flow.
+            self.fb_proj = nn.Linear(4, d_model)
+            self.fb_cond = nn.Linear(2, d_model)
+            for m in (self.fb_proj, self.fb_cond):
+                nn.init.zeros_(m.weight)
+                nn.init.zeros_(m.bias)
+        object.__setattr__(self, "_fb_cache", {})
 
     def num_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters())
@@ -204,12 +221,100 @@ class FlowPosterior(nn.Module):
         return h, keep, norm
 
     def velocity(self, xt: torch.Tensor, t: torch.Tensor, memory: torch.Tensor,
-                 keep: torch.Tensor) -> torch.Tensor:
+                 keep: torch.Tensor, fb=None) -> torch.Tensor:
         h = self.in_proj(xt)
         cond = self.t_mlp(_time_features(t)) + self.ctx_proj(memory[:, 0])
+        if fb is not None:
+            step, logchi = fb
+            h = h + self.fb_proj(step)
+            cond = cond + self.fb_cond(torch.stack([logchi, torch.ones_like(logchi)], -1))
         h = h + cond.unsqueeze(1)
         h = self.flow(h, memory, memory_key_padding_mask=~keep)
         return self.out(h)
+
+    # -- simulator feedback ------------------------------------------------- #
+    def feedback_data(self, G, x, beta, sigma, norm, inv_sqrt_R=None, x_fit=None,
+                      G_fit=None, sigma_fit=None) -> dict:
+        """Everything :meth:`gn_feedback` needs about one batch of data (CPU, float64).
+
+        ``G, sigma, norm`` are per row; ``*_fit`` name the fitted slices when
+        they differ from the encoder's grid; ``inv_sqrt_R`` defaults to the
+        identity.
+        """
+        from ..physics import PoleGreens, SpectralQuadrature
+        dd = torch.float64
+        key = ("fwd", round(float(beta), 9))
+        if key not in self._fb_cache:
+            self._fb_cache[key] = PoleGreens(SpectralQuadrature.for_beta(float(beta), dtype=dd))
+        fwd = self._fb_cache[key]
+        cpu = lambda v: v.detach().to("cpu", dd)
+        xf = cpu(x if x_fit is None else x_fit).reshape(-1)
+        L = xf.numel()
+        return {"fwd": fwd, "x": xf, "K": fwd.kernel_matrix(xf),
+                "G": cpu(G if G_fit is None else G_fit).reshape(-1, L),
+                "sigma": cpu(sigma if sigma_fit is None else sigma_fit).reshape(-1, L),
+                "W": torch.eye(L, dtype=dd) if inv_sqrt_R is None else cpu(inv_sqrt_R),
+                "norm": cpu(norm).reshape(-1), "nu_max": self.nu_max(beta)}
+
+    @torch.no_grad()
+    def gn_feedback(self, x_hat: torch.Tensor, data: dict):
+        r"""What the exact likelihood says about an estimate ``x_hat`` (N, P, 5).
+
+        Returns ``(step, logchi)``: one damped Gauss--Newton step of
+        :math:`\tfrac12\chi^2` in token coordinates (``(N, P, 4)``, zero on
+        absent tokens, clipped to :math:`\pm 4` prior standard deviations) and
+        :math:`\log_{10}\chi^2/6` per point.  Float64 on the CPU: at relative
+        noise 1e-5 the residual is not representable in float32.
+        """
+        from ..physics import rowwise_jacobian
+        dd = torch.float64
+        if "coords" not in self._fb_cache:                   # a CPU copy of the coordinate map
+            c = PoleCoords(self.coords.gamma_min, self.coords.D)
+            c.mean.copy_(self.coords.mean.detach().cpu())
+            c.std.copy_(self.coords.std.detach().cpu())
+            self._fb_cache["coords"] = c
+        c = self._fb_cache["coords"]
+        fwd, x, K, Wd = data["fwd"], data["x"], data["K"], data["W"]
+        zc = x_hat.detach().to("cpu", dd)
+        N, P, _ = zc.shape
+        step = torch.zeros(N, P, 4, dtype=dd)
+        logchi = torch.zeros(N, dtype=dd)
+        for i0 in range(0, N, 256):
+            rows = slice(i0, min(i0 + 256, N))
+            u, pres = zc[rows, :, :4], zc[rows, :, 4:5]
+            n = u.shape[0]
+            present = zc[rows, :, 4] > 0
+            top = torch.zeros_like(present).scatter_(-1, zc[rows, :, 4].argmax(-1, keepdim=True), True)
+            present = present | (~present.any(-1, keepdim=True) & top)
+            live = present.to(dd).unsqueeze(-1).expand(-1, -1, 4).reshape(n, -1)
+            with torch.enable_grad():
+                ug = u.clone().requires_grad_(True)
+                ps = c.decode(torch.cat([ug, pres], -1), norm=data["norm"][rows],
+                              nu_max=data["nu_max"])
+                th = torch.stack([ps.eps, ps.gamma, ps.a, ps.b], -1).reshape(n, -1)
+                Jt = rowwise_jacobian(th, ug)
+            G, dG = fwd.jacobian(ps.detach(), x, K)
+            sig = data["sigma"][rows]
+            r = ((G - data["G"][rows]) / sig) @ Wd.T
+            J = Wd @ ((dG.reshape(n, -1, 4 * P) @ Jt) / sig.unsqueeze(-1))
+            A = J.transpose(1, 2) @ J
+            g = (J.transpose(1, 2) @ r.unsqueeze(-1)).squeeze(-1) * live
+            D = torch.diagonal(A, dim1=1, dim2=2).clamp_min(1e-12) * live
+            M = (A * live.unsqueeze(1) * live.unsqueeze(2)
+                 + torch.diag_embed(1e-2 * D + 1e-3 * live + (1.0 - live)))
+            sol = torch.linalg.solve(M, -g.unsqueeze(-1)).squeeze(-1)
+            step[rows] = torch.nan_to_num(sol).reshape(n, P, 4).clamp(-4.0, 4.0)
+            logchi[rows] = torch.log10((r * r).mean(-1).clamp(1e-3, 1e12))
+        return (step.to(x_hat.device, x_hat.dtype), (logchi / 6.0).to(x_hat.device, x_hat.dtype))
+
+    def _velocity_fb(self, z, t, mem, keep, data):
+        """Velocity with feedback: a first pass without it gives the estimate the
+        likelihood is asked about."""
+        v0 = self.velocity(z, t, mem, keep)
+        if not self.feedback or data is None:
+            return v0
+        x_hat = z + (1.0 - t).reshape(-1, 1, 1) * v0
+        return self.velocity(z, t, mem, keep, self.gn_feedback(x_hat, data))
 
     # -- training ----------------------------------------------------------- #
     def loss(self, batch, ot_pairing: bool = True,
@@ -229,36 +334,61 @@ class FlowPosterior(nn.Module):
             x1 = _hungarian_pair(x0, x1)
         t = torch.rand(B, generator=generator, device="cpu").to(x1.device)
         xt = (1 - t)[:, None, None] * x0 + t[:, None, None] * x1
-        mem, keep, _ = self.context(batch.G, batch.x, batch.beta, sigma=batch.sigma)
+        mem, keep, norm = self.context(batch.G, batch.x, batch.beta, sigma=batch.sigma)
         v = self.velocity(xt, t, mem, keep)
-        return ((v - (x1 - x0)) ** 2).mean()
+        loss = ((v - (x1 - x0)) ** 2).mean()
+        if not self.feedback:
+            return loss
+        # second pass: the same regression, now told what the exact likelihood says
+        # about the first pass's estimate of x1 (no gradient through the feedback)
+        data = self.feedback_data(batch.G, batch.x, batch.beta, batch.sigma, norm,
+                                  inv_sqrt_R=batch.inv_sqrt_R)
+        x_hat = (xt + (1 - t)[:, None, None] * v).detach()
+        v2 = self.velocity(xt, t, mem, keep, self.gn_feedback(x_hat, data))
+        return 0.5 * loss + ((v2 - (x1 - x0)) ** 2).mean()
 
     # -- sampling ----------------------------------------------------------- #
     @torch.no_grad()
     def sample(self, G: torch.Tensor, x: torch.Tensor, beta: float,
                sigma: torch.Tensor | None = None, n_samples: int = 64,
                steps: int = 25, generator: torch.Generator | None = None,
-               includes_endpoints: bool = True, mask: torch.Tensor | None = None) -> PoleSet:
+               includes_endpoints: bool = True, mask: torch.Tensor | None = None,
+               **fit) -> PoleSet:
         """``n_samples`` posterior pole sets per input row, dimensionless.
 
         Returns a :class:`PoleSet` of batch ``B * n_samples`` (row-major: the
         samples of input 0 first).  Heun integration, ``2 * steps`` network
-        evaluations.
+        evaluations.  ``fit`` is passed to :meth:`sample_coords`.
         """
         z, norm = self.sample_coords(G, x, beta, sigma=sigma, n_samples=n_samples,
                                      steps=steps, generator=generator,
-                                     includes_endpoints=includes_endpoints, mask=mask)
+                                     includes_endpoints=includes_endpoints, mask=mask, **fit)
         return self.coords.decode(z, norm=norm, nu_max=self.nu_max(beta))
 
     @torch.no_grad()
     def sample_coords(self, G: torch.Tensor, x: torch.Tensor, beta: float,
                       sigma: torch.Tensor | None = None, n_samples: int = 64,
                       steps: int = 25, generator: torch.Generator | None = None,
-                      includes_endpoints: bool = True, mask: torch.Tensor | None = None):
-        """Like :meth:`sample` but returns ``(coords (B*S, P, 5), norm (B*S,))``."""
+                      includes_endpoints: bool = True, mask: torch.Tensor | None = None,
+                      inv_sqrt_R: torch.Tensor | None = None, x_fit=None, G_fit=None,
+                      sigma_fit=None):
+        """Like :meth:`sample` but returns ``(coords (B*S, P, 5), norm (B*S,))``.
+
+        A model built with ``feedback=True`` also needs the likelihood's side
+        of the data: ``inv_sqrt_R`` (identity if omitted) and, when the fit
+        uses fewer slices than the encoder sees, ``x_fit, G_fit, sigma_fit``.
+        """
         mem, keep, norm = self.context(G, x, beta, sigma=sigma, mask=mask,
                                        includes_endpoints=includes_endpoints)
         S = int(n_samples)
+        data = None
+        if self.feedback:
+            if sigma is None and sigma_fit is None:
+                raise ValueError("a feedback flow needs the error bars")
+            rep_ = lambda v: None if v is None else v.reshape(G.shape[0], -1).repeat_interleave(S, 0)
+            data = self.feedback_data(rep_(G), x, beta, rep_(sigma), norm.repeat_interleave(S, 0),
+                                      inv_sqrt_R=inv_sqrt_R, x_fit=x_fit, G_fit=rep_(G_fit),
+                                      sigma_fit=rep_(sigma_fit))
         mem = mem.repeat_interleave(S, 0)
         keep = keep.repeat_interleave(S, 0)
         norm = norm.repeat_interleave(S, 0)
@@ -267,9 +397,9 @@ class FlowPosterior(nn.Module):
         ts = torch.linspace(0.0, 1.0, steps + 1, device=mem.device, dtype=mem.dtype)
         for k in range(steps):
             t0, t1 = ts[k], ts[k + 1]
-            v0 = self.velocity(z, t0.expand(z.shape[0]), mem, keep)
+            v0 = self._velocity_fb(z, t0.expand(z.shape[0]), mem, keep, data)
             zp = z + (t1 - t0) * v0
-            v1 = self.velocity(zp, t1.expand(z.shape[0]), mem, keep)
+            v1 = self._velocity_fb(zp, t1.expand(z.shape[0]), mem, keep, data)
             z = z + 0.5 * (t1 - t0) * (v0 + v1)
         return z, norm
 

@@ -647,8 +647,12 @@ has to move.
 3 ms each), precomputed exact spectra of the bank truths on the quadrature
 nodes (`<bank>.nodes.pt`; lattice sums at β = 20 cost seconds on the real
 axis).  Defaults leave the step-2 stream bit-identical.
-(v) **Bank** (`scripts/step3/build_physics_bank.py`): 5 smooth + 10 lattice
-families × β ∈ {1, 1.5, 2, 3, 4, 6, 8, 12, 16, 20} × 64 truths.
+(v) **Bank** (`scripts/step3/build_physics_bank.py`, `out/step3/bank/`):
+5 smooth + 10 lattice families × β ∈ {1, 1.5, 2, 3, 4, 6, 8, 12, 16, 20} ×
+64 truths = 9600 labels in 81 min (12 workers); **9417 trusted** (data gap
+< 3e-5 and dip within tolerance): 573–640 of 640 per family (lowest:
+gapped pair 573, Gaussian mixture 612, SSH chain 618), 913–955 of 960 per
+β (lowest at β = 1 and 20); median data gap 2e-8–3e-7, median 7–11 poles.
 (vi) **The posterior report** (`posterior.continue_posterior`): refine +
 redraw (a bootstrap of the bins on real cells), raw samples that already
 fit kept as drawn, implausible misfits rejected; the band; the prior stated
@@ -692,6 +696,27 @@ needed a birth); the two main lines are placed correctly, the ±3.83
 satellites are not resolved by any method (the flow's band has a shoulder
 there); the samples use all 12 pole slots, which the report flags.  One
 model, one parameter point: a first data point, not a validation.
+(x) **Simulator feedback in the flow — arm opened, not yet judged**
+(`FlowPosterior(feedback=True)`, `train_flow.py --feedback`; cf. Holzschuh
+& Thuerey, arXiv:2410.22573).  The measured defect it targets: the raw
+flow's samples never fit the data as well as the truth does (data-fit rank
+0.02 at every noise level), so after refinement the directions the data do
+not pin keep the raw flow's excess spread (coverage 0.60 / 0.94).  With
+feedback every velocity evaluation is two passes: the first gives an
+estimate of the clean sample; the exact likelihood is evaluated there — one
+damped Gauss–Newton step in token coordinates and log χ², float64 on the
+CPU — and the second pass receives both.  Zero-initialised, trained with
+the plain regression on both passes.  Checked: the step vanishes at the
+truth (|step| < 5e-2 prior s.d. on noise-free data) and not away from it.
+A/B at 6k steps on the step-3 recipe (F3_6k vs F3fb_6k), read by the
+calibration judge below and the known-answer judge.
+(xi) **Calibration judge for the reported posterior**
+(`scripts/step3/calibration.py`): 12 noise levels 1e-5–3e-2 with β cycling
+over {1, 2, 4, 8, 12, 20} and the grid spacing over seven values, 24
+held-out truths per level from the step-3 prior (all three sources), each
+through `continue_posterior` as a user's data would be; PIT coverage of
+the spectral weight in the report's seven windows, the data-fit rank, and
+the window-weight error, per noise level and per truth source.
 **Gates for calling it shippable** (none claimed yet): known-answer W₁ on
 held-out parameters at or below MaxEnt on every family, and a
 leave-one-family-out arm; PIT coverage within ±0.03 of nominal per noise

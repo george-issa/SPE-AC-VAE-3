@@ -89,7 +89,8 @@ def run(flow, vae, noise, beta):
         L = tr.x.numel()
         t0 = time.time()
         g = torch.Generator().manual_seed(9)
-        z, norm = flow.sample_coords(inst.G, tr.x, beta, sigma=inst.sigma, n_samples=S, generator=g)
+        z, norm = flow.sample_coords(inst.G, tr.x, beta, sigma=inst.sigma, n_samples=S, generator=g,
+                                     inv_sqrt_R=inst.isr)
         ps, c2 = refine_samples(flow, z, norm, beta, tr.x, inst.G.expand(S, -1),
                                 inst.sigma.expand(S, -1), inst.isr, 1.0, perturb=True,
                                 generator=g, anneal_from=1e-2)

@@ -48,6 +48,9 @@ def main():
                     default=(0.05, 0.1, 0.125, 0.2, 0.25))
     ap.add_argument("--max-ntau", type=int, default=401)
     ap.add_argument("--name", default=None, help="recipe name stored in the checkpoint")
+    ap.add_argument("--feedback", action="store_true",
+                    help="simulator feedback: show the velocity network a Gauss-Newton step "
+                         "of the exact likelihood at its own estimate")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -67,7 +70,7 @@ def main():
     grng = torch.Generator().manual_seed(args.seed + 7)
 
     model = FlowPosterior(num_poles=12, d_model=args.d_model, enc_layers=args.enc_layers,
-                          flow_layers=args.flow_layers)
+                          flow_layers=args.flow_layers, feedback=args.feedback)
     # standardise the token coordinates on prior draws held apart from training
     with gen.fixed_scalars(10_000):
         fit = [gen.batch(256, torch.Generator(device=dev).manual_seed(10_000 + k)).poles_true

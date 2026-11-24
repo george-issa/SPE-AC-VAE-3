@@ -211,7 +211,8 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         d = ((fwd(ps, xf) - Gf) / sf) @ W.T
         return (d * d).mean(-1)
 
-    z, norm = flow.sample_coords(G, x, beta, sigma=sigma, n_samples=S, generator=g)
+    z, norm = flow.sample_coords(G, x, beta, sigma=sigma, n_samples=S, generator=g,
+                                 inv_sqrt_R=W, x_fit=xf, G_fit=Gf, sigma_fit=sf)
     raw = flow.coords.decode(z, norm=norm, nu_max=flow.nu_max(beta))
     c_raw = chi2_of(raw)
     band_edge = chi2_target * (1.0 + accept_sigma * math.sqrt(2.0 / L))

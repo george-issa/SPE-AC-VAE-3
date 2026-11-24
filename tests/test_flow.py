@@ -123,3 +123,45 @@ def test_refine_pulls_samples_onto_the_data_and_the_tether_holds():
     assert float(chi.mean()) <= float(chi_adam.mean()) + 1e-3
     with pytest.raises(ValueError):
         refine_samples(m, z0, norm, 8.0, tr.x, G, s, inst.isr, lam=0.1, solver="sgd")
+
+
+def test_feedback_flow_sees_the_likelihood_and_trains(batch, tmp_path):
+    """Simulator feedback: the Gauss-Newton step vanishes at the truth, is
+    non-zero away from it, and a feedback model trains, samples and reloads."""
+    torch.manual_seed(0)
+    m = FlowPosterior(d_model=32, enc_layers=1, flow_layers=1, n_heads=2, d_ff=64, feedback=True)
+    lab = {k: batch.poles_true[k] for k in ("eps", "gamma", "a", "b")}
+    m.coords.fit([lab])
+    x1 = m.coords.encode(lab)
+    _, _, norm = m.context(batch.G_clean, batch.x, batch.beta, sigma=batch.sigma)
+    data = m.feedback_data(batch.G_clean, batch.x, batch.beta, batch.sigma, norm,
+                           inv_sqrt_R=batch.inv_sqrt_R)
+    step, logchi = m.gn_feedback(x1, data)                 # noise-free data, the true poles
+    assert step.shape == (32, 12, 4) and float(step.abs().max()) < 5e-2
+    assert (step[x1[..., 4] < 0] == 0).all()               # absent tokens get no step
+    xp = x1.clone()
+    xp[..., :4] += 0.3 * torch.randn(xp[..., :4].shape) * (x1[..., 4:] > 0)
+    step_p, logchi_p = m.gn_feedback(xp, data)
+    assert float(step_p.abs().mean()) > 10 * float(step.abs().mean())
+    assert float(logchi_p.median()) > float(logchi.median())
+    # trains: the feedback layers start at zero and move
+    opt = torch.optim.Adam(m.parameters(), lr=2e-3)
+    g = torch.Generator().manual_seed(0)
+    first = None
+    for _ in range(25):
+        loss = m.loss(batch, generator=g)
+        first = float(loss.detach()) if first is None else first
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+    assert float(loss.detach()) < first and float(m.fb_proj.weight.abs().sum()) > 0
+    z, _ = m.eval().sample_coords(batch.G[:2], batch.x, batch.beta, sigma=batch.sigma[:2],
+                                  n_samples=3, steps=3, inv_sqrt_R=batch.inv_sqrt_R,
+                                  generator=torch.Generator().manual_seed(1))
+    assert z.shape == (6, 12, 5) and torch.isfinite(z).all()
+    with pytest.raises(ValueError):
+        m.sample_coords(batch.G[:1], batch.x, batch.beta, n_samples=2, steps=2)
+    path = save_flow(m, str(tmp_path / "fb.pt"))
+    m2 = load_flow(path)
+    assert m2.feedback and torch.equal(m2.fb_proj.weight, m.fb_proj.weight)
+    assert not FlowPosterior(d_model=32, enc_layers=1, flow_layers=1, n_heads=2, d_ff=64).feedback
