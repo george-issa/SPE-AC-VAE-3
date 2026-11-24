@@ -91,7 +91,7 @@ import torch
 from scipy.optimize import least_squares
 from scipy.special import erf, wofz
 
-from ..physics.poles import PoleSet
+from ..physics.poles import DISPERSIVE_SCALE, PoleSet
 from ..physics.positivity import certify
 from ..physics.prony import aaa_poles
 
@@ -147,6 +147,31 @@ GAM_MAX = 20.0          # physical; a pole broader than the band is not physics
 #: weight cannot do this job: 0.5 alone was measured costing 1e-4--8e-3
 #: in data fidelity, and a pure re-polish afterwards re-sharpened the
 #: spikes it had removed.
+#: Residue maps the label can live in -- it must be the decoder's own map,
+#: or the label teaches a target the network cannot emit.  "complex" is the
+#: step-1 map b = a (t - <t>_a), |t| <= 1/2 (bank v1); "dispersive" is
+#: b = d - (sum d) a, |d| <= D (the M1 decoder, physics.poles.DISPERSIVE_SCALE;
+#: bank v2).  The cap ladders are the dip-bound re-polish schedules: each
+#: halves the asymmetry allowance, and cap 0 (a positive Lorentzian mixture)
+#: certifies by construction in either map, so the ladder always terminates.
+RESIDUE_MODES = ("complex", "dispersive")
+#: Optional bound |b_p| <= RATIO_CAP * a_p on dispersive labels (None: off).
+#: The frozen pole loss compares poles through t = b/a, so a dispersive-
+#: dominant label pole (a -> 0, b finite) costs ~b^2/a there; this bound keeps
+#: labels inside the decoder's map AND priceable by that loss.  Enforced as a
+#: hinge block in the polish, then exactly by projection.
+_RATIO_CAP: list = [None]
+
+
+def set_ratio_cap(T: float | None) -> None:
+    """Set the dispersive-label bound |b| <= T a for this process (None: off)."""
+    _RATIO_CAP[0] = None if T is None else float(T)
+
+
+RATIO_PENALTY = 1e3      # hinge weight, relative to the normalised residual
+BASE_CAP = {"complex": 0.5, "dispersive": DISPERSIVE_SCALE}
+DIP_CAPS = {"complex": (0.25, 0.125, 0.0),
+            "dispersive": (0.5 * DISPERSIVE_SCALE, 0.25 * DISPERSIVE_SCALE, 0.0)}
 SIGMA_MOLL = math.pi    # dimensionless mollification scale (nu units)
 W_LADDER = (0.5, 0.05, 0.005)                # A-block homotopy weights
 LABEL_RES_BUDGET = 1e-6                      # data-fidelity budget
@@ -392,7 +417,11 @@ def sample_smooth_truth(
 # the constrained polish: n poles, decoder-shaped parameter space
 # --------------------------------------------------------------------------- #
 
-def _unpack(th: np.ndarray, n: int, gfloor: float, t_cap: float = 0.5):
+def _unpack(th: np.ndarray, n: int, gfloor: float, t_cap: float = 0.5,
+            mode: str = "complex"):
+    """Parameters -> (eps, gam, a, b, t).  ``t`` is the map's free asymmetry
+    variable: the centred pattern t (complex) or the amplitudes d
+    (dispersive, with ``t_cap`` playing the role of D)."""
     eps = th[:n]
     gam = gfloor + np.exp(np.clip(th[n:2 * n], -30.0, 30.0))
     s = th[2 * n:3 * n]
@@ -402,14 +431,24 @@ def _unpack(th: np.ndarray, n: int, gfloor: float, t_cap: float = 0.5):
         t = t_cap * np.tanh(th[3 * n:])
     else:
         t = np.zeros(n)
-    b = a * (t - (a * t).sum())
+    if mode == "dispersive":
+        b = t - t.sum() * a
+    else:
+        b = a * (t - (a * t).sum())
     return eps, gam, a, b, t
 
 
-def _pack(eps, gam, a, b, gfloor, t_cap: float = 0.5):
+def _pack(eps, gam, a, b, gfloor, t_cap: float = 0.5, mode: str = "complex"):
     a = np.maximum(a, 1e-12)
     cap = max(t_cap, 1e-9)
-    t = np.clip(b / a, -0.998 * cap, 0.998 * cap)   # centred t is recovered
+    if mode == "dispersive":
+        # d is fixed up to d -> d + c a (sum a = 1): take the zero-sum part of
+        # b and the gauge c that keeps every |d_p| furthest inside the cap
+        a_n = a / a.sum()
+        b0 = b - b.sum() * a_n
+        t = np.clip(b0 + _dispersive_gauge(a_n, b0) * a_n, -0.998 * cap, 0.998 * cap)
+    else:
+        t = np.clip(b / a, -0.998 * cap, 0.998 * cap)   # centred t is recovered
     th = [                                          # up to the gauge <t>_a=0
         np.clip(eps, -EPS_MAX + 1e-6, EPS_MAX - 1e-6),
         np.log(np.clip(gam - gfloor, 1e-6, GAM_MAX * (1 - 1e-9))),
@@ -418,6 +457,26 @@ def _pack(eps, gam, a, b, gfloor, t_cap: float = 0.5):
     if t_cap > 0.0:
         th.append(np.arctanh(np.clip(t / t_cap, -0.998, 0.998)))
     return np.concatenate(th)
+
+
+def _dispersive_gauge(a: np.ndarray, b: np.ndarray) -> float:
+    """The c minimising max_p |b_p + c a_p| (convex, piecewise linear in c).
+
+    The minimum sits where two lines b_p + c a_p cross with opposite sign;
+    checking every crossing c = -(b_p + b_q)/(a_p + a_q) and the
+    one-sided candidates is exact and cheap for n <= 12.
+    """
+    if b.size == 0:
+        return 0.0
+    cands = [0.0]
+    for p in range(b.size):
+        for q in range(b.size):
+            den = a[p] + a[q]
+            if den > 0:
+                cands.append(-(b[p] + b[q]) / den)
+    cands = np.asarray(cands)
+    vals = np.abs(b[None, :] + cands[:, None] * a[None, :]).max(1)
+    return float(cands[int(np.argmin(vals))])
 
 
 def _bounds(n: int, t_cap: float):
@@ -468,25 +527,39 @@ def _voigt_kernel(wgrid, eps, gam, sm):
     return H, dH_dz
 
 
-def _deriv_blocks(K, Kz, r, a, t, T, gam, gfloor, t_cap):
-    """Complex parameter-derivative of L = K @ r for any kernel K(z_p)."""
+def _deriv_blocks(K, Kz, r, a, t, T, gam, gfloor, t_cap, mode="complex"):
+    """Complex parameter-derivative of L = K @ r for any kernel K(z_p).
+
+    Dispersive map, with S = sum d: r_p = (1 - iS) a_p + i d_p, so
+    dL/ds_k = (1 - iS) a_k (K_k - K a) and dL/dv_k = i tau_k (K_k - K a).
+    """
     L = K @ r
     Ga = K @ a
     d_eps = Kz * r[None, :]
     d_u = -1j * (gam - gfloor)[None, :] * d_eps
-    d_s = K * r[None, :] - a[None, :] * L[:, None] \
-        - 1j * (a * (t - T))[None, :] * Ga[:, None]
+    if mode == "dispersive":
+        S = t.sum()
+        d_s = (1.0 - 1j * S) * a[None, :] * (K - Ga[:, None])
+    else:
+        d_s = K * r[None, :] - a[None, :] * L[:, None] \
+            - 1j * (a * (t - T))[None, :] * Ga[:, None]
     blocks = [d_eps, d_u, d_s]
     if t_cap > 0.0:
         tau = t_cap * (1.0 - (t / t_cap) ** 2)   # dt/dv, with tanh v = t/cap
-        blocks.append(1j * (tau * a)[None, :] * (K - Ga[:, None]))
+        if mode == "dispersive":
+            blocks.append(1j * tau[None, :] * (K - Ga[:, None]))
+        else:
+            blocks.append(1j * (tau * a)[None, :] * (K - Ga[:, None]))
     return np.concatenate(blocks, axis=1)
 
 
-def _residual_vec(th, n, om, F, Fs, gfloor, t_cap=0.5, ab=None):
-    eps, gam, a, b, _ = _unpack(th, n, gfloor, t_cap)
+def _residual_vec(th, n, om, F, Fs, gfloor, t_cap=0.5, ab=None, mode="complex"):
+    eps, gam, a, b, _ = _unpack(th, n, gfloor, t_cap, mode)
     d = (_pole_F(om, eps, gam, a, b) - F) / Fs
     rows = [d.real, d.imag]
+    T = _RATIO_CAP[0]
+    if mode == "dispersive" and T is not None:
+        rows.append(RATIO_PENALTY * np.maximum(np.abs(b) - T * a, 0.0))
     if ab is not None:
         wgrid, target, sm, As, wA = ab
         H, _ = _voigt_kernel(wgrid, eps, gam, sm)
@@ -495,43 +568,72 @@ def _residual_vec(th, n, om, F, Fs, gfloor, t_cap=0.5, ab=None):
     return np.concatenate(rows)
 
 
-def _residual_jac(th, n, om, F, Fs, gfloor, t_cap=0.5, ab=None):
+def _residual_jac(th, n, om, F, Fs, gfloor, t_cap=0.5, ab=None, mode="complex"):
     """Analytic Jacobian of :func:`_residual_vec` (checked against finite
     differences in the unit tests; the softmax and centred-t couplings make
     the cross terms easy to get silently wrong)."""
-    eps, gam, a, b, t = _unpack(th, n, gfloor, t_cap)
+    eps, gam, a, b, t = _unpack(th, n, gfloor, t_cap, mode)
     r = a + 1j * b
     z = eps - 1j * gam
     T = (a * t).sum()
     C = 1.0 / (1j * om[:, None] - z[None, :])
-    Jc = _deriv_blocks(C, C * C, r, a, t, T, gam, gfloor, t_cap) / Fs
+    Jc = _deriv_blocks(C, C * C, r, a, t, T, gam, gfloor, t_cap, mode) / Fs
     rows = [Jc.real, Jc.imag]
+    Tc = _RATIO_CAP[0]
+    if mode == "dispersive" and Tc is not None:
+        # hinge rows h_p = max(|b_p| - Tc a_p, 0); with S = sum d,
+        # dh_p/ds_k = (-sgn_p S - Tc) a_p (delta_pk - a_k)
+        # dh_p/dv_k = sgn_p tau_k (delta_pk - a_p)
+        act = (np.abs(b) - Tc * a) > 0
+        sg = np.sign(b)
+        S = t.sum()
+        eye = np.eye(n)
+        Jh = np.zeros((n, 4 * n if t_cap > 0.0 else 3 * n))
+        Jh[:, 2 * n:3 * n] = ((-sg * S - Tc) * a)[:, None] * (eye - a[None, :])
+        if t_cap > 0.0:
+            tau = t_cap * (1.0 - (t / t_cap) ** 2)
+            Jh[:, 3 * n:] = sg[:, None] * tau[None, :] * (eye - a[:, None])
+        Jh[~act] = 0.0
+        rows.append(RATIO_PENALTY * Jh)
     if ab is not None:
         wgrid, target, sm, As, wA = ab
         H, dH = _voigt_kernel(wgrid, eps, gam, sm)
-        Ja = _deriv_blocks(H, dH, r, a, t, T, gam, gfloor, t_cap)
+        Ja = _deriv_blocks(H, dH, r, a, t, T, gam, gfloor, t_cap, mode)
         rows.append(-(wA / (math.pi * As)) * Ja.imag)
     return np.concatenate(rows, axis=0)
 
 
-def _polish(om, F, cfg, gfloor, t_cap: float = 0.5, ab=None):
+def _polish(om, F, cfg, gfloor, t_cap: float = 0.5, ab=None, mode: str = "complex"):
     """Deterministic bounded trust-region fit in the constrained space,
     analytic Jacobian.  The bounds are the parameter box above; ``t_cap``
     tightens the asymmetry when the dip bound asks for it; ``ab`` adds the
     weighted mollified-A block."""
     n = cfg[0].size
     Fs = np.abs(F).max()
-    args = (n, om, F, Fs, gfloor, t_cap, ab)
-    sol = least_squares(_residual_vec, _pack(*cfg, gfloor, t_cap),
-                        jac=_residual_jac, args=args, method="trf",
-                        bounds=_bounds(n, t_cap), tr_solver="exact",
-                        xtol=1e-15, ftol=1e-15, gtol=1e-15,
-                        max_nfev=LM_MAX_NFEV)
-    eps, gam, a, b, _ = _unpack(sol.x, n, gfloor, t_cap)
+    args = (n, om, F, Fs, gfloor, t_cap, ab, mode)
+    x0 = _pack(*cfg, gfloor, t_cap, mode)
+    # The exact trust-region solve can fail on an ill-conditioned start
+    # (measured once in 5120 beta=8 truths: a deep narrow pseudogap dip,
+    # "SVD did not converge").  Fall back deterministically: the iterative
+    # solver, then the unpolished start -- which then competes on its own
+    # residual and loses to any converged candidate.  Fits that converge
+    # never reach the fallback, so existing labels are unchanged.
+    for solver in ("exact", "lsmr"):
+        try:
+            sol = least_squares(_residual_vec, x0, jac=_residual_jac, args=args,
+                                method="trf", bounds=_bounds(n, t_cap),
+                                tr_solver=solver, xtol=1e-15, ftol=1e-15,
+                                gtol=1e-15, max_nfev=LM_MAX_NFEV)
+        except np.linalg.LinAlgError:
+            continue
+        if np.all(np.isfinite(sol.x)):
+            eps, gam, a, b, _ = _unpack(sol.x, n, gfloor, t_cap, mode)
+            return eps, gam, a, b
+    eps, gam, a, b, _ = _unpack(x0, n, gfloor, t_cap, mode)
     return eps, gam, a, b
 
 
-def _polish_smooth(om, F, cfg, gfloor, ab, t_cap: float = 0.5):
+def _polish_smooth(om, F, cfg, gfloor, ab, t_cap: float = 0.5, mode: str = "complex"):
     """The canonical budgeted polish: the smoothest fit that is still a
     data-fidelity fit.  A pure fit sets the rank's data floor; the A-block
     weight then descends from smooth to sharp (warm-started, so the search
@@ -539,15 +641,15 @@ def _polish_smooth(om, F, cfg, gfloor, ab, t_cap: float = 0.5):
     Matsubara residual meets the budget wins.  When no smoothing budget is
     feasible (floor-limited or rank-limited), the pure fit -- reached from
     the smooth side -- is the label."""
-    cfg0 = _polish(om, F, cfg, gfloor, t_cap)
+    cfg0 = _polish(om, F, cfg, gfloor, t_cap, mode=mode)
     res0 = _rel_resid(om, F, *cfg0)
     target = max(LABEL_RES_BUDGET, 1.5 * res0)
     cur = cfg
     for wA in W_LADDER:
-        cur = _polish(om, F, cur, gfloor, t_cap, ab=(*ab, wA))
+        cur = _polish(om, F, cur, gfloor, t_cap, ab=(*ab, wA), mode=mode)
         if _rel_resid(om, F, *cur) <= target:
             return cur
-    cur = _polish(om, F, cur, gfloor, t_cap)
+    cur = _polish(om, F, cur, gfloor, t_cap, mode=mode)
     return cur if _rel_resid(om, F, *cur) <= res0 else cfg0
 
 
@@ -582,12 +684,17 @@ def _aaa_seed_sets(om, F, max_terms=AAA_MAX_TERMS):
     return sets
 
 
-def _seed_cfg(zs, r, gfloor):
+def _seed_cfg(zs, r, gfloor, mode: str = "complex"):
     eps = zs.real.copy()
     gam = np.maximum(-zs.imag, 1.5 * gfloor)
     a = np.maximum(r.real, 1e-4 * max(float(np.abs(r.real).max()), 1e-12))
     a = a / a.sum()
-    b = np.clip(r.imag, -0.45 * a, 0.45 * a)
+    if mode == "dispersive":
+        b = np.clip(r.imag / max(float(r.real.sum()), 1e-12),
+                    -0.9 * DISPERSIVE_SCALE, 0.9 * DISPERSIVE_SCALE)
+        b = b - b.sum() * a
+    else:
+        b = np.clip(r.imag, -0.45 * a, 0.45 * a)
     return eps, gam, a, b
 
 
@@ -611,7 +718,7 @@ def _split_heaviest(cfg, gfloor):
     return eps, gam, a, b
 
 
-def _ladder(om, F, beta, P_max, ab):
+def _ladder(om, F, beta, P_max, ab, mode: str = "complex"):
     """Rung n -> (config, residual) for n = 1..P_max, with early stop."""
     gfloor = 1.05 * GAMMA_MIN / beta
     seeds = _aaa_seed_sets(om, F)
@@ -621,10 +728,10 @@ def _ladder(om, F, beta, P_max, ab):
     for n in range(1, P_max + 1):
         cands = []
         if n in seeds:
-            cands.append(_seed_cfg(*seeds[n][:2], gfloor))
+            cands.append(_seed_cfg(*seeds[n][:2], gfloor, mode))
         elif full is not None and full > n:
             cands.append(_truncate_by_weight(_seed_cfg(*seeds[full][:2],
-                                                       gfloor), n))
+                                                       gfloor, mode), n))
         if prev is not None:
             cands.append(_split_heaviest(prev, gfloor))
         if not cands:
@@ -634,7 +741,8 @@ def _ladder(om, F, beta, P_max, ab):
         for c in cands:
             if c[0].size != n:
                 continue
-            eps, gam, a, b = _polish_smooth(om, F, c, gfloor, ab)
+            eps, gam, a, b = _polish_smooth(om, F, c, gfloor, ab,
+                                            t_cap=BASE_CAP[mode], mode=mode)
             res = _rel_resid(om, F, eps, gam, a, b)
             if best is None or res < best[1]:
                 best = ((eps, gam, a, b), res)
@@ -694,7 +802,7 @@ class SmoothLabel:
         return min(ok) if ok else max(n for n, _ in self.ladder)
 
 
-def _canonical_cleanup(om, F, cfg, gfloor, bar, ab):
+def _canonical_cleanup(om, F, cfg, gfloor, bar, ab, mode: str = "complex"):
     """Dust drop, plus sub-width merges that do not cost fidelity.
 
     A merge is *tried* for every pair closer than the pole prior's
@@ -733,7 +841,8 @@ def _canonical_cleanup(om, F, cfg, gfloor, bar, ab):
                                 [(a[i] * gam[i] + a[j] * gam[j]) / w]])
         m_a = np.concatenate([np.delete(a, [i, j]), [w]])
         m_b = np.concatenate([np.delete(b, [i, j]), [b[i] + b[j]]])
-        m = _polish_smooth(om, F, (m_eps, m_gam, m_a, m_b), gfloor, ab)
+        m = _polish_smooth(om, F, (m_eps, m_gam, m_a, m_b), gfloor, ab,
+                           t_cap=BASE_CAP[mode], mode=mode)
         if _rel_resid(om, F, *m) <= bar:
             eps, gam, a, b = dedust(*m)
         else:
@@ -741,11 +850,19 @@ def _canonical_cleanup(om, F, cfg, gfloor, bar, ab):
     return eps, gam, a, b
 
 
-def extract_smooth_label(truth: SmoothTruth, P_max: int = 12) -> SmoothLabel:
-    """Run the canonical protocol on one truth.  Deterministic."""
+def extract_smooth_label(truth: SmoothTruth, P_max: int = 12,
+                         residue_mode: str = "complex") -> SmoothLabel:
+    """Run the canonical protocol on one truth.  Deterministic.
+
+    ``residue_mode`` picks the decoder map the label lives in (bank v1:
+    "complex"; bank v2: "dispersive").  Everything else is the same protocol.
+    """
+    if residue_mode not in RESIDUE_MODES:
+        raise ValueError(f"residue_mode={residue_mode!r}")
+    mode = residue_mode
     om, F = truth.matsubara()
     ab = _ablock(truth)
-    rungs, gfloor = _ladder(om, F, truth.beta, P_max, ab)
+    rungs, gfloor = _ladder(om, F, truth.beta, P_max, ab, mode)
     ladder = sorted((n, res) for n, (_, res) in rungs.items())
     # Minimal rank at the achievable fidelity: the smallest rung within 5%
     # of the best.  (An earlier 3x slack was measured to matter: a
@@ -755,7 +872,7 @@ def extract_smooth_label(truth: SmoothTruth, P_max: int = 12) -> SmoothLabel:
     bar = max(RES_TARGET, 1.05 * res_best)
     n_label = min(n for n, r in ladder if r <= bar)
     eps, gam, a, b = _canonical_cleanup(om, F, rungs[n_label][0], gfloor, bar,
-                                        ab)
+                                        ab, mode)
 
     # Dip bound, as in the pole prior: measured with the exact certificate,
     # acted on only when the negative weight exceeds the tolerance -- a
@@ -768,19 +885,33 @@ def extract_smooth_label(truth: SmoothTruth, P_max: int = 12) -> SmoothLabel:
     n_shrink = 0
     rep = certify(eps.tolist(), gam.tolist(), a.tolist(), b.tolist(),
                   atol=1e-9)
-    for cap in (0.25, 0.125, 0.0):
+    for cap in DIP_CAPS[mode]:
         if rep.is_positive or rep.negative_weight <= DIP_TOL:
             break
         n_shrink += 1
         eps, gam, a, b = _polish_smooth(om, F, (eps, gam, a, b), gfloor, ab,
-                                  t_cap=cap)
+                                        t_cap=cap, mode=mode)
         rep = certify(eps.tolist(), gam.tolist(), a.tolist(), b.tolist(),
                       atol=1e-9)
 
-    # exact sum rules (cleanup and the cap ladder work at the dust level)
+    # exact sum rules (cleanup and the cap ladder work at the dust level),
+    # then back into the map's reachable set -- a no-op for an optimizer
+    # output up to the dust-level renormalisations
     a = a / a.sum()
     b = b - b.sum() * a
-    b = np.clip(b, -a, a)
+    if mode == "dispersive":
+        d = np.clip(b + _dispersive_gauge(a, b) * a, -DISPERSIVE_SCALE,
+                    DISPERSIVE_SCALE)
+        b = d - d.sum() * a
+        T = _RATIO_CAP[0]
+        if T is not None:                      # dust-level after the hinge fit
+            for _ in range(50):
+                b = np.clip(b, -T * a, T * a)
+                b = b - b.sum() * a
+                if np.all(np.abs(b) <= T * a * (1 + 1e-9)):
+                    break
+    else:
+        b = np.clip(b, -a, a)
 
     return SmoothLabel(
         eps=eps, gamma=gam, a=a, b=b,
@@ -864,8 +995,8 @@ class LabelBank:
 
 
 def _extract_entry(args):
-    truth, P_max = args
-    return extract_smooth_label(truth, P_max=P_max)
+    truth, P_max, mode = args
+    return extract_smooth_label(truth, P_max=P_max, residue_mode=mode)
 
 
 def build_label_bank(
@@ -876,6 +1007,7 @@ def build_label_bank(
     P_max: int = 12,
     workers: int | None = None,
     progress=None,
+    residue_mode: str = "complex",
 ) -> LabelBank:
     """Draw truths (one rng stream, so the bank is seed-deterministic
     regardless of ``workers``) and extract every label.
@@ -890,7 +1022,7 @@ def build_label_bank(
             beta = math.exp(lo + (hi - lo) * float(torch.rand((), generator=rng)))
             truths.append(sample_smooth_truth(fam, beta, rng))
 
-    jobs = [(t, P_max) for t in truths]
+    jobs = [(t, P_max, residue_mode) for t in truths]
     labels: list[SmoothLabel] = []
     if workers is not None and workers > 1:
         import concurrent.futures as cf
@@ -931,6 +1063,7 @@ def build_label_bank(
         ladders=[lab.ladder for lab in labels],
         meta={"seed": int(seed), "beta_range": tuple(beta_range),
               "families": tuple(families), "n_per_family": int(n_per_family),
+              "residue_mode": residue_mode,
               "protocol": {"N_MATSUBARA": N_MATSUBARA, "N_GL": N_GL,
                            "AAA_MAX_TERMS": AAA_MAX_TERMS,
                            "RES_TARGET": RES_TARGET, "DUST_TOL": DUST_TOL,

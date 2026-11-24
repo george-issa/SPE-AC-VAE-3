@@ -1,11 +1,11 @@
-import json
+import json, sys
 import numpy as np
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 plt.rcParams.update({"font.size": 8.5, "axes.titlesize": 9, "axes.labelsize": 9,
                      "xtick.labelsize": 7.5, "ytick.labelsize": 7.5,
                      "axes.linewidth": 0.7, "axes.edgecolor": "#3A3F45"})
-art = json.load(open("out/step1/dual_output.json"))
+art = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "out/step1/dual_output.json"))
 om = np.array(art["nodes"])
 fig, axes = plt.subplots(1, 3, figsize=(13.8, 3.9), constrained_layout=True)
 for ax, case in zip(axes, art["cases"]):
@@ -34,5 +34,5 @@ for ax, case in zip(axes, art["cases"]):
 axes[0].set_ylabel("$A(\\omega)$")
 fig.suptitle("The standing protocol's dual output: the LR-certified minimal skeleton (dashed, stems) "
              "and the prior-started full rendering (gold) — one scan, both answers", fontsize=10)
-fig.savefig("out/step1/dual_output.png", dpi=200)
+fig.savefig(sys.argv[2] if len(sys.argv) > 2 else "out/step1/dual_output.png", dpi=200)
 print("figure saved")

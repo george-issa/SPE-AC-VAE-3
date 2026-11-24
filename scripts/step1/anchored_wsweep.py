@@ -14,8 +14,12 @@ from spevae.data.readers import read_gissa_cube
 beta = 8.0
 WEIGHTS = [0.1, 0.25, 0.5, 1.0, 2.0, 5.0]
 quad = SpectralQuadrature.for_beta(beta)
-model = load_model("out/step1/s1_metric.pt")
-ART = {"nodes": (quad.nodes/beta).tolist(), "weights": WEIGHTS, "cases": []}
+# usage: anchored_wsweep.py [ckpt] [out.json] [z_steps]  (defaults reproduce the banked step-1 run)
+CKPT = sys.argv[1] if len(sys.argv) > 1 else "out/step1/s1_metric.pt"
+OUTP = sys.argv[2] if len(sys.argv) > 2 else "out/step1/anchored_wsweep.json"
+ZSTEPS = int(sys.argv[3]) if len(sys.argv) > 3 else 1500
+model = load_model(CKPT)
+ART = {"ckpt": CKPT, "z_steps": ZSTEPS, "nodes": (quad.nodes/beta).tolist(), "weights": WEIGHTS, "cases": []}
 
 def sweep(name, poles, A_anchor, G, x, sigma, isr, truth):
     def w1_of(ps):
@@ -58,7 +62,7 @@ for name, truth in [("fano band", mk((0.3+ks*1.2).tolist(), [0.5]*5, [0.2]*5,
     G = Gc + n
     ev, V = torch.linalg.eigh(R)
     isr = V @ torch.diag(ev.clamp_min(1e-12).rsqrt()) @ V.T
-    zr = z_descend(model, G, x, beta, sigma=sigma, inv_sqrt_R=isr, steps=1500)
+    zr = z_descend(model, G, x, beta, sigma=sigma, inv_sqrt_R=isr, steps=ZSTEPS)
     A_anchor = zr.poles.to_dimensionless(beta).spectral(quad.nodes.to(torch.float64))
     sweep(name, zr.poles, A_anchor, G, x, sigma, isr, truth)
 
@@ -71,5 +75,5 @@ rr = refine_latent(model, mg, RefineConfig(cov_method="structured",
 A_anchor = rr.poles.to_dimensionless(beta).spectral(quad.nodes.to(torch.float64))
 sweep("Holstein", rr.poles, A_anchor, mg.mean[sl], mg.x[sl], mg.sigma_mean[sl],
       cov["inv_sqrt_R"], None)
-json.dump(ART, open("out/step1/anchored_wsweep.json", "w"))
+json.dump(ART, open(OUTP, "w"))
 print("AWSWEEP_DONE")

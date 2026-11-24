@@ -253,7 +253,9 @@ gapped) + their menu templates via the same noise-matched pole maps;
 (5) real-data checkpoint B.
 
 **Pass gates (all banked numbers)**: manifold floor on Holstein
-24.0 → down materially (THE gate); legacy canary 0.438 → down (its
+24.0 → down materially (THE gate — but see the 2026-11-24 re-measurement
+in the step-2 roadmap: the 24.0 was a first-order descent stopped at its
+step cap, not a floor); legacy canary 0.438 → down (its
 families become in-distribution — now a direct target); seven step-1
 probes stay green; new smooth probes recover their noise-matched labels;
 Holstein w-sensitivity flag flattens; dual-output full renderings lose
@@ -287,6 +289,321 @@ and a regression test pins the convention on sum-rule-redundant data.
 with grid-robustness augmentation; Perlmutter port +
 production run; UQ calibration; MaxEnt/SmoQyDEAC benchmarks; release
 gates.
+
+**Foundation-model track** (adopted 2026-11-23, user direction: keep it
+active alongside the stepwise protocol; every item is an arm judged by
+`spevae eval`).  The information limit is irreducible, but the measured
+gaps are model-limited (Holstein manifold floor 3.8 vs target 0.175;
+amortized χ² 10²–10³; best-of-64 posterior samples fail to cover
+balanced pairs), and those are what the ideas below target.
+
+| idea | where it lives now | status | next arm |
+|---|---|---|---|
+| learned prior × exact likelihood | decoder manifold + N(0,I) latent = prior over pole sets; z-descent = MAP under the exact χ² (the kernel enters only through the forward map, so the decoder is kernel-agnostic; the encoder is the kernel-specific proposal) | in place, MAP only | generative prior over pole sets (flow matching / diffusion) with exact-likelihood guidance → posterior samples, calibrated bands, one prior for every kernel |
+| conditional generative decoder | — | not started | keep the encoder, replace the deterministic decoder with conditional flow matching over pole sets; head-to-head vs the VAE |
+| data diversity over parameters | step-2 data arm (smooth label-bank truths) | running | physics-sourced corpus: small-cluster ED (exact pole labels), DMFT, exactly solvable models |
+| scaling curves | latent width 24/32/48 factorial in the step-2 screen | running | network-size ladder, on the generative model where capacity matters more |
+| test-time compute + verifier | z-descent, anchored rank scan, LR count test, positivity certificate (~60 s per dataset) | in place | best-of-N / guided sampling once a generative prior exists |
+| fine-tune on real data vs the likelihood | `spevae finetune` (encoder only) | exists, unused in judging | judge it on the Holstein cell |
+| breadth across kernels | fermionic G(τ) only | not started | bosonic / conductivity kernels through the same decoder (forward-map swap) |
+
+**Step-2 data arm, 6k screen** (*measured*, 2026-11-23;
+`scripts/step2/data_arm_screen.sh`, judged by `spevae eval --tier screen`,
+`out/eval/step2_screen6k/`).  Bank: v1-protocol labels at β = 8, 1024
+truths per family (seed 2), filtered to data gap < 3e-5 (5088 of 5120 kept;
+`scripts/step2/filter_bank.py`); every kept label reachable by the M1
+decoder, loss load Σb²/a ≤ 0.25.  Arms: M1 recipe + smooth bank truths at
+p_smooth 0.3, latent 24 / 32 / 48; control the M1 recipe at 6k, two seeds
+(equiv_ctrl6k, conc/ctrl_s2_6k).  (i) Streams: canary 0.511 → 0.424 /
+0.433 / 0.440 (the families become in-distribution), pole stream
+0.259 → 0.271 / 0.275 / 0.300.  (ii) Amortized pass: better on all 10
+smooth cells (gapped 0.31 → 0.14, semicircle 0.43 → 0.33, box 0.48 → 0.37,
+pseudogap 0.28 → 0.22), worse on 13–16 of 18 pole-closed cells.  (iii)
+z-descent 3000: D24 better on 7 of 10 smooth cells, none worse; even on
+pole-closed (8 better / 6 worse, mostly inside the control's seed spread);
+the smooth gap to MaxEnt narrows (gapped 5.4× → 2.6×, gauss 4.6× → 1.8×,
+pseudogap 3.8× → 2.3×) and spevae now beats MaxEnt on semicircle and box at
+1e-3 (2.2–2.3×).  Latent factorial: 24 wins (best streams, smooth tally,
+Holstein MAP 0.176); AU stays at cap in every arm.  **Promoted: D24.**
+(iv) **THE gate is training-length dependent**: at 6k every model, control
+included, reaches the Holstein manifold floor at target (0.171–0.176 vs
+0.175; the descent stops at target) and MAP χ² 0.18–0.36, while M1-60k sits
+at floor 3.83 / MAP 15.1.  Longer training narrows the decoder manifold
+away from the real cell — the real-data auditor of the coverage protocol
+firing.  [*Re-measured 2026-11-24*: wrong reading.  Every one of these floors is an
+Adam descent that either stopped at the target or hit its 10,000-step
+cap; converged, every checkpoint reaches the target.  Training length
+changes how quickly first-order descent gets there, not the manifold.]  The 60k A/B therefore keeps snapshots every 5k steps for both
+arms (`--keep-snapshots`, `scripts/step2/data_arm_60k.sh`).
+
+**Step-2 data arm at 60k: the floor gate as banked falls 15× — an optimiser
+effect, see the re-measurement below** (*measured*, 2026-11-24;
+`scripts/step2/data_arm_60k.sh`, `scripts/step2/floor_curve.py`,
+`out/step2/data_arm/floor_curve.{json,png}`).  D24 (M1 recipe + trusted
+smooth bank, p_smooth 0.3, latent 24) vs the M1 recipe retrained with the
+same code, both with snapshots every 5k steps.  Final (EMA) models on the
+Holstein cell: manifold floor **0.21 (1.2× target) vs 3.22 (18×)**, MAP χ²
+2.37 vs 29.8; the original M1-60k reference sits at 3.83 / 15.1.  Along
+training (raw-weight snapshots) the control swings — floor 0.19–1.0, MAP
+2–34 — while D24 stays at the target for most of the run (floor 0.17–0.54,
+MAP 0.18–2.6); both rise in the last two snapshots (55k, 60k: the end of
+the cosine schedule), which the EMA final averages out for D24 but not for
+the control.  This refines the 6k reading: the control's real-data fit is
+unstable along training, and the smooth data stabilises it, rather than
+training length narrowing the manifold monotonically.
+**Full scorecard** (`spevae eval --tier full`, `out/eval/step2_60k/`):
+streams D24 / ctrl60 / M1 — pole 0.189 / 0.218 / 0.230 (D24 now best on
+the pole stream too; at 6k it trailed), canary 0.315 / 0.466 / 0.504.
+Versus ctrl60, D24 is better on all 10 smooth cells under every method;
+on the 18 pole-closed cells zd3000 14 better / 4 worse, certified minimal
+form 9/4, full rendering 9/6.  Versus MaxEnt: better on all 18 pole-closed
+cells; smooth (full rendering, 1e-4) gapped 9.2× → 1.6× behind, gauss
+3.6× → 2.0×, pseudogap 2.4× → 1.1×, and ahead 4× on semicircle and box.
+Holstein: certified minimal χ²/target 0.78 (ctrl60 1.33, M1 0.88), full
+rendering 0.32.  Gates: floor ✓ as banked (3.83 → 0.21; converged, both
+reach the target — the gate that separates the arms is the MAP fit under
+the model's own prior, below), canary ✓, smooth probes ✓,
+pole-closed parity ✓ on the suite proxy (the template-menu "seven probes"
+judges are not in the suite yet); the full-rendering spike gate is only
+partly met — peak height 0.42 → 0.31 and roughness Σ|A''| 1.44 → 1.20 vs
+M1, but equal to ctrl60 (1.20) and still a comb over the 2 < |ω| < 5
+bands (`holstein_full_renderings.png`), consistent with the v1 labels'
+own wiggles around smooth shapes; w-sensitivity not measured.  **D24-60k
+is the step-2 checkpoint.**
+
+**Conditional flow-matching posterior, first screen** (*measured*,
+2026-11-23; `models/flow.py`, `scripts/flow/{train_flow,judge_flow}.py`,
+`out/flow/judge_F6k/`).  Pole tokens (12 slots × (asinh ε/π, log(γ−γ_min),
+log a, atanh d/D) + a presence channel; empty slots at the mean with
+presence −1 — a first version marking them by log a = −14 put them ~8σ out
+and let them dominate the loss, 27 vs ~1), Hungarian-paired flow matching,
+a 4-layer transformer over the tokens cross-attending to the VAE's own
+encoder outputs; 1.0M parameters, 6k steps, the exact training
+distribution of the VAE control (M1 recipe, `equiv_ctrl6k`, 0.82M).
+Judged on 256 held-out prior draws × 100 samples:
+(i) **calibration**: SBC max KS 0.197 vs the VAE's 0.290 (5% critical
+0.085) — neither calibrated; the flow's rank histograms hump (too wide),
+the VAE's are U-shaped (overconfident).  90% interval coverage 0.97 vs
+0.62; pointwise 90% band coverage 0.955 vs 0.522.
+(ii) **data consistency fails, and the breakdown says why**: sample χ²
+median 3.0e3 vs the truth's 1.0; by noise level, flow 8.1 / 724 / 7.1e4
+and VAE 2.95 / 54 / 2.5e3 at 1e-2 / 1e-3 / 1e-4, while flow coverage stays
+0.95 at every level (VAE 0.79 / 0.60 / 0.40).  The flow's posterior does
+NOT contract with SNR — its coverage at low noise is the trivial kind (wide
+enough to contain everything).  Both amortized models leave the data's
+precision unused; the VAE pipeline recovers it by per-instance descent.
+(iii) two-sided pairs 80/20 → 50/50: the flow's side-weight median tracks
+the truth (0.78 / 0.62 / 0.55 / 0.51) with q05–q95 containing it; the 6k
+M1 control also gets the side weights (the s1_metric mirror attractor is
+not reproduced by this control), so the test does not discriminate here.
+(iv) suite truths and Holstein: bands contain the truth (0.94–1.0, 0.73
+semicircle/box) but sample χ² is 10²–10⁵ and Holstein χ²/target ~8e4.
+Reading: the amortized flow is a broad, roughly covering posterior that
+ignores data precision.  Note the published conditional-diffusion
+continuation (arXiv:2608.13123) never checks χ² of its samples.  Next:
+(a) 60k training (does amortized precision grow with budget?);
+(b) sample-then-refine with the exact likelihood (each sample pulled to the
+data with a proximity term), re-judged for calibration.
+
+**Sample-then-refine fixes the flow's precision gap** (*measured*,
+2026-11-23; `models/flow.refine_samples`, `scripts/flow/judge_str.py`,
+`out/flow/str_F6k/`).  Each flow sample's token coordinates minimise
+½χ²(exact likelihood) + ½λ‖u − u_k‖² (tether to its own start; presence
+kept), all samples as one batch.  Tether scan (32 prior draws × 32 samples
+per noise level, 300 steps): at noise 1e-2, λ = 1 is calibrated — χ² 0.94
+(truth 1.01), 50/90% coverage 0.53/0.90, band 0.90, W₁ 0.56 → 0.25;
+λ ≤ 300 barely matters at lower noise and per-sample noise redraws change
+little — the optimiser budget binds (χ² 2.7 at 1e-3, 175 at 1e-4).
+Budget scan (16 draws × 32): at 1e-3, 3000 steps with cosine lr
+0.05 → 0.005 and error bars annealed 30× → 1 over the first 70% give χ²
+0.92, coverage 0.49/0.89, band 0.89, W₁ 0.064 (raw 0.57) — calibrated; at
+1e-4, a 100× anneal gives χ² 1.85 / 1.49 at 3000 / 5000 steps, coverage
+0.64/0.92 and 0.60/0.90, band 0.91/0.90, W₁ 0.053/0.049 — near-calibrated,
+50% intervals slightly wide.  Chosen schedule: 3000 steps, anneal from an
+absolute 1e-2 (`anneal_from`), λ = 1, no redraw.
+**Final judge of that schedule** (`out/flow/str_F6k/final.json`): on 96
+held-out draws of the FULL training distribution (noise 3e-5–3e-2, all grid
+spacings and correlation lengths) [*corrected 2026-11-24*: the generator
+draws one noise model and one grid per batch, so these 96 draws are three
+settings — noise 1.8e-2, 1.0e-4 and 2.1e-2; and the 50% / 90% coverages
+quoted in this and the next two paragraphs are to be read against 0.47 /
+0.85, not 0.50 / 0.90 — see the re-measurement below], 32 samples each — refined: SBC max KS
+0.156 (5% critical 0.139), coverage 0.44/0.78, band 0.83, χ² 0.94, W₁ 0.46;
+raw flow: KS 0.250, 0.67/0.95, band 0.92, χ² 2.67, W₁ 0.67; VAE: KS 0.250,
+0.39/0.69, band 0.57, χ² 1.66, W₁ 0.64.  Best of the three on calibration
+and accuracy, but over the full noise/grid range the 90% intervals cover
+78% — mildly overconfident there, where the fixed-grid per-noise scans were
+calibrated; the per-noise/per-grid breakdown is the open diagnostic.  On
+the 14 frozen truths (outside the training prior for the 5 smooth ones):
+posterior-mean W₁ 0.020–0.091 at 1e-4 and 0.041–0.096 at 1e-3 (VAE one-pass
+0.05–0.82), sample χ² 0.85–1.07 (pseudogap 1.6 at 1e-4), band coverage
+0.90–1.00 at 1e-4 except pseudogap 0.74, 0.68–0.96 at 1e-3.  **Holstein**:
+200 refined samples fit the real cell at χ²/target median 1.05 (q05 0.41,
+q95 6.0; raw flow ~8e4).  The bands are tight on the gap edge and the
+±1 peaks and wide over the 2 < |ω| < 5 bands, where the median sits between
+the shipped SmoQyDEAC humps and the VAE pipeline's sharp replicas — the
+data-versus-prior split made visible.
+**At 60k the refined flow is MORE overconfident, and the cause is
+measured** (`out/flow/str_F60k/`, `scripts/flow/diag_str.py`).  F_60k's raw
+posterior is sharper than F_6k's (full-distribution χ² 2.67 → 1.21, W₁
+0.67 → 0.49), but refined coverage drops 0.78 → 0.68.  Breakdown (16 draws
+× 16 samples per cell, grids of 33 and 161 slices): converged refinement
+without noise redraw collapses the spread along data-determined directions
+— 90% coverage 0.54–0.58 at noise 3e-2 with χ² 0.88 (fitting the noise),
+0.75–0.78 at 1e-3 — and a per-sample noise redraw (randomize-then-optimize)
+restores it: 0.83–0.85 at 3e-2 (χ² 1.01), 0.86–0.88 at 1e-3.  It mattered
+nothing at 300 steps because the samples never converged there.  Two open
+items: at 3e-2 refining hurts the posterior mean (W₁ 0.97 → 1.39 on the
+coarse grid; the raw flow is already consistent there), and at 3e-5 the
+3000-step schedule does not converge (χ² 6–15, coverage 0.77–0.82).
+Default changed to redraw on.
+**With the redraw, the refined 60k flow is calibrated on the full training
+distribution** (`out/flow/str_F60k_redraw/final.json`; 96 held-out draws ×
+32 samples, noise 3e-5–3e-2, all grids): SBC max KS **0.125 < 0.139** (the
+5% critical value, all 9 statistics), coverage 0.56 / 0.89, pointwise band
+0.906, sample χ² 0.98, posterior-mean W₁ 0.43 — against raw flow KS 0.229
+(0.56/0.94, W₁ 0.48) and the 60k VAE control KS 0.281 (0.36/0.64, band
+0.55, W₁ 0.60).  Suite truths: band coverage median 0.96 at 1e-3 and 0.95
+at 1e-4 (minimum 0.60/0.72), χ² 0.98/1.17.  Holstein: χ²/target median
+1.64 (q05 0.94, q95 3.9) — redrawn samples each fit a different noise
+realisation, so their χ² against the one measured mean sits above the
+target by construction.  The first spevae output with tested, calibrated
+error bars.  [*Superseded 2026-11-24*: on 1000 truths at 40 noise levels,
+with a converged solver, the refined posterior is conservative rather than
+calibrated — 50% intervals cover 60%, 90% cover 94% — and the Holstein
+excess was the optimiser, not the redraw: see the re-measurement below.]
+Caveats: one training seed, 96 draws; calibration is
+in-distribution (real data cannot be checked this way); the 3e-5 and 3e-2
+items above remain.  Summary figures (`scripts/flow/str_summary_fig.py`,
+from the two final.json files, no reruns): `summary_full.png` (KS,
+coverage, χ², W₁ and Holstein spread, redraw vs no-redraw vs raw vs VAE)
+and `summary_suite.png` (per-truth W₁ vs the VAE's amortized output, band
+coverage at both noise levels), both in `out/flow/str_F60k_redraw/`.
+
+**Solver and calibration re-measurement** (*measured*, 2026-11-24;
+`physics/lsq.py`, `models/flow.refine_samples`, `refine.{refine_latent,
+z_descend}`, `scripts/flow/{stratified_sbc,lm_refine_test,holstein_redraw}.py`,
+`scripts/step2/floor_lm.py`, `scripts/eval/temperature_transfer.py`;
+artifacts `out/flow/review_20261124/`, `out/step2/floor_lm/`,
+`out/eval/{lm_60k,temperature_transfer,acceptance_20261124}/`).  A review of
+the two days above found two faults in how the flow was judged and one in
+how every per-dataset fit since step 1 was optimised.  This entry
+supersedes the readings it names; the bracketed notes elsewhere in this
+file point here.
+(i) **The coverage reference was biased.**  `judge_str.metrics` covers the
+truth with `np.quantile` intervals of S samples; a perfectly calibrated
+posterior scores (S−1)/(S+1) × nominal on that estimator — 0.47 / 0.85 at
+S = 32, 0.44 / 0.81 at S = 16 (simulated).  Coverage is now read from
+randomised PIT values (rank + U)/(S + 1), exactly uniform at any S.
+(ii) **The "full distribution" test was three noise settings**, because
+`PolePriorGenerator.batch` draws one noise model and one grid per batch.
+`stratified_sbc.py` gives every noise level its own batch.
+(iii) **First-order descent was not converging, anywhere.**  Both fits are
+nonlinear least squares whose curvature spans ~σ⁻² between directions, so
+Adam needs step counts that grow with it.  A batched Levenberg–Marquardt
+with the exact pole Jacobian (closed form, checked against autograd to
+1e-15) replaces it: `refine_samples(solver="lm")` is now the default,
+`RefineConfig(solver="lm")` / `z_descend(solver="lm")` are available (Adam
+stays the latent default until the scorecards are re-banked; the acceptance
+check still passes 204 / 0 fail / 8 drift).  *Refinement*, identical
+samples, redrawn targets and objective (16 truths × 16 samples per level):
+at noise 3e-5 Adam (3000 steps) ends at median χ² 5.25 with 72% of samples
+above 2, LM at 1.24 with 26%, posterior-mean W₁ 0.034 → 0.025; at 1e-4
+1.18 → 1.05, W₁ 0.076 → 0.054; equal at 1e-3; 11–14 s against 115–220 s.
+*Latent MAP*, `spevae eval --tier lm` against the banked `zd3000` rows (224
+paired runs per model, same cases and draws): W₁ geometric-mean ratio 0.92
+(D24), 0.86 (ctrl60), 0.90 (M1), better in 67–75% of runs, median χ²
+1.34 vs 1.42 (D24), median runtime 1.9 s vs 7.1 s; at noise 1e-4 D24
+improves on 11 of 14 cases (Lorentzian pair 0.065 → 0.042, Gaussian pair
+0.056 → 0.036, semicircle 0.029 → 0.019, pseudogap 0.070 → 0.040), at
+1e-3 the two agree to three digits.
+(iv) **The Holstein "manifold floor" was never a floor**
+(`out/step2/floor_lm/`).  Every banked floor is a 10,000-step Adam descent
+that reports `converged = False`:
+
+| checkpoint | banked floor (Adam 10k) | Adam 40k | LM, prior off | \|z\| there | LM MAP from the encoder mean | MAP objective, 5 starts |
+|---|---|---|---|---|---|---|
+| s1_metric | 23.96 (137×) | 19.4, falling | target, 662 it | 212 | 56× (stationary) | 1410–4574 |
+| M1 | 3.83 (22×) | 0.57, falling | target, 81 it | 102 | 21× (budget) | 2783–3861 |
+| ctrl60 | 3.22 (18×) | 0.176 at step 22,576 | target, 52 it | 92 | 47× (stationary) | 2336–3315 |
+| D24 | 0.21 (1.2×) | 0.175 at step 13,506 | target, 44 it | 59 | 1.00× (at target) | 511–3163 |
+
+Every manifold — step 1's included — contains a noise-level fit of the
+cell, at a latent norm 12–43× that of a typical prior draw (4.9).  The
+step-1 "boundary proof" and the "gate falls 6.3× / 15×" headlines measured
+how fast first-order descent travels there.  What does separate the arms is
+the fit under the model's own prior: from the encoder mean D24's MAP
+reaches the noise target while ctrl60 and M1 stop 47× and 21× above it —
+but the MAP landscape has several stationary points (D24 lands at 1.0–11.7×
+target over five starts, ctrl60 at 7.8–47×, M1 at 21–32×), so a single MAP
+number is a start-dependent quantity; quote the range.  `spevae eval` now
+records both protocols and how each fit ended (docs/EVAL.md).
+(v) **Calibration on 1000 truths** (40 noise levels 3e-5–3e-2 × 25 truths
+× 32 samples, grids and correlations cycled; `stratified_lm.{json,png}`).
+Refine + redraw with LM: 50% / 90% intervals cover **0.596 / 0.943**
+(±0.007 / 0.003), max KS 0.100 against a critical 0.052 — *conservative,
+not calibrated*: error bars about 15–25% too wide, by noise 0.67 / 0.97 at
+4e-5 falling to 0.55–0.58 / 0.91–0.95 above 6e-4.  Sample χ² median 0.99
+(raw flow 178), 5.2% of samples above 2.  The data-fit rank (the truth's
+χ² ranked among the samples'; uniform if calibrated, mean 0.5) is 0.53
+overall — 0.28 at 4e-5 (some samples still fit worse than the truth),
+0.55–0.63 above 2.5e-4 (samples fit slightly better than the truth) —
+against 0.02 for the raw flow at every level: the raw flow never fits as
+well as the truth, including at 2e-2 where its median χ² looks acceptable.
+Posterior-mean W₁ relative to the raw flow: 0.20 at 4e-5, 0.44 at 6e-4,
+0.93 at 3.6e-3, 1.02 at 8.7e-3, **1.20 at 2.1e-2** — refinement hurts at
+the top of the noise range.  Two additions measured on the same draws:
+keeping a raw sample that already fits the data within noise (*gated*; 12%
+of samples at 8.7e-3, 29% at 2.1e-2) brings those ratios to 0.98 and 1.05
+at unchanged coverage (0.605 / 0.947); rejecting refined samples whose χ²
+is implausible for a posterior draw (*accept*; 72% kept at 4e-5, 89% at
+1e-4, ≥ 93% above) lowers W₁ at the low-noise end by 15–25% (0.039 → 0.029
+at 4e-5) and gives 0.585 / 0.939.  The excess width is uniform over the
+seven window-weight statistics (50% coverage 0.63–0.72 at noise ≤ 1.2e-4;
+the peak position is near nominal at 0.54) and is the raw flow's
+(0.73 / 0.97): the flow does not contract with the data's precision,
+the likelihood repairs the directions it determines, and the rest keep the
+flow's spread.
+(vi) **The pole count is the refinement's blind spot.**  It is fixed by the
+flow sample; P(sample count = true count) is 0.12–0.29 at every noise
+level and does not sharpen as the noise falls.  After LM the samples left
+above χ² = 2 are mostly those with fewer poles than the truth (47% of them
+against 14% of the rest at 3e-5; 22% against 2% at 1e-4).
+(vii) **Holstein, converged** (`holstein_redraw_lm.{json,png}`, 200
+samples): with LM the refined samples fit the cell at χ²/target 1.21
+[0.69, 1.98] under the whitener redraw and 0.94 [0.56, 1.63] when each
+sample's target is a bootstrap of the bins, with 5% and 2.5% above 2×
+target — against 1.64 [0.94, 3.87] and 1.46 [0.85, 3.89] with 26–30% above
+2× under Adam.  The excess the previous entry attributed to the redraw
+"by construction" was the optimiser.  Without a redraw LM fits the mean at
+0.23× target: noise fitting, so the redraw is not optional.  1.5% of
+samples cannot reach the data; they carry a median of 2 poles against 12
+(the slot cap) for the rest.  The whitener overstates the bins' own scatter
+by more than 10× in 57 of 80 whitened directions (it costs at most 1–2
+resolvable kernel modes); a bootstrap redraw is the consistent choice on
+real cells (bands 4% narrower).
+(viii) **Tried and not adopted.**  Data fission (the flow conditioned on a
+deliberately noisier copy, the likelihood on the independent remainder):
+no better anywhere, worse W₁ at low noise.  One global quantile
+recalibration map fitted on even noise levels and tested on odd ones:
+coverage 0.52 / 0.91 on the held-out half but max KS still 0.097 against
+0.073 — the excess is not a single rescaling.
+(ix) **Temperature** (`out/eval/temperature_transfer/`): five suite truths
+rebuilt at β = 4, 8, 16 (Δτ = 0.125, noise 1e-3, 4 draws).  The β = 8
+checkpoints do not degrade away from 8: geometric-mean W₁ 0.050 / 0.060 /
+0.065 (D24 + LM MAP) and 0.062 / 0.059 / 0.046 (refined flow mean) against
+MaxEnt 0.144 / 0.137 / 0.146.  The one case MaxEnt wins at every β is the
+Gaussian pair (0.048–0.068 against 0.074–0.170 and 0.079–0.087).
+**Judging rules from here on**: coverage from randomised PIT; one batch
+per noise level; the data-fit rank in every calibration judge; a floor or
+MAP is quoted only with its `converged` / `stationary` flag; the refined
+flow is compared with the VAE pipeline at equal test-time compute, not
+with the amortized pass.  **Open**: the flow's excess width (it needs to
+use the data's precision — noise-scaled input features are the first
+candidate); pole births and deaths during refinement; the Gaussian / gapped
+/ pseudogap gap to MaxEnt (D24 + LM MAP is 1.4–3× behind at both noise
+levels, with the smooth truths in-distribution for D24); an out-of-prior flag for real cells; one
+training seed everywhere; no real QMC cell with a known spectrum.
 
 **Step-2 build (1): the smooth-family label bank — built, judged,
 pinned** (*measured*, 2026-08-27).  `data/label_bank.py` +
@@ -423,7 +740,12 @@ number (23.89 vs 23.96), so the drop is real and attributable to the
 residue map + widened prior ALONE, with zero smooth training data.  A
 substantial part of the step-1 "manifold floor 24" was the |b| <= a
 bound, as the free-Prony diagnosis predicted; the remaining 3.77 → 0.56
-gap (6.7x) is what the smooth-family data arm now owns.  The anchored
+gap (6.7x) is what the smooth-family data arm now owns.
+[*Re-measured 2026-11-24*: both numbers are 10,000-step Adam descents that had not
+converged.  With a least-squares solver the s1_metric and the M1 latent
+both reach the noise target with the anchor released (662 and 81
+iterations).  What the map arm changed is how fast, and how far from the
+prior, the fit is found — not whether the manifold contains it.]  The anchored
 MAP refine also improves 45.9 → 14.4.  Probes, with a step-budget
 control (800 vs 3000 z-descent steps, which matters for M1's sharper
 landscape): at quiet noise (1e-4) M1-60k is better or equal — fano W1
@@ -437,6 +759,32 @@ promotion decision: seed/length replicates (is 60k past a sweet spot
 for this prior mix?), an eval-checkpointed rerun, or proceed to the
 data arm (whose labels and curriculum change the mix anyway) with the
 fano@1e-3 number tracked as a regression canary.
+
+**Bank v2 in the dispersive map: better labels the frozen loss cannot
+price** (*measured*, 2026-11-23, β = 8, 6 truths per family; the label
+protocol gained `residue_mode="dispersive"` — same ladder, homotopy,
+cleanup and dip bound, fit in b = d − (Σd)a, |d| ≤ 0.8; analytic Jacobian
+checked against finite differences to 8e-10; the complex path stays
+bit-identical to v1).  Versus v1-protocol labels at the same truths,
+median label W₁ (physical): gauss 0.021 → 0.009, gapped 0.030 → 0.011,
+semicircle 0.0073 → 0.0029, box 0.0063 → 0.0042, pseudogap 0.020 → 0.006,
+with fewer poles (6–9 vs 9–10) and dips ≤ 1e-3.  The gain comes from
+dispersive-dominant poles (a → 0, b finite), exactly as the 2026-09-01
+diagnosis predicted — and that is the conflict: the frozen pole loss
+compares poles through t = b/a, and the label load Σ b²/a (what one
+matched-position, t = 0 prediction pays) is median 45–6800, max 1e6 for
+gauss/gapped/semicircle/pseudogap, against the M1 prior's median 0.21,
+max 30.  A bound |b| ≤ T·a inside the dispersive fit (hinge block +
+exact projection) keeps the load ≤ 10 at T = 5–15 and holds v2 quality
+for gapped/semicircle/box, but the bounded fit lands in poor optima on
+pseudogap (W₁ 0.036–0.08, residual 5e-5 vs v1's 0.020 at 7e-8).
+**Decision**: the step-2 data arm uses v1-protocol labels rebuilt at
+β = 8 — reachable by the M1 decoder (|b| ≤ a lies inside the dispersive
+space), priceable by the frozen loss (t ≤ 1), and already judged; their
+W₁ sits 2–10× below today's smooth-case reconstruction errors.  Using
+the dispersive space for labels is a follow-up arm that needs either a
+loss feature that prices dispersive-dominant poles or a bounded fit seeded
+from the v1 solution (feasible inside the bound, so never worse than v1).
 
 **SOS residue sampler, prototyped against the current priors**
 (*measured*, 2026-09-01, `scripts/step2/proto_sos_prior.py`,
@@ -715,7 +1063,14 @@ optimiser excuses.  Free poles off-manifold reach 0.56 (3.2×).  The gap
 between those two numbers IS the vocabulary step-1 training lacks (no
 smooth families, no MPM labels) — step 2's training must pull the
 manifold floor down toward the free floor; both numbers are now the
-gate.  Two more verdicts from the final menu: (i) the cell is NOT
+gate.  [*Re-measured 2026-11-24*: the 23.96 is NOT an expressiveness floor.  The
+10,000-step descent was still falling when it stopped (19.4 at 40,000
+steps), and Levenberg–Marquardt on the same objective reaches the noise
+target, χ² 0.169 = 0.96× target, in 662 iterations.  The s1_metric
+manifold contains a noise-level fit of this cell; it lies far from the
+prior (|z| = 212 against ≈ 5 for a typical draw) and first-order descent
+does not get there.  See "Solver and calibration re-measurement" in the
+step-2 roadmap.]  Two more verdicts from the final menu: (i) the cell is NOT
 PH-symmetric — established by the *paired* per-bin test (the correct
 one: mirrored slices share bins and are positively correlated, so the
 naive independent-slices test *understates* the significance):
@@ -874,6 +1229,46 @@ a campaign:
 
 Aggregates hide the failure that matters, so every eval stratifies per
 family; the release gate below is stated per family, not on the mean.
+
+**Since 2026-11-23 the judges run through `spevae eval`** (docs/EVAL.md):
+one case registry, one scorer for every method, MaxEnt and DEAC in every
+scorecard, 8 noise draws per case, hierarchical bootstrap intervals and
+paired comparisons. It reproduces the banked judges (204 of 212 checks;
+every χ², count, stream and Holstein number bit for bit; the 8 drifts are
+the 2026-09-01 map judge banked in the previous environment).
+
+**First full scorecard, s1_metric vs M1-60k** (*measured*, 2026-11-23,
+`out/eval/s1_vs_M1_full/`; the scan pipeline on the first draw pair only):
+
+- **Versus MaxEnt (exact noise covariance, flat default model)**, scan
+  pipeline: spevae's W₁ is 2–550× lower on all nine pole-closed cases at
+  both noise levels, every interval excluding 1 (minimal form 2.1–550×,
+  full rendering 2.1–55×; Lorentzian pair 0.001 vs 0.49 at 1e-4). MaxEnt is
+  better on the smooth truths — gapped pair 9.2× (1e-4) / 2.6× (1e-3),
+  Gaussian pair 3.6× (1e-4), pseudogap 2.4× / 1.9×, semicircle 1.3× (1e-4);
+  box splits (MaxEnt 1.1× at 1e-4, spevae 1.3× at 1e-3). This is the step-2
+  target stated as a number: close the smooth gap to MaxEnt without
+  giving up the pole-closed advantage.
+- **The M1 fano regression is a z-descent-stage effect.** Under zd3000
+  M1/s1 on the Fano band at 1e-3 is 3.55× [3.48, 3.62] over 8 draws; under
+  the scan pipeline it is 1.11 [0.99, 1.23] (minimal) and 1.02 (full). With
+  the scan pipeline M1 vs s1 is a wash (scan_full 10 better / 10 worse of
+  28 cells); M1's distinct gains are the Holstein manifold floor
+  (23.96 → 3.83; step-capped descents, see the 2026-11-24
+  re-measurement) and smooth truths under z-descent (semicircle zd3000
+  0.216 → 0.094 at 1e-4).
+- **The amortized pass is far from the data**: χ² 50–6000 per point at
+  1e-4 for both models; the inference pipeline (≈60 s per dataset for the
+  scan) does the work. This amortization gap is the measured case for a
+  stronger posterior model.
+- **Holstein**: every spevae scan output, MaxEnt (χ²/target 0.39) and DEAC
+  (0.96) fit the data within noise, yet spevae returns sharp phonon-ladder
+  peaks while MaxEnt and DEAC return broad humps. The data do not decide
+  between them; the prior does. The training prior is therefore the
+  quantity to get right for real data.
+- **Noise-draw intervals are narrow** (errors are systematic per
+  checkpoint); recipe claims need training-seed replicates, which the suite
+  takes as repeated `--model TAG=...`.
 
 ## 4. The production run
 

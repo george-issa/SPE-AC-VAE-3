@@ -259,6 +259,52 @@ def test_z_descend_beats_the_mean_readout():
     assert r.poles.eps.shape[-1] == model.num_poles
 
 
+def test_least_squares_refinement_recovers_a_decodable_spectrum():
+    """The same mechanism test, solved as the least-squares problem it is.
+
+    Levenberg-Marquardt must reach the calibrated floor on data the decoder
+    can explain exactly, say how it ended, and need a small fraction of the
+    4000 first-order steps the Adam version of this test is given.
+    """
+    model = tiny_model(seed=5)
+    mg, _, _ = decodable_dataset(model, seed=5)
+    res = refine_latent(model, mg, RefineConfig(solver="lm"))
+    assert res.solver == "lm"
+    assert res.chi2 < res.chi2_init / 100.0, (res.chi2_init, res.chi2)
+    assert res.chi2_ratio < 1.5, f"did not reach the noise floor: {res.chi2_ratio}"
+    assert res.converged or res.stationary          # never "ran out of steps" silently
+    assert 0 < res.steps_run <= 200
+    assert len(res.history) >= 1 and res.history[-1] <= res.history[0]
+    with pytest.raises(ValueError):
+        refine_latent(model, mg, RefineConfig(solver="sgd"))
+
+
+def test_least_squares_z_descend_is_not_worse_than_adam():
+    """Same objective, same start: the least-squares solver may not end at a
+    worse MAP objective than 400 Adam steps (regression test on a checkpoint)."""
+    from spevae import load_model
+    from spevae.refine import z_descend
+    from spevae.physics.poles import PoleSet
+    from spevae.physics.forward import SpectralQuadrature, PoleGreens
+    path = "out/step1/s1_metric.pt"
+    if not os.path.exists(path):
+        pytest.skip("reference checkpoint not present")
+    model = load_model(path)
+    beta = 8.0
+    truth = PoleSet(eps=torch.tensor([[0.5, 1.5, 2.5]]) * beta,
+                    gamma=torch.tensor([[0.3, 0.3, 0.3]]) * beta,
+                    a=torch.tensor([[0.54, 0.297, 0.163]]), b=torch.zeros(1, 3))
+    x = torch.linspace(0.0, 1.0, 65)
+    G = PoleGreens(SpectralQuadrature.for_beta(beta))(truth, x)
+    sigma = torch.full_like(G, 1e-4)
+    G = G + sigma * torch.randn(G.shape, generator=torch.Generator().manual_seed(0))
+    ra = z_descend(model, G, x, beta, sigma=sigma, steps=400)
+    rl = z_descend(model, G, x, beta, sigma=sigma, solver="lm")
+    assert rl.solver == "lm" and ra.solver == "adam"
+    assert rl.data_term + rl.prior_term <= 1.02 * (ra.data_term + ra.prior_term)
+    assert rl.chi2 < 0.25 * rl.chi2_init
+
+
 def test_manifold_refit_dial_behaves():
     """weight -> 0 approaches the free refit's chi2; large weight stays
     near the anchor; moderate weight sits between on both axes."""

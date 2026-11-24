@@ -352,6 +352,11 @@ def cmd_pretrain(args) -> None:
             pole_kw["motifs"] = tuple(args.motifs)
         if args.rho_min is not None:
             pole_kw["rho_range"] = (args.rho_min, args.rho_max)
+        if args.p_smooth > 0.0:
+            if not args.smooth_bank:
+                raise SystemExit("--p-smooth needs --smooth-bank")
+            pole_kw["smooth_bank"] = args.smooth_bank
+            pole_kw["p_smooth"] = args.p_smooth
         gen = PolePriorGenerator(omega_c=args.omega_c,
                                  P_max=args.num_poles - 4,
                                  residue_mode=args.prior_residue_mode,
@@ -367,7 +372,17 @@ def cmd_pretrain(args) -> None:
                                  families=args.families,
                                  ph_symmetric=args.ph_symmetric,
                                  device=args.device, **dist)
-    weights = LossWeights(w1=args.w_w1, l2=args.w_l2, barrier=args.w_barrier,
+    # Training-time group averaging (arXiv:2609.27132): the loss is computed on
+    # the exactly PH-equivariant prediction 1/2 f(G) U 1/2 M f(PG).  The latent
+    # is the concatenation of both posteriors, so the per-dimension-summed KL
+    # and consistency terms are halved -- the group average of each branch's.
+    # Checkpoints store the base SPEVAE; wrap it again at inference.
+    avg = 0.5 if args.mirror_average else 1.0
+    if args.mirror_average:
+        from .models.equivariant import MirrorSymmetrized
+        model = MirrorSymmetrized(model)
+    weights = LossWeights(kl=avg * 1.0, consistency=avg * 0.1,
+                          w1=args.w_w1, l2=args.w_l2, barrier=args.w_barrier,
                           sparsity=args.w_sparsity, multiscale=args.w_multiscale,
                           highpass=args.w_highpass,
                           pole_coherence=args.w_pole_coh,
@@ -392,12 +407,28 @@ def cmd_pretrain(args) -> None:
                   f"AU={rec['active_units']:.2f}/{int(rec['latent_dim'])}")
             # Rolling crash-recovery checkpoint (raw weights, not the EMA):
             # a multi-hour run must not be losable to one stray kill.
-            save_model(model, args.out + ".partial", stage="pretrain-partial",
-                       step=step, eval_metrics=rec)
+            save_model(getattr(model, "base", model), args.out + ".partial",
+                       stage="pretrain-partial", step=step, eval_metrics=rec,
+                       mirror_average=bool(args.mirror_average))
+            if args.keep_snapshots:
+                # every eval point kept: auditing a run along its length (the
+                # Holstein floor was measured to depend on training length)
+                stem = args.out[:-3] if args.out.endswith(".pt") else args.out
+                save_model(getattr(model, "base", model), f"{stem}.step{step + 1}.pt",
+                           stage="pretrain-snapshot", step=step + 1, eval_metrics=rec,
+                           mirror_average=bool(args.mirror_average))
 
     hist = pretrain(model, gen, cfg, callback=cb)
-    save_model(model, args.out, stage="pretrain", preset=args.preset,
-               steps=steps, seed=args.seed,
+    # the full recipe, so a checkpoint names its own training distribution
+    recipe = {k: (list(v) if isinstance(v, tuple) else v)
+              for k, v in vars(args).items() if k != "func"}
+    if getattr(args, "smooth_bank", None):
+        import hashlib
+        with open(args.smooth_bank, "rb") as fh:
+            recipe["smooth_bank_sha256"] = hashlib.sha256(fh.read()).hexdigest()
+    save_model(getattr(model, "base", model), args.out, stage="pretrain",
+               preset=args.preset, steps=steps, seed=args.seed,
+               mirror_average=bool(args.mirror_average), recipe=recipe,
                final_eval=hist["eval"][-1] if hist["eval"] else {})
     print(f"\nsaved -> {args.out}  (wall time {hist['wall_time']:.0f}s)")
 
@@ -416,6 +447,28 @@ def cmd_info(args) -> None:
         for k, v in meta.items():
             s = str(v)
             print(f"  {k:>22} = {s[:100] + '...' if len(s) > 100 else s}")
+
+
+def cmd_eval(args) -> None:
+    from .evaluation import run_suite, write_report
+
+    models = []
+    for kv in args.model:
+        if "=" not in kv:
+            raise SystemExit(f"--model expects TAG=PATH, got {kv!r}")
+        tag, path = kv.split("=", 1)
+        if "#" in tag or tag == "-":
+            raise SystemExit(f"model tag {tag!r} may not contain '#' or be '-'")
+        models.append((tag, path))
+    cases = args.cases.split(",") if args.cases else None
+    skip = tuple(args.skip.split(",")) if args.skip else ()
+    card = run_suite(models, tier=args.tier, workers=args.workers,
+                     cases_sel=cases, skip=skip)
+    write_report(card, args.out, figures=not args.no_figures)
+    n_fail = len(card["failures"])
+    print(f"-> {args.out}/summary.md, scorecard.json"
+          + ("" if args.no_figures else ", figures")
+          + (f"  ({n_fail} FAILED tasks, listed in summary.md)" if n_fail else ""))
 
 
 def main(argv=None) -> None:
@@ -536,6 +589,18 @@ def main(argv=None) -> None:
                    help="override the smooth-biased spacing/width prior with "
                         "a uniform rho draw on [rho-min, rho-max]")
     p.add_argument("--rho-max", type=float, default=None)
+    p.add_argument("--smooth-bank", default=None, metavar="BANK.pt",
+                   help="step 2: label bank of smooth truths (labels at the "
+                        "training beta)")
+    p.add_argument("--p-smooth", type=float, default=0.0,
+                   help="step 2: probability that a pole-prior item is a smooth "
+                        "bank truth instead of a motif draw")
+    p.add_argument("--keep-snapshots", action="store_true",
+                   help="also save a checkpoint at every eval point (stem.stepN.pt)")
+    p.add_argument("--mirror-average", action="store_true",
+                   help="train through the exactly PH-equivariant group "
+                        "average 1/2 f(G) U 1/2 M f(G(beta - tau)) "
+                        "(arXiv:2609.27132); ~2x cost per step")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cpu")
     p.add_argument("--init-from", default=None,
@@ -547,6 +612,19 @@ def main(argv=None) -> None:
     i = sub.add_parser("info", help="describe a checkpoint")
     i.add_argument("--checkpoint", required=True)
     i.set_defaults(func=cmd_info)
+
+    e = sub.add_parser("eval", help="run the frozen evaluation suite on checkpoints")
+    e.add_argument("--model", action="append", default=[], metavar="TAG=PATH",
+                   help="checkpoint to judge; repeat a TAG for training-seed replicates")
+    e.add_argument("--tier", default="fast", choices=["fast", "screen", "full", "lm"])
+    e.add_argument("--out", required=True, help="output directory")
+    e.add_argument("--workers", type=int, default=None,
+                   help="processes (each pinned to 2 threads); default cpu_count/2")
+    e.add_argument("--cases", default=None, help="comma-separated subset of case names")
+    e.add_argument("--skip", default=None,
+                   help="comma-separated methods/parts to skip (e.g. deac,floor,streams,real)")
+    e.add_argument("--no-figures", action="store_true")
+    e.set_defaults(func=cmd_eval)
 
     args = ap.parse_args(argv)
     args.func(args)

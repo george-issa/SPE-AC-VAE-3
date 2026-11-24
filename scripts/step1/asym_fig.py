@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 plt.rcParams.update({"font.size": 8.5, "axes.titlesize": 9, "axes.labelsize": 9,
                      "xtick.labelsize": 7.5, "ytick.labelsize": 7.5,
                      "axes.linewidth": 0.7, "axes.edgecolor": "#3A3F45"})
-art = json.load(open("out/step1/asym_probes_zd.json"))
+art = json.load(open(sys.argv[1] if len(sys.argv) > 1 else "out/step1/asym_probes_zd.json"))
 om = art["nodes"]
 n = len(art["probes"])
 fig, axes = plt.subplots(2, n, figsize=(5.6 * n, 6.2), constrained_layout=True,
@@ -50,5 +50,5 @@ for j, p in enumerate(art["probes"]):
     if j == 0: ax2.set_ylabel("$\\chi^2$ per dof")
 fig.suptitle("The b channel probed: asymmetric truths, extended menu "
              "(winner orange; k annotated)", fontsize=10)
-fig.savefig("out/step1/asym_probes_final.png", dpi=200)
+fig.savefig(sys.argv[2] if len(sys.argv) > 2 else "out/step1/asym_probes_final.png", dpi=200)
 print("figure saved")

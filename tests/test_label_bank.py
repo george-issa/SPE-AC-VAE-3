@@ -246,3 +246,74 @@ def test_truncation_residual_pinned_per_family(small_bank):
     for i, fam in enumerate(small_bank.family):
         assert float(r[i]) < 1e-4, (fam, float(r[i]))
     assert float(r.median()) < 1e-6
+
+
+# --------------------------------------------------------------------------- #
+# dispersive residue map (bank v2 candidate) and the |b| <= T a hinge
+# --------------------------------------------------------------------------- #
+
+def test_dispersive_jacobian_matches_finite_differences():
+    from spevae.data import label_bank as LB
+    tr = pinned("gauss_mixture")
+    om, F = tr.matsubara()
+    Fs = np.abs(F).max()
+    gfloor = 1.05 * GAMMA_MIN / BETA
+    n = 4
+    cfg = (np.array([-2.0, -0.5, 1.0, 3.0]), np.array([0.5, 0.3, 0.8, 0.4]),
+           np.array([0.3, 0.2, 0.4, 0.1]), np.array([0.25, -0.32, -0.06, 0.13]))
+    ab = LB._ablock(tr)
+    try:
+        for T in (None, 0.5):                      # 0.5 makes the hinge active
+            LB.set_ratio_cap(T)
+            for cap in (0.8, 0.4, 0.0):
+                for abk in (None, (*ab, 0.05)):
+                    th = _pack(*cfg, gfloor, cap, "dispersive")
+                    J = _residual_jac(th, n, om, F, Fs, gfloor, cap, abk, "dispersive")
+                    h = 1e-7
+                    for k in range(th.size):
+                        tp, tm = th.copy(), th.copy()
+                        tp[k] += h
+                        tm[k] -= h
+                        col = (_residual_vec(tp, n, om, F, Fs, gfloor, cap, abk,
+                                             "dispersive")
+                               - _residual_vec(tm, n, om, F, Fs, gfloor, cap, abk,
+                                               "dispersive")) / (2 * h)
+                        scale = 1.0 if T is None else LB.RATIO_PENALTY
+                        assert np.abs(J[:, k] - col).max() < 1e-6 * scale, (T, cap, k)
+    finally:
+        LB.set_ratio_cap(None)
+
+
+def test_dispersive_pack_roundtrip_and_reachability():
+    from spevae.data import label_bank as LB
+    gfloor = 1.05 * GAMMA_MIN / BETA
+    a = np.array([0.3, 0.2, 0.4, 0.1])
+    b = np.array([0.25, -0.32, -0.06, 0.13])
+    b = b - b.sum() * a
+    th = _pack(np.zeros(4), np.ones(4), a, b, gfloor, 0.8, "dispersive")
+    _, _, a2, b2, d = LB._unpack(th, 4, gfloor, 0.8, "dispersive")
+    assert np.allclose(a2, a) and np.allclose(b2, b, atol=1e-12)
+    assert np.abs(d).max() <= 0.8 and abs(b2.sum()) < 1e-12
+
+
+def test_dispersive_label_is_in_the_decoder_map():
+    from spevae.data import label_bank as LB
+    lab = LB.extract_smooth_label(pinned("semicircle"), residue_mode="dispersive")
+    assert abs(lab.a.sum() - 1) < 1e-12 and abs(lab.b.sum()) < 1e-10
+    c = LB._dispersive_gauge(lab.a, lab.b)
+    assert np.abs(lab.b + c * lab.a).max() <= LB.DISPERSIVE_SCALE + 1e-9
+    assert lab.resid < 1e-5 and lab.neg_weight <= LB.DIP_TOL
+
+
+def test_ill_conditioned_pseudogap_extracts_without_crashing():
+    """Regression: bank_b8 truth #1899 (seed 2) broke the exact TR solve."""
+    from spevae.data.label_bank import SmoothTruth, extract_smooth_label
+    tr = SmoothTruth("pseudogap", 8.0, {
+        "weights": [1.154201187649331, -0.15420118764933097],
+        "mus": [-0.002611127528476225, -0.002611127528476225],
+        "sigmas": [2.5165801458871306, 0.3592524630275714],
+        "W": 4.666025876998901, "depth": 0.9358736366033553,
+        "sigma_bg": 2.5165801458871306, "sigma_dip": 0.3629699404612493})
+    lab = extract_smooth_label(tr)
+    assert np.isfinite(lab.resid) and lab.resid < 1e-3
+    assert abs(lab.a.sum() - 1) < 1e-12 and lab.neg_weight <= 5e-3

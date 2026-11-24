@@ -28,8 +28,12 @@ PROBES = [
 ]
 quad = SpectralQuadrature.for_beta(beta)
 x = torch.linspace(0.0, 1.0, ntau + 1)
-model = load_model("out/step1/s1_metric.pt")
-ART = {"nodes": (quad.nodes / beta).tolist(), "probes": []}
+# usage: asym_judge.py [ckpt] [out.json] [z_steps]  (defaults reproduce the banked step-1 run)
+CKPT = sys.argv[1] if len(sys.argv) > 1 else "out/step1/s1_metric.pt"
+OUTP = sys.argv[2] if len(sys.argv) > 2 else "out/step1/asym_probes_zd.json"
+ZSTEPS = int(sys.argv[3]) if len(sys.argv) > 3 else 800
+model = load_model(CKPT)
+ART = {"ckpt": CKPT, "z_steps": ZSTEPS, "nodes": (quad.nodes / beta).tolist(), "probes": []}
 for name, te, tg, ta, tb, n_true in PROBES:
     truth = PoleSet(eps=te, gamma=tg, a=ta, b=tb)
     Gc = PoleGreens(quad)(truth, x)
@@ -38,7 +42,7 @@ for name, te, tg, ta, tb, n_true in PROBES:
     G = Gc + n
     ev, V = torch.linalg.eigh(R)
     isr = V @ torch.diag(ev.clamp_min(1e-12).rsqrt()) @ V.T
-    zr = z_descend(model, G, x, beta, sigma=sigma, inv_sqrt_R=isr, steps=800)
+    zr = z_descend(model, G, x, beta, sigma=sigma, inv_sqrt_R=isr, steps=ZSTEPS)
     amort = zr.poles
     print(f"  z-descent: chi2 {zr.chi2_init:.1f} -> {zr.chi2:.2f} "
           f"({zr.steps_run} steps)")
@@ -115,5 +119,5 @@ for name, te, tg, ta, tb, n_true in PROBES:
                     pole_a=winner.poles.a.reshape(-1).tolist()),
         menu=[dict(name=c.name, m=c.m, k=c.k_params, chi2=c.chi2) for c in menu],
         scan=dict(ns=tr.ns, chi2s=tr.chi2s, selected_n=tr.selected_n)))
-json.dump(ART, open("out/step1/asym_probes_zd.json", "w"))
+json.dump(ART, open(OUTP, "w"))
 print("ASYM_DONE")

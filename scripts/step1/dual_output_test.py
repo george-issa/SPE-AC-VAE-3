@@ -13,8 +13,12 @@ from spevae.data.readers import read_gissa_cube
 
 beta = 8.0
 quad = SpectralQuadrature.for_beta(beta)
-model = load_model("out/step1/s1_metric.pt")
-ART = {"nodes": (quad.nodes/beta).tolist(), "cases": []}
+# usage: dual_output_test.py [ckpt] [out.json] [z_steps]  (defaults reproduce the banked step-1 run)
+CKPT = sys.argv[1] if len(sys.argv) > 1 else "out/step1/s1_metric.pt"
+OUTP = sys.argv[2] if len(sys.argv) > 2 else "out/step1/dual_output.json"
+ZSTEPS = int(sys.argv[3]) if len(sys.argv) > 3 else 1500
+model = load_model(CKPT)
+ART = {"ckpt": CKPT, "z_steps": ZSTEPS, "nodes": (quad.nodes/beta).tolist(), "cases": []}
 
 def run(name, poles, A_anchor, G, x, sigma, isr, truth, w):
     def w1_of(ps):
@@ -38,7 +42,9 @@ def run(name, poles, A_anchor, G, x, sigma, isr, truth, w):
                      A=(sel.to_dimensionless(beta).spectral(
                          quad.nodes.to(torch.float64))[0]*beta).tolist(),
                      pole_eps=sel.eps.reshape(-1).tolist(),
-                     pole_a=sel.a.reshape(-1).tolist()),
+                     pole_a=sel.a.reshape(-1).tolist(),
+                     pole_gam=sel.gamma.reshape(-1).tolist(),
+                     pole_b=sel.b.reshape(-1).tolist()),
         full=dict(chi2=tr.full_chi2, w1=w1_of(full),
                   A=(full.to_dimensionless(beta).spectral(
                       quad.nodes.to(torch.float64))[0]*beta).tolist()),
@@ -61,7 +67,7 @@ for name, truth in [("fano band", mk((0.3+ks*1.2).tolist(), [0.5]*5, [0.2]*5,
     G = Gc + n
     ev, V = torch.linalg.eigh(R)
     isr = V @ torch.diag(ev.clamp_min(1e-12).rsqrt()) @ V.T
-    zr = z_descend(model, G, x, beta, sigma=sigma, inv_sqrt_R=isr, steps=1500)
+    zr = z_descend(model, G, x, beta, sigma=sigma, inv_sqrt_R=isr, steps=ZSTEPS)
     A_anchor = zr.poles.to_dimensionless(beta).spectral(quad.nodes.to(torch.float64))
     run(name, zr.poles, A_anchor, G, x, sigma, isr, truth, w=0.5)
 
@@ -75,5 +81,5 @@ A_anchor = rr.poles.to_dimensionless(beta).spectral(quad.nodes.to(torch.float64)
 run("Holstein", rr.poles, A_anchor, mg.mean[sl], mg.x[sl], mg.sigma_mean[sl],
     cov["inv_sqrt_R"], None, w=1.0)
 ART["holstein_target"] = float(cov["chi2_target"])
-json.dump(ART, open("out/step1/dual_output.json", "w"))
+json.dump(ART, open(OUTP, "w"))
 print("DUAL_DONE")

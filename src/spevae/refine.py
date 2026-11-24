@@ -101,6 +101,16 @@ class RefineConfig:
         Refine every bin separately (each gets its own :math:`z`) instead of
         refining the bin mean.  The per-bin spread is then a data-driven
         uncertainty rather than a latent-prior one.
+    solver
+        ``"adam"`` (the original first-order descent; ``steps``, ``lr`` and
+        ``patience`` apply) or ``"lm"``: Levenberg--Marquardt on the same MAP
+        objective, which is a least-squares problem (:mod:`spevae.physics.lsq`;
+        at most ``lm_iters`` iterations, same stop at the calibrated noise
+        floor).  Adam stays the default only because every number banked
+        before 2026-11-24 was produced with it; measured that day, the
+        10,000-step Adam "manifold floor" of all four reference checkpoints
+        was still descending at the cap.  With ``"lm"`` read
+        :attr:`RefineResult.stationary` as well as ``converged``.
     """
 
     steps: int = 2000
@@ -112,6 +122,9 @@ class RefineConfig:
     per_bin: bool = False
     patience: int = 200
     log_every: int = 0
+    solver: str = "adam"
+    lm_iters: int = 400
+    lm_ftol: float = 1e-6
 
 
 @dataclass
@@ -132,6 +145,13 @@ class RefineResult:
     converged: bool = False
     data_term: float = 0.0              # 0.5 * n * chi2 at the solution
     prior_term: float = 0.0             # 0.5 * lambda * ||z||^2 at the solution
+    #: the solver reached a stationary point of the objective (``"lm"`` only).
+    #: ``converged`` says the stop criterion was met (the noise floor on real
+    #: data, chi^2 <= 1 on synthetic); ``stationary`` without ``converged`` is
+    #: a genuine floor of the objective from this start; neither is a fit that
+    #: ran out of steps -- an intermediate answer, not a result.
+    stationary: bool = False
+    solver: str = "adam"
 
     @property
     def chi2_ratio(self) -> float:
@@ -162,8 +182,10 @@ class RefineResult:
     def summary(self) -> str:
         s = self.z_shift
         return (
-            f"latent refinement ({self.steps_run} steps"
-            f"{', converged' if self.converged else ''})\n"
+            f"latent refinement ({self.solver}, {self.steps_run} steps"
+            f"{', converged' if self.converged else ''}"
+            f"{', stationary' if self.stationary and not self.converged else ''}"
+            f"{'' if self.converged or self.stationary else ', NOT converged'})\n"
             f"  chi2      : {self.chi2_init:.4g} -> {self.chi2:.4g}"
             f"   (target {self.chi2_target:.4g}, ratio {self.chi2_ratio:.3g})\n"
             f"  z shift   : mean {float(s.mean()):.2f} sigma, "
@@ -175,6 +197,61 @@ class RefineResult:
             f"  MAP terms : data {self.data_term:.4g} vs prior {self.prior_term:.4g}"
             f"  -> prior {'binding' if self.prior_is_binding else 'NOT binding'}"
         )
+
+
+def _latent_lm(model, z0, norm, beta, x, G, sl, sigma_fit, W, prior_weight, max_iter,
+               stop_chi2=None, ftol=1e-6):
+    r"""Levenberg--Marquardt on the MAP objective of the latent descent.
+
+    Residuals per row: the whitened data misfit on the fitted slices and
+    :math:`\sqrt{\lambda}\,z`.  The decoder runs in the model's own dtype (its
+    Jacobian by autograd); the forward map and its closed-form pole Jacobian
+    run in float64.  Returns ``(z, chi2 trace, LMInfo)``.
+    """
+    from .physics import lm_solve, rowwise_jacobian
+    from .physics.poles import PoleSet
+    dd = torch.float64
+    mdt, device = z0.dtype, z0.device
+    fwd = model.forward_map(beta, device, dd)
+    xd = x.to(dd)
+    K = fwd.kernel_matrix(xd)
+    Gd = G.to(dd)[:, sl]
+    sd = sigma_fit.to(dd)
+    Wd = None if W is None else W.to(dd)
+    root = math.sqrt(float(prior_weight))
+    B, Lz = z0.shape
+    n = Gd.shape[-1]
+    eye = root * torch.eye(Lz, dtype=dd, device=device).expand(B, Lz, Lz)
+    trace = []
+
+    def as64(ps):
+        return PoleSet(*(getattr(ps, k).detach().to(dd) for k in ("eps", "gamma", "a", "b")))
+
+    def fun(zf, jac):
+        if not jac:
+            with torch.no_grad():
+                G_rec = fwd(as64(model.decode(zf.to(mdt), norm, beta)), xd, kernel_matrix=K)
+            rd = (G_rec[:, sl] - Gd) / sd
+            return torch.cat([rd if Wd is None else rd @ Wd.T, root * zf], -1), None
+        with torch.enable_grad():
+            zg = zf.to(mdt).detach().requires_grad_(True)
+            ps = model.decode(zg, norm, beta)
+            th = torch.stack([ps.eps, ps.gamma, ps.a, ps.b], -1).reshape(B, -1)
+            Jt = rowwise_jacobian(th, zg).to(dd)                      # (B, 4P, Lz)
+        G_rec, dG = fwd.jacobian(as64(ps), xd, K)
+        rd = (G_rec[:, sl] - Gd) / sd
+        Jd = (dG[:, sl].reshape(B, n, -1) @ Jt) / sd.unsqueeze(-1)
+        if Wd is not None:
+            rd, Jd = rd @ Wd.T, Wd @ Jd
+        trace.append(float((rd * rd).sum(-1).mean() / n))
+        return torch.cat([rd, root * zf], -1), torch.cat([Jd, eye], 1)
+
+    stop = None
+    if stop_chi2 is not None:
+        def stop(zf, r):
+            return (r[:, :n] ** 2).sum(-1) / n <= stop_chi2
+    zf, _, info = lm_solve(fun, z0.to(dd), max_iter=max_iter, stop=stop, ftol=ftol)
+    return zf.to(mdt), trace, info
 
 
 @torch.enable_grad()
@@ -252,7 +329,21 @@ def refine_latent(
 
         best = (float("inf"), z.detach().clone())
         history, stall, converged, step = [], 0, False, 0
-        for step in range(1, cfg.steps + 1):
+        stationary = False
+        if cfg.solver not in ("adam", "lm"):
+            raise ValueError(f"solver={cfg.solver!r}; expected 'adam' or 'lm'")
+        n_adam = cfg.steps if cfg.solver == "adam" else 0
+        if cfg.solver == "lm" and cfg.steps > 0:
+            from .physics.lsq import STATIONARY, STOPPED
+            z_lm, history, info = _latent_lm(
+                model, mu, norm, mg.beta, x, G, sl, sigma_fit, inv_sqrt_R,
+                cfg.prior_weight, cfg.lm_iters,
+                stop_chi2=cfg.target_ratio * cov["chi2_target"], ftol=cfg.lm_ftol)
+            best = (history[-1] if history else float("inf"), z_lm.detach().clone())
+            step = int(info.iterations.max())
+            converged = bool((info.status == STOPPED).all())
+            stationary = bool((info.status == STATIONARY).any())
+        for step in range(1, n_adam + 1):
             chi2, _, _ = chi2_of(z)
             # MAP objective: half the chi^2 *sum* (not the per-dof average) plus
             # half the squared code norm.  Using the average here would silently
@@ -296,6 +387,7 @@ def refine_latent(
         chi2_target=cov["chi2_target"], history=history, beta=float(mg.beta),
         steps_run=step, converged=converged,
         data_term=data_term, prior_term=prior_term,
+        stationary=stationary, solver=cfg.solver,
     )
 
 
@@ -311,8 +403,14 @@ def z_descend(
     lr: float = 0.05,
     prior_weight: float = 1.0,
     patience: int = 200,
+    solver: str = "adam",
+    lm_iters: int = 400,
 ) -> "RefineResult":
     r"""Raw-tensor twin of :func:`refine_latent` for synthetic pipelines.
+
+    ``solver="lm"`` minimises the same MAP objective by Levenberg--Marquardt
+    (at most ``lm_iters`` iterations; ``steps``, ``lr``, ``patience`` unused)
+    and sets :attr:`RefineResult.stationary`; see :class:`RefineConfig`.
 
     REAL DATA: do not hand-slice the inputs -- the encoder must see the
     full native grid (pass ``slices`` for the fit restriction instead, or
@@ -364,6 +462,17 @@ def z_descend(
             chi2_init = float(chi2_of(z)[0])
         best, stall, step = (float("inf"), z.detach().clone()), 0, 0
         history = []
+        stationary = False
+        if solver not in ("adam", "lm"):
+            raise ValueError(f"solver={solver!r}; expected 'adam' or 'lm'")
+        if solver == "lm":
+            from .physics.lsq import STATIONARY
+            z_lm, history, info = _latent_lm(model, mu, norm, beta, x, G, sl, s_[:, sl], W,
+                                             prior_weight, lm_iters)
+            best = (history[-1] if history else float("inf"), z_lm.detach().clone())
+            step = int(info.iterations.max())
+            stationary = bool((info.status == STATIONARY).any())
+            steps = 0
         for step in range(1, steps + 1):
             chi2, _, _ = chi2_of(z)
             loss = (0.5 * L_eff * chi2
@@ -395,7 +504,7 @@ def z_descend(
         chi2=float(chi2_final), chi2_init=chi2_init, chi2_target=1.0,
         history=history, beta=float(beta), steps_run=step,
         converged=float(chi2_final) <= 1.0, data_term=data_term,
-        prior_term=prior_term)
+        prior_term=prior_term, stationary=stationary, solver=solver)
 
 
 def manifold_refit(

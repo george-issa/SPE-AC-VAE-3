@@ -62,7 +62,13 @@ def judge_entry(args):
     dw = float(w[1] - w[0])
     w1 = float((torch.cumsum(Al - At, 0) * dw).abs().sum() * dw)
     bsat = float(np.max(np.abs(b) / np.maximum(a, 1e-30))) if a.size else 0.0
-    return g_gap, w1, bsat
+    # step-2 checks: can the M1 (dispersive) decoder emit this label, and what
+    # does it weigh in the frozen pole loss (sum b^2/a: the cost of a
+    # position-matched prediction with t = 0)?
+    from spevae.data.label_bank import _dispersive_gauge
+    disp = float(np.abs(b + _dispersive_gauge(a, b) * a).max()) if a.size else 0.0
+    load = float((b ** 2 / np.maximum(a, 1e-30)).sum())
+    return g_gap, w1, bsat, disp, load
 
 
 def quantiles(v):
@@ -79,6 +85,9 @@ def main():
     ap.add_argument("--p-max", type=int, default=12)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--out", type=Path, default=Path("out/step2"))
+    ap.add_argument("--residue-mode", default="complex",
+                    choices=["complex", "dispersive"],
+                    help="decoder map the labels live in (v1 protocol: complex)")
     ap.add_argument("--bank", type=Path, default=None,
                     help="judge an existing bank instead of building")
     args = ap.parse_args()
@@ -100,7 +109,7 @@ def main():
         bank = build_label_bank(n_per_family=args.n_per_family,
                                 seed=args.seed, beta_range=tuple(args.beta_range),
                                 P_max=args.p_max, workers=args.workers,
-                                progress=prog)
+                                progress=prog, residue_mode=args.residue_mode)
         bank.save(args.out / "label_bank.pt")
         print(f"built {len(bank)} labels in {time.time()-t0:.0f}s "
               f"-> {args.out/'label_bank.pt'}")
@@ -124,6 +133,8 @@ def main():
     g_gap = np.array([j[0] for j in judged])
     w1 = np.array([j[1] for j in judged])
     bsat = np.array([j[2] for j in judged])
+    disp = np.array([j[3] for j in judged])
+    load = np.array([j[4] for j in judged])
     resid = bank.resid.numpy()
     n_true = bank.n_true.numpy()
     beta = bank.beta.numpy()
@@ -133,7 +144,8 @@ def main():
         for i in range(len(bank))])
     fam_idx = np.array([SMOOTH_FAMILIES.index(f) for f in bank.family])
     np.savez(args.out / "label_bank_judge.npz", resid=resid, g_gap=g_gap,
-             w1=w1, bsat=bsat, n_true=n_true, beta=beta, neg_weight=negw,
+             w1=w1, bsat=bsat, disp_amp=disp, loss_load=load,
+             n_true=n_true, beta=beta, neg_weight=negw,
              min_gamma_dimless=min_gd, family_index=fam_idx,
              families=np.array(SMOOTH_FAMILIES))
     print(f"judged in {time.time()-t0:.0f}s")
@@ -154,6 +166,9 @@ def main():
             "frac_below_noise_floor": float((g_gap[m] < 3e-5).mean()),
             "min_gamma_dimless": float(min_gd[m].min()),
             "b_saturation_p95": float(np.quantile(bsat[m], 0.95)),
+            "dispersive_amp_max": float(disp[m].max()),
+            "frac_reachable_dispersive": float((disp[m] <= 0.8 + 1e-9).mean()),
+            "loss_load": quantiles(load[m]),
         }
     with open(args.out / "label_bank_report.json", "w") as fh:
         json.dump(report, fh, indent=1)

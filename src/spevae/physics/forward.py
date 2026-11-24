@@ -266,6 +266,54 @@ class PoleGreens(nn.Module):
         A = spectral_from_poles(poles.eps, poles.gamma, poles.a, poles.b, nodes)
         return (A * self.quad.weights.to(A.dtype)) @ K
 
+    def jacobian(
+        self,
+        poles: PoleSet,
+        x: torch.Tensor,
+        kernel_matrix: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        r""":math:`G(x)` and its exact derivative with respect to every pole parameter.
+
+        The spectrum is a sum of closed-form terms, so with
+        :math:`\delta = \nu - \varepsilon_p`, :math:`D = \delta^2 + \gamma_p^2` and
+        :math:`N = a_p\gamma_p - b_p\delta`,
+
+        .. math::
+            \pi\,\partial_\varepsilon A = \frac{b_p}{D} + \frac{2N\delta}{D^2},\quad
+            \pi\,\partial_\gamma A = \frac{a_p}{D} - \frac{2N\gamma_p}{D^2},\quad
+            \pi\,\partial_a A = \frac{\gamma_p}{D},\quad
+            \pi\,\partial_b A = -\frac{\delta}{D},
+
+        and the forward map is linear in :math:`A`.  This is what makes the
+        pipeline's fits least-squares problems with a cheap exact Jacobian
+        (:mod:`spevae.physics.lsq`) rather than something to hand to a
+        first-order optimiser.
+
+        Returns
+        -------
+        (G, dG)
+            ``G`` is ``(B, L)``; ``dG`` is ``(B, L, P, 4)``, last axis ordered
+            ``(eps, gamma, a, b)``.  Not differentiable (no graph is kept).
+        """
+        with torch.no_grad():
+            dt = poles.eps.dtype
+            x = x.reshape(-1).to(dt)
+            K = self.kernel_matrix(x) if kernel_matrix is None else kernel_matrix.to(dt)
+            Kw = self.quad.weights.to(dt).unsqueeze(-1) * K               # (M, L)
+            eps, gam, a, b = (t.unsqueeze(-1) for t in
+                              (poles.eps, poles.gamma, poles.a, poles.b))  # (B, P, 1)
+            d = self.quad.nodes.to(dt).reshape(1, 1, -1) - eps            # (B, P, M)
+            den = d * d + gam * gam
+            num = a * gam - b * d
+            G = ((num / den).sum(1) / math.pi) @ Kw
+            dA = torch.stack([b / den + 2.0 * num * d / den ** 2,
+                              a / den - 2.0 * num * gam / den ** 2,
+                              gam / den,
+                              -d / den], 2) / math.pi                     # (B, P, 4, M)
+            B, P = poles.eps.shape
+            dG = (dA.reshape(B, P * 4, -1) @ Kw).reshape(B, P, 4, -1).permute(0, 3, 1, 2)
+        return G, dG
+
     def forward_grouped(
         self,
         poles: PoleSet,

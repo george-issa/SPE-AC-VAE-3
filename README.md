@@ -166,6 +166,21 @@ distribution — which is exactly why agreement matters: where all three agree,
 the feature is in the data; where they disagree, the inversion is
 underdetermined *there*.
 
+## Evaluation
+
+```bash
+spevae eval --model A=out/a.pt --model B=out/b.pt --tier fast --out out/eval/a_vs_b
+```
+
+One frozen suite judges every method: 14 synthetic truths × 2 noise levels ×
+8 noise draws plus the real Holstein cell (a 253 kB fixture built by
+`scripts/eval/build_holstein_fixture.py`; not versioned), each
+spevae inference pipeline next to MaxEnt and DEAC, all scored by the same code.
+Error bars are hierarchical bootstraps over training seeds and noise draws;
+model comparisons are paired on the same draws. `scripts/eval/acceptance.py`
+checks that the suite reproduces the banked judge numbers before it is trusted.
+Details: [`docs/EVAL.md`](docs/EVAL.md).
+
 ## Reading the results honestly
 
 - **χ² ≈ target does not mean the spectrum is right.** It means the fit is

@@ -35,6 +35,7 @@ from .consolidate import (
     refit_poles_to_greens,
     sharpness_verdict,
 )
+from .lsq import LMInfo, lm_solve, rowwise_jacobian
 from .positivity import PositivityReport, certify, positivity_certificate
 from .prony import MPMReport, aaa_poles, matsubara_from_bins, mpm_extract
 
@@ -73,4 +74,7 @@ __all__ = [
     "matsubara_from_bins",
     "aaa_poles",
     "MPMReport",
+    "lm_solve",
+    "rowwise_jacobian",
+    "LMInfo",
 ]

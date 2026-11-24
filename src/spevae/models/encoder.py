@@ -200,6 +200,19 @@ class GreensEncoder(nn.Module):
         beta: torch.Tensor | float | None = None,
         mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        r"""``(mu, logvar)`` read off the ``CLS`` output of :meth:`tokens`."""
+        h, _ = self.tokens(g_hat, x, sigma_hat=sigma_hat, beta=beta, mask=mask)
+        summary = h[:, 0]
+        return self.to_mu(summary), self.to_logvar(summary)
+
+    def tokens(
+        self,
+        g_hat: torch.Tensor,
+        x: torch.Tensor,
+        sigma_hat: torch.Tensor | None = None,
+        beta: torch.Tensor | float | None = None,
+        mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         r"""Encode a batch of *scale-normalised* Green's functions.
 
         Parameters
@@ -217,8 +230,11 @@ class GreensEncoder(nn.Module):
 
         Returns
         -------
-        (mu, logvar)
-            Each ``(B, latent_dim)``.
+        (h, keep)
+            ``h`` is ``(B, 1 + L, d_model)``: the normalised ``CLS`` output
+            followed by one output per time slice; ``keep`` ``(B, 1 + L)`` is
+            ``False`` on padding.  :meth:`forward` reads ``(mu, logvar)`` off
+            ``h[:, 0]``; a conditional sampler can attend to all of ``h``.
         """
         B, L = g_hat.shape
         if x.ndim == 1:
@@ -288,5 +304,4 @@ class GreensEncoder(nn.Module):
         h = torch.cat([cls, h], dim=1)
         pad = torch.cat([torch.ones(B, 1, dtype=torch.bool, device=mask.device), mask], 1)
         h = self.transformer(h, src_key_padding_mask=~pad)
-        summary = self.norm(h[:, 0])
-        return self.to_mu(summary), self.to_logvar(summary)
+        return self.norm(h), pad

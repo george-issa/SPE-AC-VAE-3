@@ -19,6 +19,13 @@ knob :math:`\rho`: :math:`\rho \lesssim 1.5` blends into a smooth envelope,
 :math:`\rho \gtrsim 3` is genuinely resolved structure -- sampling the range
 teaches the comb/no-comb boundary itself.
 
+Smooth families (step 2): with probability ``p_smooth`` an item is a whole
+smooth truth from a :class:`~spevae.data.label_bank.LabelBank` instead of a
+motif draw.  Its INPUT is the exact smooth spectrum (closed-form A on the
+quadrature nodes, so G(tau) is the true smooth data) plus the batch's fresh
+noise; its LABEL is the bank's noise-independent pole extraction.  The noise
+teaches on the input side only, exactly as for motif truths.
+
 Label hygiene (what makes ``P_true`` well-defined): labels are
 **canonicalized** (sub-width pairs merged -- minimal pole representations are
 unique, so after merging the label is *the* answer) and **certified**
@@ -72,6 +79,8 @@ class PolePriorGenerator:
         cache_limit: int = 4,
         device=None,
         dtype: torch.dtype = torch.float32,
+        smooth_bank=None,
+        p_smooth: float = 0.0,
     ) -> None:
         self.omega_c = float(omega_c)
         self.gamma_min = float(gamma_min)
@@ -112,6 +121,20 @@ class PolePriorGenerator:
         self.dtype = dtype
         self._quad_cache: dict[float, SpectralQuadrature] = {}
         self._cpu_rng = torch.Generator()
+        # step-2 smooth truths from a label bank (None: the step-1 prior)
+        self.p_smooth = float(p_smooth)
+        if not 0.0 <= self.p_smooth <= 1.0:
+            raise ValueError(f"p_smooth={p_smooth} outside [0, 1]")
+        if isinstance(smooth_bank, str):
+            from .label_bank import LabelBank
+            smooth_bank = LabelBank.load(smooth_bank)
+        self.smooth_bank = smooth_bank
+        if self.p_smooth > 0.0 and smooth_bank is None:
+            raise ValueError("p_smooth > 0 needs a smooth_bank")
+        if smooth_bank is not None and smooth_bank.P_max > self.P_max:
+            raise ValueError(f"bank P_max {smooth_bank.P_max} > generator P_max "
+                             f"{self.P_max}: labels would not fit the decoder")
+        self._smooth_A: dict[tuple, torch.Tensor] = {}
 
     # -- rng plumbing (mirrors SyntheticGenerator) -------------------------- #
 
@@ -263,6 +286,28 @@ class PolePriorGenerator:
             b = [0.0] * len(a)
         return eps, gam, a, b
 
+    # -- smooth truths from the bank ---------------------------------------- #
+
+    def _bank_rows(self, beta: float) -> torch.Tensor:
+        """Bank entries labelled at this beta (labels are beta-dependent)."""
+        rows = torch.nonzero((self.smooth_bank.beta - beta).abs() < 1e-6).flatten()
+        if rows.numel() == 0:
+            have = sorted({round(float(b), 4) for b in self.smooth_bank.beta})
+            raise ValueError(f"the smooth bank has no labels at beta={beta:g} "
+                             f"(it has {have[:6]}{' ...' if len(have) > 6 else ''})")
+        return rows
+
+    def _smooth_A_nodes(self, j: int, beta: float, quad: SpectralQuadrature):
+        """Exact dimensionless A of bank truth j on the quadrature nodes."""
+        key = (j, round(float(beta), 9), quad.nodes.numel())
+        A = self._smooth_A.get(key)
+        if A is None:
+            tr = self.smooth_bank.truth(j)
+            nu = quad.nodes.detach().cpu().double().numpy()
+            A = torch.tensor(tr.A(nu / beta) / beta, dtype=self.dtype)
+            self._smooth_A[key] = A
+        return A
+
     # -- batches ------------------------------------------------------------ #
 
     def quadrature(self, beta: float) -> SpectralQuadrature:
@@ -293,7 +338,22 @@ class PolePriorGenerator:
         lab = {k: torch.zeros(batch_size, P) for k in ("eps", "gamma", "a", "b")}
         lab["gamma"] += 1.0                          # inert padding widths
         n_true = torch.zeros(batch_size, dtype=torch.long)
+        family = ["pole_mixture"] * batch_size
+        smooth: dict[int, int] = {}                  # item -> bank row
+        rows = self._bank_rows(beta) if self.p_smooth > 0.0 else None
         for i in range(batch_size):
+            if rows is not None and self._u(0.0, 1.0) < self.p_smooth:
+                j = int(rows[self._i(rows.numel())])
+                bk = self.smooth_bank
+                m = int(bk.n_true[j])
+                n_true[i] = m
+                lab["eps"][i, :m] = bk.eps[j, :m] * beta
+                lab["gamma"][i, :m] = bk.gamma[j, :m] * beta
+                lab["a"][i, :m] = bk.a[j, :m]
+                lab["b"][i, :m] = bk.b[j, :m]
+                family[i] = f"smooth:{bk.family[j]}"
+                smooth[i] = j
+                continue
             e, g, a, b = self.sample_poles(beta)
             m = len(e)
             n_true[i] = m
@@ -308,6 +368,10 @@ class PolePriorGenerator:
         truth = PoleSet(eps=lab["eps"], gamma=lab["gamma"],
                         a=lab["a"], b=lab["b"])
         A_true = truth.spectral(quad.nodes)
+        if smooth:                                   # the exact smooth spectra
+            A_true = A_true.clone()
+            for i, j in smooth.items():
+                A_true[i] = self._smooth_A_nodes(j, beta, quad).to(A_true.device)
         K = PoleGreens(quad).kernel_matrix(x)
         G_clean = (A_true * quad.weights.to(A_true.dtype)) @ K
 
@@ -324,9 +388,10 @@ class PolePriorGenerator:
             G=G_clean + noise1, G_alt=G_clean + noise2, G_clean=G_clean,
             sigma=sigma, inv_sqrt_R=whitener(R), x=x, beta=beta,
             A_true=A_true, quad=quad,
-            family=["pole_mixture"] * batch_size,
+            family=family,
             poles_true=lab,
-            meta={"noise": model, "correlation": kind, "pole_labeled": True},
+            meta={"noise": model, "correlation": kind, "pole_labeled": True,
+                  "n_smooth": len(smooth)},
         )
 
 
