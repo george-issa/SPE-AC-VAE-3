@@ -36,6 +36,7 @@ from ..physics.poles import PoleSet
 __all__ = [
     "BETA", "NTAU", "XI", "LEGACY_SEED", "CASES", "Case", "Truth", "Instance",
     "realize", "draw", "seeds_for", "holstein_cell", "HOLSTEIN_FIXTURE",
+    "hubbard_dimer_cell", "DIMER_FIXTURE",
 ]
 
 BETA = 8.0
@@ -254,6 +255,41 @@ def holstein_cell(path: str | None = None):
                    label=HOLSTEIN_FIXTURE["label"], reference=ref, dtype=torch.float64)
     mg.meta.update(meta)
     return mg
+
+
+#: Real DQMC data with a known answer: the half-filled Hubbard dimer (U = 4t,
+#: beta = 8, dtau = 0.05, 400 bins), generated with SmoQyDQMC by
+#: scripts/dqmc/hubbard_dimer.jl.  Versioned with the package.
+DIMER_FIXTURE = {
+    "file": "hubbard_dimer_U4_b8.npz",
+    "bins_sha256": "36ad31aef1453c7713a6363fdb644063948f606b7ea99912a98730ceb8e7a489",
+}
+
+
+def hubbard_dimer_cell(path: str | None = None):
+    """``(MeasuredGreens, DiscreteSpectrum)``: measured DQMC bins of the
+    half-filled Hubbard dimer and its exact spectrum (exact diagonalisation
+    at the run's own parameters).  The one real dataset in the package whose
+    right answer is known."""
+    from ..data.exact_models import hubbard_cluster
+    from ..data.real import from_bins
+
+    if path is None:
+        path = resources.files("spevae.evaluation") / "fixtures" / DIMER_FIXTURE["file"]
+    with np.load(path, allow_pickle=False) as f:
+        bins = f["bins"]
+        meta = {k[5:]: f[k].item() for k in f.files if k.startswith("meta_")}
+    want = DIMER_FIXTURE["bins_sha256"]
+    if want is not None and _bins_digest(bins) != want:
+        raise ValueError(f"dimer fixture {path} does not match the pinned digest")
+    mg = from_bins(bins, float(meta["beta"]), includes_endpoints=True,
+                   label=f"Hubbard dimer U={meta['U']:g} beta={meta['beta']:g} (DQMC)",
+                   dtype=torch.float64)
+    mg.meta.update(meta)
+    t, U = float(meta["t"]), float(meta["U"])
+    exact = hubbard_cluster(np.array([[0.0, -t], [-t, 0.0]]), U, U / 2.0, float(meta["beta"]),
+                            family="hubbard_dimer", params={"t": t, "U": U, "mu": U / 2.0})
+    return mg, exact
 
 
 def truth_on_grid(case: Case | str, omega: np.ndarray, beta: float = BETA) -> np.ndarray:

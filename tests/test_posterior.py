@@ -56,3 +56,19 @@ def test_posterior_report_on_the_reference_flow():
     assert sum(inside) >= 6
     assert all(w["lo"] - 1e-6 <= w["q95"] and w["q05"] <= w["hi"] + 1e-6 for w in rep.windows)
     assert "posterior from" in rep.summary() and not rep.warnings
+
+
+def test_small_error_bars_draw_the_systematics_warning_unless_a_floor_is_set():
+    path = "out/flow/F_60k.pt"
+    if not os.path.exists(path):
+        pytest.skip("reference flow checkpoint not present")
+    from spevae.models.flow import load_flow
+    flow = load_flow(path).eval()
+    inst = C.draw(C.realize("lorentz pair"), 5e-5, 7)
+    kw = dict(n_samples=16, bounds=False, max_births=0, generator=torch.Generator().manual_seed(1))
+    rep = continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr, **kw)
+    assert any("Trotter" in w for w in rep.warnings)
+    rep = continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr,
+                             sigma_floor=1e-3, **kw)
+    assert not any("Trotter" in w for w in rep.warnings)
+    assert rep.diagnostics["sigma_floor"] == 1e-3 and rep.diagnostics["relative_error_bar"] < 1e-4

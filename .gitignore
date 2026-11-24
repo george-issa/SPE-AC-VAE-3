@@ -13,3 +13,5 @@ __pycache__/
 *.npz
 *.jld2
 *.h5
+# the one versioned data file: a small DQMC run with a known answer
+!src/spevae/evaluation/fixtures/hubbard_dimer_U4_b8.npz

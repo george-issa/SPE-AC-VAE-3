@@ -157,7 +157,7 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                        windows=DEFAULT_WINDOWS, bounds: bool = True, accept_sigma: float = 3.0,
                        lam: float = 1.0, generator: torch.Generator | None = None,
                        x_fit=None, G_fit=None, sigma_fit=None,
-                       max_births: int = 2) -> PosteriorReport:
+                       max_births: int = 2, sigma_floor: float | None = None) -> PosteriorReport:
     r"""Posterior over spectra for one dataset, with its evidence and warnings.
 
     Parameters
@@ -185,6 +185,14 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
     accept_sigma
         A sample is accepted when its misfit is within this many standard
         deviations (:math:`\sqrt{2/L}` per point) of the target.
+    sigma_floor
+        A systematic-error floor, relative to :math:`\max|G|`, added in
+        quadrature to every error bar (same correlation structure).  DQMC
+        data carry a Trotter error of order :math:`\Delta\tau^2` that the
+        statistical error bars do not contain; below about 1e-4 relative it
+        is usually the larger of the two, and fitting to the statistical
+        error alone then fits the discretisation.  Off by default; the
+        report warns when the error bars are that small and no floor is set.
     max_births
         A sample that cannot reach the data is given up to this many extra
         poles, one at a time, each placed where a sample that does fit has
@@ -202,6 +210,10 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
     Gf = G if G_fit is None else torch.as_tensor(G_fit, dtype=torch.float32).reshape(1, -1)
     sf = sigma if sigma_fit is None else torch.as_tensor(sigma_fit, dtype=torch.float32).reshape(1, -1)
     L = xf.numel()
+    rel_stat = float((sigma / G.abs().amax()).median())           # as measured, before any floor
+    if sigma_floor:
+        fl = float(sigma_floor) * float(G.abs().amax())
+        sigma, sf = torch.sqrt(sigma ** 2 + fl ** 2), torch.sqrt(sf ** 2 + fl ** 2)
     W = torch.eye(L) if inv_sqrt_R is None else torch.as_tensor(inv_sqrt_R, dtype=torch.float32)
     S = int(n_samples)
     quad = SpectralQuadrature.for_beta(float(beta))
@@ -275,6 +287,10 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         warnings.append(f"the accepted samples use all {flow.P} pole slots; the spectrum may need "
                         "more structure than the model can place.")
     recipe = getattr(flow, "meta", {}).get("recipe", {}) or {}
+    if rel_stat < 1e-4 and not sigma_floor:
+        warnings.append(f"statistical error bars are {rel_stat:.0e} relative. Systematic errors "
+                        "(the Trotter error of DQMC, of order dtau^2) are usually larger than "
+                        "that and are not in the error bars; consider sigma_floor.")
     rel = float((sigma / G.abs().amax()).median())
     lo_n, hi_n = recipe.get("noise_lo", 3e-5), recipe.get("noise_hi", 3e-2)
     if not lo_n * 0.5 <= rel <= hi_n * 2.0:
@@ -338,4 +354,5 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         diagnostics={"accepted_fraction": frac, "raw_chi2_median": float(c_raw.median()),
                      "samples_given_a_pole": int((n_born[acc] > 0).sum()),
                      "n_poles_median": float(n_pres.float().median()),
-                     "relative_error_bar": rel, "bootstrap_redraw": bins is not None})
+                     "relative_error_bar": rel_stat, "sigma_floor": sigma_floor,
+                     "bootstrap_redraw": bins is not None})
