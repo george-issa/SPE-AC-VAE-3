@@ -605,6 +605,73 @@ candidate); pole births and deaths during refinement; the Gaussian / gapped
 levels, with the smooth truths in-distribution for D24); an out-of-prior flag for real cells; one
 training seed everywhere; no real QMC cell with a known spectrum.
 
+**Step 3 opened: physics-sourced truths, a temperature grid, the posterior
+report** (2026-11-24; user decisions of that day: fermionic G(τ) only for
+the first reliable release; every model with an exactly known spectrum goes
+into the training set; the tool reports one posterior band under a stated
+prior, with its evidence).
+(i) **Exactly solvable models** (`data/exact_models.py`, 29 tests, each
+formula checked against an independent route — brute-force Brillouin-zone
+sums, the elliptic-integral closed form, the textbook atomic limit, the
+independent-boson Poisson ladder).  *Continuum*: lattice Green's functions
+G(z) of the 1D chain, square (with t′), triangular and honeycomb lattices,
+the Bethe and d = ∞ hypercubic lattices, the dimerised (SSH) chain,
+mean-field BCS on any symmetric band, the resonant level in a band, and the
+Falicov–Kimball model on the Bethe lattice (exact DMFT, gap at U = 2t).  A
+truth is the model with a lifetime η ≥ the resolution floor, A(ω) =
+−Im G(ω + μ + iη)/π, whose Stieltjes transform is G(z + μ + iη) exactly —
+no singular integral is taken, and the label-bank protocol applies
+unchanged.  *Discrete*: the Hubbard atom, Hubbard clusters of 2–4 sites, an
+Anderson impurity with 1–3 bath levels and the Holstein–Hubbard atom, by
+exact diagonalisation (finite-T Lehmann sums); with a lifetime these ARE
+pole sets, so they enter the pole prior with exact labels and no fit, and
+unbroadened they give delta-spectrum test data with G(τ) in closed form.
+(ii) **Labels**: the step-2 extraction on 30 lattice truths (10 families ×
+β = 1, 8, 20) gives 5–12 poles with data gap 1e-10–1.2e-5, all positive,
+2–7 s each.
+(iii) **Known-answer baseline, before any of this is trained on**
+(`scripts/eval/exact_models_judge.py`, `out/eval/exact_models/`; β = 8,
+noise 1e-3, 32 truths, the current F_60k / D24 checkpoints and MaxEnt on
+the same draw, W₁ between cumulative weights on a 6e4-point grid).
+Lattice truths (20): lowest W₁ — refined flow 11, VAE latent MAP 6,
+MaxEnt 3; geometric means 0.123 / 0.181 / 0.229; the flow's samples fit
+(χ² 0.96) where the VAE's MAP often does not (median 1.52, up to 10).
+Exactly diagonalised truths (12): flow 5, VAE 1, MaxEnt 6; geometric means
+0.246 / 0.386 / 0.280.  These errors are 2–5× the suite's at the same noise
+(0.05–0.17): band edges, van Hove peaks, coherence peaks and multiplets are
+outside every prior trained so far, and on finite-cluster spectra the
+pipeline is no better than MaxEnt.  This is the number the step-3 training
+has to move.
+(iv) **Prior generator**: `beta_choices` (a β grid — bank labels are
+β-dependent), `p_exact` (exactly diagonalised truths drawn on the fly,
+3 ms each), precomputed exact spectra of the bank truths on the quadrature
+nodes (`<bank>.nodes.pt`; lattice sums at β = 20 cost seconds on the real
+axis).  Defaults leave the step-2 stream bit-identical.
+(v) **Bank** (`scripts/step3/build_physics_bank.py`): 5 smooth + 10 lattice
+families × β ∈ {1, 1.5, 2, 3, 4, 6, 8, 12, 16, 20} × 64 truths.
+(vi) **The posterior report** (`posterior.continue_posterior`): refine +
+redraw (a bootstrap of the bins on real cells), raw samples that already
+fit kept as drawn, implausible misfits rejected; the band; the prior stated
+in words; per-window spectral weight next to the **prior-free bracket** —
+the range any non-negative normalised spectrum can put in the window with
+every whitened residual within 3.5σ (two linear programs, nothing learned);
+warnings for a low accept rate, the pole-slot cap and out-of-range inputs.
+Measured: on the in-prior Lorentzian pair at 1e-3 the posterior spans a
+median 15% of the bracket and is correct; on the Holstein cell 15–20%, 88%
+of samples accepted, χ²/target 0.96 [0.55, 1.34].  Hard-edged window
+weights are never well determined by the kernel, so the share is reported
+as a number and is not a warning.
+(vii) **Ranges of the first release** (fermionic G(τ)): β 1–20 on the grid
+above; Δτ from {0.02, 0.05, 0.1, 0.125, 0.2, 0.25, 0.5} with 9–401 slices
+(finer grids are thinned at inference: beyond ~400 slices neighbouring
+points add no resolvable information); relative error bars 1e-5–3e-2.
+**Gates for calling it shippable** (none claimed yet): known-answer W₁ on
+held-out parameters at or below MaxEnt on every family, and a
+leave-one-family-out arm; PIT coverage within ±0.03 of nominal per noise
+band and per β; data-fit rank 0.45–0.55; the suite's pole and smooth cases
+no worse than today; three training seeds; a real DQMC run of a model with
+a known spectrum.
+
 **Step-2 build (1): the smooth-family label bank — built, judged,
 pinned** (*measured*, 2026-08-27).  `data/label_bank.py` +
 `tests/test_label_bank.py` (10 tests) + `scripts/step2/

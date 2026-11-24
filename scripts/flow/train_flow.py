@@ -37,6 +37,17 @@ def main():
     ap.add_argument("--no-ot", action="store_true", help="index pairing instead of Hungarian")
     ap.add_argument("--smooth-bank", default=None)
     ap.add_argument("--p-smooth", type=float, default=0.0)
+    # step-3 prior: a beta grid, exactly diagonalised models, wider noise / grid ranges.
+    # The defaults reproduce the beta = 8 recipe of F_6k / F_60k.
+    ap.add_argument("--beta-choices", type=float, nargs="+", default=None,
+                    help="draw each batch's beta from this grid (must match the bank's)")
+    ap.add_argument("--p-exact", type=float, default=0.0,
+                    help="fraction of truths from exactly diagonalised models")
+    ap.add_argument("--noise-range", type=float, nargs=2, default=(3e-5, 3e-2))
+    ap.add_argument("--dtau-choices", type=float, nargs="+",
+                    default=(0.05, 0.1, 0.125, 0.2, 0.25))
+    ap.add_argument("--max-ntau", type=int, default=401)
+    ap.add_argument("--name", default=None, help="recipe name stored in the checkpoint")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -44,8 +55,13 @@ def main():
     kw = {}
     if args.p_smooth > 0:
         kw = dict(smooth_bank=args.smooth_bank, p_smooth=args.p_smooth)
+    if args.beta_choices is not None:
+        kw["beta_choices"] = tuple(args.beta_choices)
     gen = PolePriorGenerator(omega_c=20.0, P_max=12, residue_mode="dispersive",
-                             beta_range=(8.0, 8.0), device=dev, **kw)
+                             beta_range=(8.0, 8.0), device=dev, p_exact=args.p_exact,
+                             noise_scale_range=tuple(args.noise_range),
+                             dtau_choices=tuple(args.dtau_choices), max_ntau=args.max_ntau,
+                             **kw)
     gen.seed_scalars(args.seed)
     rng = torch.Generator(device=dev).manual_seed(args.seed)
     grng = torch.Generator().manual_seed(args.seed + 7)
@@ -111,6 +127,8 @@ def main():
             save_flow(ema.cpu(), args.out + ".partial", step=step + 1, history=hist)
             ema.to(dev)
     recipe = {k: v for k, v in vars(args).items()}
+    recipe.update(noise_lo=args.noise_range[0], noise_hi=args.noise_range[1],
+                  beta_choices=list(args.beta_choices or [8.0]))
     save_flow(ema.cpu(), args.out, steps=args.steps, history=hist, recipe=recipe,
               wall_seconds=time.time() - t0)
     print(f"saved -> {args.out}  (wall {time.time() - t0:.0f}s)")

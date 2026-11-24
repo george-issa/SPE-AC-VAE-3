@@ -54,6 +54,14 @@ Not yet in the suite: the template menu (J2/J3 judges), DEAC on synthetic cases
 (the five smooth truths come from the label-bank families, so they become
 in-distribution once step 2 trains on the bank).
 
+**Known-answer judge** (`scripts/eval/exact_models_judge.py`, outside the frozen
+suite for now): 20 exact lattice truths and 12 exactly diagonalised ones from
+`data/exact_models.py`, on one noise draw, continued by the refined flow, the VAE
+latent MAP and MaxEnt, scored by W₁ between cumulative weights (exact step functions
+for the delta spectra). Until a checkpoint is trained on these families the numbers
+are an out-of-prior test; afterwards they are in-distribution on held-out parameters,
+and generalisation has to be read from a leave-one-family-out arm.
+
 ## One scorer
 
 Every method returns a pole set or a spectrum on a grid; everything else is computed

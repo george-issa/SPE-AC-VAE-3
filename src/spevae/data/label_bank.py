@@ -956,7 +956,13 @@ class LabelBank:
     def __len__(self) -> int:
         return int(self.beta.numel())
 
-    def truth(self, i: int) -> SmoothTruth:
+    def truth(self, i: int):
+        """The exact truth of entry ``i`` (a :class:`SmoothTruth`, or an
+        :class:`~spevae.data.exact_models.ExactTruth` for the exactly
+        solvable lattice families -- same interface)."""
+        from .exact_models import EXACT_CONTINUUM, ExactTruth
+        if self.family[i] in EXACT_CONTINUUM:
+            return ExactTruth(self.family[i], float(self.beta[i]), self.params[i])
         return SmoothTruth(self.family[i], float(self.beta[i]), self.params[i])
 
     def label(self, i: int) -> PoleSet:
@@ -999,6 +1005,35 @@ def _extract_entry(args):
     return extract_smooth_label(truth, P_max=P_max, residue_mode=mode)
 
 
+def draw_bank_truths(n_per_family: int, seed: int, beta_range=(2.0, 20.0),
+                      families: tuple[str, ...] = SMOOTH_FAMILIES,
+                      beta_choices: tuple[float, ...] | None = None) -> list:
+    """The truths of a bank, from one rng stream (seed-deterministic).  Smooth
+    families and the exactly solvable lattice families may be mixed."""
+    from .exact_models import EXACT_CONTINUUM, sample_exact_truth
+
+    rng = torch.Generator().manual_seed(int(seed))
+
+    def draw(fam, beta):
+        if fam in EXACT_CONTINUUM:
+            return sample_exact_truth(fam, beta, rng)
+        return sample_smooth_truth(fam, beta, rng)
+
+    lo, hi = (math.log(v) for v in beta_range)
+    truths: list = []
+    if beta_choices is not None:
+        for beta in beta_choices:
+            for _ in range(int(n_per_family)):
+                for fam in families:
+                    truths.append(draw(fam, float(beta)))
+    else:
+        for _ in range(int(n_per_family)):
+            for fam in families:
+                beta = math.exp(lo + (hi - lo) * float(torch.rand((), generator=rng)))
+                truths.append(draw(fam, beta))
+    return truths
+
+
 def build_label_bank(
     n_per_family: int = 256,
     seed: int = 1,
@@ -1008,19 +1043,21 @@ def build_label_bank(
     workers: int | None = None,
     progress=None,
     residue_mode: str = "complex",
+    beta_choices: tuple[float, ...] | None = None,
 ) -> LabelBank:
     """Draw truths (one rng stream, so the bank is seed-deterministic
     regardless of ``workers``) and extract every label.
 
+    ``families`` may mix the smooth families with the exactly solvable
+    lattice families of :mod:`spevae.data.exact_models`.  With
+    ``beta_choices`` every family gets ``n_per_family`` truths at EACH listed
+    beta (labels are beta-dependent, and the pole prior can only mix bank
+    truths into a batch drawn at a beta the bank holds); otherwise beta is
+    log-uniform in ``beta_range`` per truth.
+
     ``progress`` is an optional callable ``(done, total) -> None``.
     """
-    rng = torch.Generator().manual_seed(int(seed))
-    lo, hi = (math.log(v) for v in beta_range)
-    truths: list[SmoothTruth] = []
-    for _ in range(int(n_per_family)):
-        for fam in families:
-            beta = math.exp(lo + (hi - lo) * float(torch.rand((), generator=rng)))
-            truths.append(sample_smooth_truth(fam, beta, rng))
+    truths = draw_bank_truths(n_per_family, seed, beta_range, families, beta_choices)
 
     jobs = [(t, P_max, residue_mode) for t in truths]
     labels: list[SmoothLabel] = []

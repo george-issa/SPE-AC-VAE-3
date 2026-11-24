@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+import os
 
 import torch
 
@@ -81,6 +82,9 @@ class PolePriorGenerator:
         dtype: torch.dtype = torch.float32,
         smooth_bank=None,
         p_smooth: float = 0.0,
+        beta_choices: tuple[float, ...] | None = None,
+        p_exact: float = 0.0,
+        exact_families: tuple[str, ...] | None = None,
     ) -> None:
         self.omega_c = float(omega_c)
         self.gamma_min = float(gamma_min)
@@ -125,6 +129,7 @@ class PolePriorGenerator:
         self.p_smooth = float(p_smooth)
         if not 0.0 <= self.p_smooth <= 1.0:
             raise ValueError(f"p_smooth={p_smooth} outside [0, 1]")
+        bank_path = smooth_bank if isinstance(smooth_bank, str) else None
         if isinstance(smooth_bank, str):
             from .label_bank import LabelBank
             smooth_bank = LabelBank.load(smooth_bank)
@@ -135,6 +140,25 @@ class PolePriorGenerator:
             raise ValueError(f"bank P_max {smooth_bank.P_max} > generator P_max "
                              f"{self.P_max}: labels would not fit the decoder")
         self._smooth_A: dict[tuple, torch.Tensor] = {}
+        # Precomputed exact spectra of the bank truths on the quadrature nodes
+        # (written next to the bank by scripts/step3/build_physics_bank.py).
+        # The exact lattice families cost up to seconds per truth on the real
+        # axis at large beta; without this the first pass over the bank would
+        # dominate training time.
+        self._bank_nodes = None
+        if bank_path is not None and os.path.exists(bank_path + ".nodes.pt"):
+            self._bank_nodes = torch.load(bank_path + ".nodes.pt", weights_only=False)
+        # A discrete beta grid instead of a continuous range: bank labels are
+        # beta-dependent, so smooth / lattice truths can only join batches
+        # drawn at a beta the bank holds.
+        self.beta_choices = None if beta_choices is None else tuple(float(b) for b in beta_choices)
+        # step-3: pole-closed truths from exactly diagonalised models
+        # (data/exact_models.py) -- physics-sourced configurations, exact labels
+        self.p_exact = float(p_exact)
+        if not 0.0 <= self.p_exact <= 1.0 or self.p_exact + self.p_smooth > 1.0:
+            raise ValueError(f"p_exact={p_exact}, p_smooth={p_smooth}: need both in [0, 1] "
+                             "with a sum of at most 1")
+        self.exact_families = exact_families
 
     # -- rng plumbing (mirrors SyntheticGenerator) -------------------------- #
 
@@ -301,6 +325,13 @@ class PolePriorGenerator:
         """Exact dimensionless A of bank truth j on the quadrature nodes."""
         key = (j, round(float(beta), 9), quad.nodes.numel())
         A = self._smooth_A.get(key)
+        if A is None and self._bank_nodes is not None:
+            pre = self._bank_nodes.get(round(float(beta), 6))
+            if pre is not None and pre["A"].shape[1] == quad.nodes.numel():
+                k = pre["index"].get(int(j))
+                if k is not None:
+                    A = pre["A"][k].to(self.dtype)
+                    self._smooth_A[key] = A
         if A is None:
             tr = self.smooth_bank.truth(j)
             nu = quad.nodes.detach().cpu().double().numpy()
@@ -326,8 +357,11 @@ class PolePriorGenerator:
         return q
 
     def batch(self, batch_size: int, rng: torch.Generator) -> TrainingBatch:
-        lo, hi = (math.log(b) for b in self.beta_range)
-        beta = math.exp(self._u(lo, hi))
+        if self.beta_choices is not None:
+            beta = self.beta_choices[self._i(len(self.beta_choices))]
+        else:
+            lo, hi = (math.log(b) for b in self.beta_range)
+            beta = math.exp(self._u(lo, hi))
         dtau = self.dtau_choices[self._i(len(self.dtau_choices))]
         n_tau = max(min(int(round(beta / dtau)) + 1, self.max_ntau), 9)
         x = torch.linspace(0.0, 1.0, n_tau, device=self.device,
@@ -342,7 +376,21 @@ class PolePriorGenerator:
         smooth: dict[int, int] = {}                  # item -> bank row
         rows = self._bank_rows(beta) if self.p_smooth > 0.0 else None
         for i in range(batch_size):
-            if rows is not None and self._u(0.0, 1.0) < self.p_smooth:
+            r_kind = self._u(0.0, 1.0) if (rows is not None or self.p_exact > 0.0) else 1.0
+            if self.p_exact > 0.0 and r_kind >= 1.0 - self.p_exact:
+                from .exact_models import EXACT_DISCRETE, sample_exact_poles
+                e, g, a, b, fam = sample_exact_poles(
+                    beta, self._cpu_rng, P_max=P, gamma_min=self.gamma_min,
+                    omega_c=self.omega_c, families=self.exact_families or EXACT_DISCRETE)
+                m = len(e)
+                n_true[i] = m
+                lab["eps"][i, :m] = torch.tensor(e) * beta
+                lab["gamma"][i, :m] = torch.tensor(g) * beta
+                lab["a"][i, :m] = torch.tensor(a)
+                lab["b"][i, :m] = torch.tensor(b)
+                family[i] = f"exact:{fam}"
+                continue
+            if rows is not None and r_kind < self.p_smooth:
                 j = int(rows[self._i(rows.numel())])
                 bk = self.smooth_bank
                 m = int(bk.n_true[j])
