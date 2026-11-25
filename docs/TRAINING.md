@@ -696,7 +696,7 @@ needed a birth); the two main lines are placed correctly, the ±3.83
 satellites are not resolved by any method (the flow's band has a shoulder
 there); the samples use all 12 pole slots, which the report flags.  One
 model, one parameter point: a first data point, not a validation.
-(x) **Simulator feedback in the flow — arm opened, not yet judged**
+(x) **Simulator feedback in the flow — judged in (xv): no gain, not adopted**
 (`FlowPosterior(feedback=True)`, `train_flow.py --feedback`; cf. Holzschuh
 & Thuerey, arXiv:2410.22573).  The measured defect it targets: the raw
 flow's samples never fit the data as well as the truth does (data-fit rank
@@ -793,6 +793,45 @@ constant should a better-trained flow make it uniform.
 Standing statement for the report until that changes: the bands are
 conservative — the nominal 50% band holds the truth about 61% of the time,
 the 90% band about 96%.
+
+(xv) **Simulator feedback — judged, not adopted** (*measured*, 2026-11-24;
+F3fb_6k against F3_6k, same recipe and length; `out/step3/feedback_ab.{json,png}`).
+
+| | raw: coverage, fit rank, weight error | λ = 1: coverage, fit rank, weight error | λ = 10: coverage, fit rank, weight error | known answers, λ = 1 / 10 |
+|---|---|---|---|---|
+| plain | 0.693 / 0.967, 0.01, 0.186 | 0.630 / 0.957, 0.50, 0.0562 | 0.612 / 0.957, 0.47, 0.0443 | 0.140 / 0.241, 0.095 / 0.241 |
+| feedback | 0.697 / 0.972, 0.02, 0.150 | 0.621 / 0.955, 0.50, 0.0512 | 0.601 / 0.951, 0.47, 0.0451 | 0.140 / 0.244, 0.095 / 0.241 |
+
+The feedback makes the raw samples 19% more accurate and leaves everything
+that is reported unchanged: the raw samples still do not fit the data (rank
+0.02), the raw coverage is the same, and after the fit the two models are
+indistinguishable.  It costs 1.5× the training time (27 against 18 minutes
+for 6k steps) and a float64 CPU solve per velocity evaluation at sampling.
+A 6k-step screen cannot rule out that a long run would learn to use it, but
+nothing here pays for one.  The code path stays (`--feedback`), off.
+Why it probably cannot work in this form: the network's output is accurate
+to about one part in ten of a prior standard deviation, while the data pin
+some directions to one part in 10³–10⁵; a Gauss–Newton hint of that
+precision is noise to the second pass.
+
+(xvi) **Where the training matters: weak data** (*measured*, 2026-11-24;
+known answers at β = 8, λ = 10, W₁ geometric mean, lattice / exactly
+diagonalised; `out/eval/exact_models*/exact_models_b8_n0.01_lam10.json`).
+
+| | noise 1e-3 | noise 1e-2 |
+|---|---|---|
+| F_6k (step-2 recipe, 6k) | 0.096 / 0.267 | 0.354 / 0.580 |
+| F3_6k (step-3 recipe, 6k) | 0.095 / 0.241 | 0.336 / 0.558 |
+| F_60k (step-2 recipe, 60k) | 0.088 / 0.257 | 0.319 / 0.557 |
+| VAE latent MAP | 0.181 / 0.386 | 0.527 / 0.711 |
+| MaxEnt | 0.229 / 0.280 | 0.578 / 0.702 |
+
+At both noise levels the three flows are within 10% of one another and
+40–60% below MaxEnt on the lattice spectra (17–18 of 20 lowest at 1e-2).
+The step-3 recipe is 4–5% better than the step-2 recipe at equal length
+and ten times the length is worth 10%: the full-length step-3 runs should
+gain on both counts, modestly.  The large factor is the pipeline, not the
+checkpoint.
 
 **Gates for calling it shippable** (none claimed yet): known-answer W₁ on
 held-out parameters at or below MaxEnt on every family, and a
