@@ -110,10 +110,11 @@ def run(flow, vae, noise, beta, lam=1.0, seed=None):
         if none_fit:
             acc[:] = True
         A = a_phys(ps, beta)[acc]
-        # the 90% band as the package reports it: calibrated if the checkpoint ships a band table
+        # the pointwise 90% band as the package reports it (plain sample quantiles), and, for the
+        # record, what the window-weight band table's narrower level would do pointwise
+        q = np.quantile(A, [0.05, 0.5, 0.95], axis=0)
         h90 = band_levels(table, float((inst.sigma / inst.G.abs().amax()).median()), beta)[0.9] / 2.0
-        q = np.quantile(A, [0.5 - h90, 0.5, 0.5 + h90], axis=0)
-        q_plain = np.quantile(A, [0.05, 0.95], axis=0)
+        q_table = np.quantile(A, [0.5 - h90, 0.5 + h90], axis=0)
         zd = M.make_method("zdlm", vae).synthetic(inst)
         A_zd = a_phys(zd.poles, beta)[0]
         me = M.make_method("maxent").synthetic(inst)
@@ -132,8 +133,8 @@ def run(flow, vae, noise, beta, lam=1.0, seed=None):
         if item["kind"] == "continuum":
             At = item["A_grid"]
             row["flow_band90_cover"] = float(((At >= q[0] - 1e-9) & (At <= q[2] + 1e-9))[core].mean())
-            row["flow_band90_cover_plain"] = float(
-                ((At >= q_plain[0] - 1e-9) & (At <= q_plain[1] + 1e-9))[core].mean())
+            row["flow_band90_cover_table_level"] = float(
+                ((At >= q_table[0] - 1e-9) & (At <= q_table[1] + 1e-9))[core].mean())
             row["flow_band90_width"] = float((q[2] - q[0])[core].mean())
         rows.append((row, (q, A_zd, A_me, item)))
         w = row["w1"]
@@ -143,7 +144,7 @@ def run(flow, vae, noise, beta, lam=1.0, seed=None):
     return rows
 
 
-def fig(rows, kind, path, noise, beta):
+def fig(rows, kind, path, noise, beta, trained_on_them=False):
     sel = [r for r in rows if r[0]["kind"] == kind]
     ncol = 5 if kind == "continuum" else 4
     nrow = math.ceil(len(sel) / ncol)
@@ -188,8 +189,10 @@ def fig(rows, kind, path, noise, beta):
             for k, c in (("flow", "flow"), ("VAE", "vae"), ("MaxEnt", "maxent"))}
     what = ("exact lattice models with a lifetime" if kind == "continuum"
             else "exactly diagonalised models (delta spectra)")
-    f.suptitle(f"Known answers, {what}: beta = {beta:g}, noise {noise:g}; none of these is in any "
-               f"checkpoint's training set\nPanel titles give W$_1$ to the exact answer, lowest in "
+    seen = ("the flow was trained on these families (other parameters), the VAE was not"
+            if trained_on_them else "none of these is in either checkpoint's training set")
+    f.suptitle(f"Known answers, {what}: beta = {beta:g}, noise {noise:g}; {seen}\n"
+               f"Panel titles give W$_1$ to the exact answer, lowest in "
                f"brackets: flow {wins['flow']}, VAE {wins['VAE']}, MaxEnt {wins['MaxEnt']} of {len(sel)}",
                fontsize=10.5)
     f.savefig(path, dpi=140)
@@ -210,8 +213,10 @@ def main():
     rows = run(flow, vae, noise, beta, lam, seed)
     tag = (f"b{beta:g}_n{noise:g}" + ("" if lam == 1.0 else f"_lam{lam:g}")
            + ("" if seed is None else f"_s{seed}"))
+    recipe = getattr(flow, "meta", {}).get("recipe", {}) or {}
     for kind in ("continuum", "discrete"):
-        fig(rows, kind, out / f"exact_{kind}_{tag}.png", noise, beta)
+        fig(rows, kind, out / f"exact_{kind}_{tag}.png", noise, beta,
+            trained_on_them=float(recipe.get("p_exact", 0) or 0) > 0)
     summ = {}
     for kind in ("continuum", "discrete"):
         sel = [r for r, _ in rows if r["kind"] == kind]
@@ -228,8 +233,8 @@ def main():
             "flow_no_sample_fits": int(sum(r["flow_no_sample_fits"] for r in sel))}
         if kind == "continuum":
             summ[kind]["band90_pointwise_cover"] = float(np.mean([r["flow_band90_cover"] for r in sel]))
-            summ[kind]["band90_pointwise_cover_plain"] = float(
-                np.mean([r["flow_band90_cover_plain"] for r in sel]))
+            summ[kind]["band90_pointwise_cover_table_level"] = float(
+                np.mean([r["flow_band90_cover_table_level"] for r in sel]))
             summ[kind]["band_table"] = bool(getattr(flow, "meta", {}).get("band_calibration"))
     with open(out / f"exact_models_{tag}.json", "w") as fh:
         json.dump({"noise": noise, "beta": beta, "samples": S, "tether": lam, "noise_seed": seed,

@@ -23,6 +23,8 @@ flow's own proposal while it is fitted (default 10, the package default).
 `reps` repeats the noise grid with beta and dtau shifted against it, so that
 every noise level is seen at `reps` temperatures (default 1: 288 truths;
 4 gives 1152, enough to judge coverage per noise band and per beta).
+`CAL_FIRST_REP=k` in the environment starts at repetition k: fresh truths,
+for testing a band table on a run it was not fitted on.
 `count.pt` is a pole-count classifier (`scripts/step3/train_count.py`); with
 it the reported samples are resampled to its count posterior.
 """
@@ -141,7 +143,8 @@ def run(flow_path, bank, out, shard, nshards, lam=10.0, base_scale=None, reps=1,
         count_model = load_count(count_path)
     rows = []
     path = out / f"calibration.shard{shard}.json"
-    for j in range(int(reps) * len(NOISES)):
+    first = int(os.environ.get("CAL_FIRST_REP", 0))        # skip repetitions already run elsewhere
+    for j in range(first * len(NOISES), (first + int(reps)) * len(NOISES)):
         if j % nshards != shard:
             continue
         nz, beta, r_, b, w_true = cell_batch(bank, j)

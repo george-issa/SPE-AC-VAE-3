@@ -8,7 +8,9 @@ accepted samples, the truth, and -- on the same draw, scored by the same W1 on
 the same grid -- the VAE's least-squares latent MAP (`zdlm`) and MaxEnt.
 
     python scripts/flow/suite_recon.py out/flow/F_60k.pt out/step2/data_arm/D24_60k.pt \
-        out/flow/review_20261124
+        out/flow/review_20261124 [tether=10]
+
+The banked run in out/flow/review_20261124 used tether 1.
 """
 import json
 import math
@@ -29,6 +31,8 @@ import torch
 
 import judge_flow as J
 
+TETHER = float(sys.argv[4]) if len(sys.argv) > 4 else 10.0
+
 BETA, S, SEED = 8.0, 64, 7
 FLOW, VAE, ME, INK = "#2a78d6", "#eb6834", "#7d7c78", "#0b0b0b"
 
@@ -47,7 +51,7 @@ def run(flow, vae, noise):
         g = torch.Generator().manual_seed(9)
         z, norm = flow.sample_coords(inst.G, tr.x, BETA, sigma=inst.sigma, n_samples=S, generator=g)
         ps, c2 = refine_samples(flow, z, norm, BETA, tr.x, inst.G.expand(S, -1),
-                                inst.sigma.expand(S, -1), inst.isr, 1.0, perturb=True,
+                                inst.sigma.expand(S, -1), inst.isr, TETHER, perturb=True,
                                 generator=g, anneal_from=1e-2)
         t_flow = time.time() - t0
         acc = (c2 <= 1.0 + 3.0 * math.sqrt(2.0 / L)).numpy()

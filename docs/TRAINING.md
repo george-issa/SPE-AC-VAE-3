@@ -892,12 +892,110 @@ so.  The table for a shipped checkpoint must come from the crossed design
 (`calibration.py … reps`), with strata, and its held-out test goes in the
 release notes.
 
-**Gates for calling it shippable** (none claimed yet): known-answer W₁ on
-held-out parameters at or below MaxEnt on every family, and a
-leave-one-family-out arm; PIT coverage within ±0.03 of nominal per noise
-band and per β; data-fit rank 0.45–0.55; the suite's pole and smooth cases
-no worse than today; three training seeds; a real DQMC run of a model with
-a known spectrum.
+(xix) **First full-length step-3 model, seed 1** (*measured*, 2026-11-24;
+`out/step3/F3_60k_s1.pt`, `scripts/step3/run_full.sh`, 60k steps, 3.5 h on
+MPS with the judges running beside it; λ = 10 throughout; the equal-length
+control is F_60k, the step-2 recipe at β = 8 only).
+
+*Calibration on the step-3 prior.*  Same 288 truths as the screen: raw
+window-weight error 0.186 → 0.089, reported posterior 0.612 / 0.957 →
+0.566 / 0.923, error 0.0443 → 0.0415.  Crossed design (`calibration.py … 6`
+repetitions: every noise level at six β, 1728 truths): plain sample
+quantiles 0.579 ± 0.006 / 0.935 ± 0.003, flat in β (0.570–0.591 /
+0.927–0.946 for β = 1 … 20) and 0.61 / 0.93, 0.57 / 0.94, 0.59 / 0.95,
+0.53 / 0.93 from the lowest to the highest noise band; data-fit rank 0.49
+(0.43 in the lowest noise band, 0.44–0.53 by β); accepted 0.94–1.00.  The
+raw flow is as over-dispersed as ever (0.723 / 0.973): length halves its
+error and does not contract it.
+
+*Band table* (`F3_60k_s1.pt.bands.json`, one row per band of relative error
+bar, fitted on 2304 truths = 8 repetitions; central level of the samples
+quoted for 50 / 68 / 90 / 95%):
+
+| relative error bar | 50% | 68% | 90% | 95% |
+|---|---|---|---|---|
+| < 1e-4 | 0.412 | 0.587 | 0.874 | 0.946 |
+| 1e-4 – 1e-3 | 0.429 | 0.598 | 0.841 | 0.908 |
+| 1e-3 – 1e-2 | 0.425 | 0.592 | 0.841 | 0.913 |
+| ≥ 1e-2 | 0.474 | 0.639 | 0.877 | 0.931 |
+
+Tests that are not nominal by construction: (a) fitted on six repetitions
+and scored on two fresh ones (576 truths): 0.510 ± 0.011 / 0.880 ± 0.008;
+(b) leave-one-repetition-out over all eight: by β — which the table does
+not stratify — 0.488–0.508 / 0.895–0.908, by repetition 0.479–0.519 /
+0.883–0.916 (rms z 0.9 / 1.1).  A table with β strata as well is no better
+and was not adopted.  (An early split read 0.43 ± 0.02 for the 50% band at
+error bars ≥ 1e-2; the fresh repetitions read 0.54 ± 0.04 — noise.)
+*The table is applied to window weights only.*  Pointwise, on the exact
+lattice spectra, plain quantiles hold A(ω) at 0.952 / 0.970 / 0.985 of
+frequencies (β = 8; noise 1e-4 / 1e-3 / 1e-2), 0.967 (β = 2) and 0.899
+(β = 16) at the 90% level; the table's levels would give 0.937 / 0.935 /
+0.957 / 0.938 and **0.832** at β = 16, where the lattice spectra carry
+structure finer than twelve poles follow.  So `PosteriorReport.band` is
+plain sample quantiles and `windows` is calibrated — this corrects (xviii),
+which applied the table to both.
+
+*Known answers* (`out/eval/exact_models_F3_60k_s1/`, W₁ geometric mean,
+lattice / exactly diagonalised; flow lowest of 20 / of 12 in brackets):
+
+| β, noise | F3_60k_s1 | F_60k | VAE | MaxEnt |
+|---|---|---|---|---|
+| 8, 1e-4 | 0.041 / 0.160 [13, 4] | 0.044 / 0.175 [12, 2] | 0.055 / 0.234 | 0.172 / **0.124** |
+| 8, 1e-3 | 0.088 / 0.236 [16, 9] | 0.088 / 0.257 [15, 7] | 0.181 / 0.386 | 0.229 / 0.280 |
+| 8, 1e-2 | 0.298 / 0.526 [18, 9] | 0.319 / 0.557 [17, 8] | 0.527 / 0.711 | 0.578 / 0.702 |
+| 2, 1e-3 | 0.142 / 0.406 [11, 3] | 0.228 / 0.456 [7, 1] | 0.232 / 0.497 | 0.465 / **0.323** |
+| 16, 1e-3 | 0.109 / 0.204 [17, 11] | 0.097 / 0.230 [18, 11] | 0.235 / 0.368 | 0.213 / 0.333 |
+
+On every lattice family at every setting the flow is at or below MaxEnt
+(worst ratio 0.98, honeycomb at β = 16).  The step-3 recipe is worth 0–7% at
+β = 8, 38% at β = 2 (outside F_60k's training) and costs 12% on the lattice
+spectra at β = 16.  **Line spectra are where it loses**: at β = 8, noise
+1e-4 and at β = 2 MaxEnt is lower on the exactly diagonalised families
+(Hubbard atom 0.092 against 0.042, Anderson cluster 0.169 against 0.088).
+The cause is the model class, not the training: the exact lines given the
+narrowest width the pole form allows (γ = 0.1π/β, positions and weights
+exact) already cost W₁ 0.157 at β = 8 and 0.471 at β = 2, and the flow
+scores 0.160 and 0.406.  A Lorentzian of the floor width carries its tails
+whatever the data say; MaxEnt has no floor.  Lowering it means a finer
+quadrature and a retrain, or a separate line component.
+
+*Suite* (`scripts/flow/suite_recon.py`, 14 truths, banked draw, W₁ of the
+posterior mean, geometric mean): 0.0295 at noise 1e-4 and 0.0627 at 1e-3,
+against 0.0291 / 0.0583 for F_60k at the same tether and 0.0296 / 0.0833
+for the banked run (F_60k, λ = 1); VAE 0.043 / 0.102, MaxEnt 0.125 / 0.194.
+Lowest on 8 and 10 of 14.  Better than F_60k on the smooth cases
+(semicircle 0.078 → 0.064, box 0.086 → 0.059 at 1e-3), worse on the
+pseudogap (0.055 → 0.118); MaxEnt keeps the Gaussian pair (0.012 against
+0.034 at 1e-4) and the pseudogap — Lorentzian tails again.
+
+*Real data.*  DQMC Hubbard dimer (`scripts/dqmc/judge_dimer.py`,
+`out/dqmc/F3_60k_s1/`): W₁ to the exact spectrum 0.330 (VAE 0.405, MaxEnt
+0.777), every sample accepted, no warnings.  The exact weight lies inside
+the 90% window interval in 5 of 7 windows, with or without the table and on
+three seeds: the upper satellite (ω = +3.83, weight 0.073) is put at ≤ 0.05
+and its weight on the main line; the data-only bracket for that window is
+0–0.235.  Holstein cell: 177 of 200 accepted, χ²/target 0.99, W₁ to the
+SmoQyDEAC reference 0.148 (F_60k 0.145), but the samples use all 12 pole
+slots (warning) and the band is 1.7× wider than F_60k's.
+
+*Count matching* on the crossed design: 0.579 / 0.935 → 0.564 / 0.920; off,
+as decided in (xvii).
+
+**Gates for calling it shippable**, and where seed 1 stands (2026-11-24):
+(1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
+lattice families at five settings; not met on line spectra at small error
+bars or high temperature, by the width floor (xix)*; (2) a
+leave-one-family-out arm — *not run; the stand-in is F_60k, trained on none
+of the families: within 7% at β = 8, better on lattices at β = 16*;
+(3) coverage within ±0.03 of nominal per noise band and per β — *met for the
+reported window intervals with the band table (by β 0.49–0.51 / 0.90–0.91,
+by repetition 0.48–0.52 / 0.88–0.92); not met by the samples themselves
+(0.58 / 0.94)*; (4) data-fit rank 0.45–0.55 — *0.49 pooled, 0.43 below
+error bars of 1e-4*; (5) the suite no worse than the banked run — *met
+(0.0295 / 0.0627 against 0.0296 / 0.0833); 7% behind F_60k at equal
+tether at 1e-3*; (6) three training seeds — *one judged, two training*;
+(7) a real DQMC run of a model with a known spectrum — *done: below MaxEnt
+and the VAE, one satellite outside its interval*.
 
 **Step-2 build (1): the smooth-family label bank — built, judged,
 pinned** (*measured*, 2026-08-27).  `data/label_bank.py` +

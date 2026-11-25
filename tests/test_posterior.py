@@ -100,7 +100,7 @@ def test_band_table_recovers_a_known_overdispersion():
     assert band_levels(t2, 3e-6, 8.0) == band_levels(t2, 1e-5, 8.0)
 
 
-def test_a_band_table_narrows_the_reported_bands_and_leaves_the_samples_alone():
+def test_a_band_table_narrows_the_window_intervals_and_nothing_else():
     path = "out/flow/F_60k.pt"
     if not os.path.exists(path):
         pytest.skip("reference flow checkpoint not present")
@@ -114,12 +114,15 @@ def test_a_band_table_narrows_the_reported_bands_and_leaves_the_samples_alone():
                            generator=torch.Generator().manual_seed(3), **kw)
     b = continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr, band_calibration=table,
                            generator=torch.Generator().manual_seed(3), **kw)
-    assert torch.equal(a.poles.eps, b.poles.eps) and np.array_equal(a.band["mean"], b.band["mean"])
-    assert np.array_equal(a.band["q50"], b.band["q50"])
-    wa, wb = a.band["q95"] - a.band["q05"], b.band["q95"] - b.band["q05"]
-    assert (wb <= wa + 1e-12).all() and wb.mean() < 0.95 * wa.mean()
-    assert (b.band["q05"] <= b.band["q16"] + 1e-12).all() and (b.band["q16"] <= b.band["q25"] + 1e-12).all()
-    assert (b.band["q75"] <= b.band["q84"] + 1e-12).all()
+    # samples and the pointwise band of A(omega): untouched
+    assert torch.equal(a.poles.eps, b.poles.eps)
+    for k in ("mean", "q05", "q16", "q25", "q50", "q75", "q84", "q95"):
+        assert np.array_equal(a.band[k], b.band[k])
+    assert (a.band["q05"] <= a.band["q25"] + 1e-12).all() and (a.band["q75"] <= a.band["q95"] + 1e-12).all()
+    # window intervals: narrower, nested, and never wider than the plain ones
+    for wa, wb in zip(a.windows, b.windows):
+        assert wb["q95"] - wb["q05"] <= wa["q95"] - wa["q05"] + 1e-12
+        assert wb["q05"] <= wb["q25"] + 1e-12 and wb["q75"] <= wb["q95"] + 1e-12
+    assert sum(w["q95"] - w["q05"] for w in b.windows) < 0.97 * sum(w["q95"] - w["q05"] for w in a.windows)
     assert b.diagnostics["band_calibrated"] and not a.diagnostics["band_calibrated"]
-    assert b.windows[3]["q95"] - b.windows[3]["q05"] <= a.windows[3]["q95"] - a.windows[3]["q05"] + 1e-12
     assert "calibrated on held-out" in b.summary() and "not calibrated" in a.summary()
