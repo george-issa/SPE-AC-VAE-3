@@ -1199,13 +1199,74 @@ the floor).  A line token (γ = 0, closed-form kernel) with exact line
 spectra in the prior is the candidate remedy; it is a retrain, and whether
 it closes the gap at β = 2 is not established by anything measured here.
 
+(xxiii) **Poles pinned at the trained floor start the second fit pinned at
+the lowered one; and what pole labels of exact line data would be**
+(*measured*, 2026-11-25; `LoweredFloor.recode(follow_within=...)`,
+`posterior.FLOOR_FOLLOW`, `out/step3/floor_option/` against
+`out/step3/floor_option_keep/`; `scripts/step3/line_label_probe.py`,
+`out/step3/line_labels/`).
+*Why.*  At β = 2 the positions and weights of the line groups are right
+(group means within 0.02 of exact) and the loss is in the tails: a pole
+kept at the trained floor is a Lorentzian of half-width 0.157 there, 10% of
+its weight more than 0.5 away, and the second fit of (xxii) left it that
+wide because the data are indifferent.  A pole the flow pins at its floor
+says "as narrow as I can draw"; in the second fit it now keeps its offset
+above the floor instead of its width, so it starts pinned at the lowered
+floor and the data widen it if they need to (`FLOOR_FOLLOW = False`
+restores (xxii)).  Wider poles are untouched.
+*Judge of (xxii) again*, same data and seeds; W₁ on the 24 line spectra per
+setting, geometric mean:
+
+| setting | as trained | (xxii) | now | MaxEnt | now / MaxEnt |
+|---|---|---|---|---|---|
+| β = 8, noise 1e-4 | 0.164 | 0.145 | 0.139 | 0.143 | 0.969 [0.846, 1.110] |
+| β = 8, noise 1e-3 | 0.254 | 0.241 | 0.233 | 0.291 | 0.799 [0.705, 0.906] |
+| β = 8, noise 1e-2 | 0.545 | 0.539 | 0.532 | 0.684 | 0.778 [0.687, 0.882] |
+| β = 2, noise 1e-3 | 0.431 | 0.417 | 0.399 | 0.367 | 1.087 [0.971, 1.217] |
+| β = 16, noise 1e-3 | 0.224 | 0.218 | 0.215 | 0.338 | 0.636 [0.551, 0.733] |
+
+On the 49 flagged spectra: 0.930 [0.915, 0.944] of (xxii) (43 better by more
+than 2%, 2 worse), 0.823 [0.784, 0.863] of the floor as trained (45 better,
+3 worse).  At β = 2 the line spectra are no longer measurably behind MaxEnt.
+The window intervals of the flagged spectra, every window counted: samples
+as fitted 0.414 / 0.854 (0.350 / 0.708 in (xxii)); as the report states them
+0.542 ± 0.041 / 0.915 ± 0.017 (0.519 / 0.860) — at their stated level.
+Unflagged line spectra (0.290 / 0.638), lattice spectra (0.501 / 0.893, none
+flagged) and the bracket (1540 of 1540 windows) are as in (xxii).  Held-out
+prior draws (`cal_F3_60k_s1_rep8_follow`): stated intervals 0.523 / 0.897;
+on the 29 flagged the window-weight error is 0.94 ± 0.07 of (xxii)'s and the
+intervals are wider (0.76 / 0.99).  Real DQMC dimer: W₁ 0.325 (0.327), 5 of 7
+windows, misses 0.008 and 0.012.
+*Pole labels of exact line data.*  The flow is taught the exactly
+diagonalised models as broadened lines — Lorentzians of the floor's width or
+more, data computed from the broadened spectrum — while the lattice models
+are taught as exact data with the canonical pole label as target.
+`DiscreteSpectrum` now carries what the label protocol reads, and the probe
+runs it on the judge's 12 line spectra per β (noise-free data, trained
+floor), scoring the label like a continuation next to the flow and MaxEnt at
+noise 1e-3:
+
+| β | label | flow | MaxEnt | label reproduces G | there: label / flow / MaxEnt |
+|---|---|---|---|---|---|
+| 2 | 0.375 | 0.406 | 0.323 | 4 of 12 | 0.161 / 0.320 / 0.255 |
+| 8 | 0.171 | 0.236 | 0.280 | 4 of 12 | 0.087 / 0.220 / 0.232 |
+| 16 | 0.130 | 0.204 | 0.333 | 2 of 12 | 0.084 / 0.265 / 0.435 |
+
+Where the label reproduces the exact G(τ) (dense sets of lines: the spectra
+the report cannot flag) it is two to three times closer to the truth than
+the flow's posterior mean; where the floor limits it (isolated sharp lines)
+it is still closer at β = 16 and worse at β = 2.  The label is a ceiling —
+it sees noise-free data — so this bounds what teaching line spectra the way
+lattice spectra are taught could gain; it does not measure it.  That is a
+change of the training data and a retrain, with no change of the model.
+
 **Gates for calling it shippable**, and where seed 1 stands (2026-11-25,
-after (xxii)):
+after (xxiii)):
 (1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
-lattice families at five settings; on line spectra level with MaxEnt at
-β = 8, noise 1e-4 once the fit lowers the floor (1.01 [0.88, 1.16], from
-1.15), ahead at β = 8, noise 1e-3 and 1e-2 and at β = 16, behind at β = 2
-(1.14 [1.02, 1.27]; not the floor, cause open) ((xxii))*; (2) a
+lattice families at five settings; on line spectra ahead of MaxEnt at
+β = 8, noise 1e-3 and 1e-2 and at β = 16, level at β = 8, noise 1e-4
+(0.97 [0.85, 1.11]) and at β = 2 (1.09 [0.97, 1.22]) once the fit lowers
+the floor ((xxii), (xxiii))*; (2) a
 leave-one-family-out arm — *training (`scripts/step3/run_leave_out.sh`: five
 lattice and three line families withheld); the stand-in so far is F_60k,
 trained on none of the families: within 7% at β = 8, better on lattices at
@@ -1215,9 +1276,10 @@ draws of the prior by the intervals as the report states them (fresh 288
 truths: 0.52 / 0.90, per noise band 0.50–0.53 / 0.88–0.92; earlier: by β
 0.49–0.51 / 0.90–0.91, by repetition 0.48–0.52 / 0.88–0.92), and pooled on
 100 exact lattice spectra (0.50 / 0.89), where two settings are low at the
-90% level (0.81 at β = 8, noise 1e-4; 0.84 at β = 2).  Not met on exact line
-spectra: 0.52 / 0.86 where narrow lines are flagged, 0.29 / 0.64 where they
-are not ((xxii)); the bracket from the data alone holds in every window*;
+90% level (0.81 at β = 8, noise 1e-4; 0.84 at β = 2).  On exact line
+spectra: met where narrow lines are flagged (0.54 / 0.92, (xxiii)), not met
+where they are not (0.29 / 0.64, (xxii)); the bracket from the data alone
+holds in every window*;
 (4) data-fit rank 0.45–0.55 — *0.49 pooled, 0.43 below
 error bars of 1e-4*; (5) the suite no worse than the banked run — *met
 (0.0295 / 0.0627 against 0.0296 / 0.0833); 7% behind F_60k at equal
@@ -1226,7 +1288,7 @@ spectra, 1–6% on line spectra, same verdict against MaxEnt at every
 setting, seed 1's band table transfers ((xxi))*;
 (7) a real DQMC run of a model with a known spectrum — *done: below MaxEnt
 and the VAE, the upper satellite and its neighbour window outside their
-intervals by 0.02 and 0.01 in weight*.
+intervals by 0.01 in weight*.
 
 **Step-2 build (1): the smooth-family label bank — built, judged,
 pinned** (*measured*, 2026-08-27).  `data/label_bank.py` +

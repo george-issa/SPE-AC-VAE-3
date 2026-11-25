@@ -389,6 +389,26 @@ class DiscreteSpectrum:
         d = np.asarray(omega, float)[..., None] - self.energies
         return (self.weights * eta / math.pi / (d * d + eta * eta)).sum(-1)
 
+    # -- what the canonical label protocol reads (label_bank.extract_smooth_label) -- #
+
+    def stieltjes(self, z: np.ndarray) -> np.ndarray:
+        r""":math:`\sum_i w_i/(z-\varepsilon_i)` with the weights normalised to one, exact."""
+        z = np.asarray(z, complex)
+        return (self.weights / self.weights.sum() / (z[..., None] - self.energies)).sum(-1)
+
+    def matsubara(self, n_w: int = 64) -> tuple[np.ndarray, np.ndarray]:
+        om = (2.0 * np.arange(n_w) + 1.0) * math.pi / self.beta
+        return om, self.stieltjes(1j * om)
+
+    def support_bound(self) -> float:
+        return float(np.abs(self.energies[self.weights > 1e-6 * self.weights.sum()]).max()) + 1.0
+
+    def mollified_A(self, omega: np.ndarray, sigma: float) -> np.ndarray:
+        r""":math:`(A * N_\sigma)(\omega)`: a Gaussian of width ``sigma`` on every line, exact."""
+        d = np.asarray(omega, float)[..., None] - self.energies
+        return (self.weights / self.weights.sum() * np.exp(-0.5 * (d / sigma) ** 2)
+                / (sigma * math.sqrt(2.0 * math.pi))).sum(-1)
+
     def poles(self, eta: float, P_max: int = 12, merge_frac: float = 0.45):
         """The spectrum with lifetime ``eta`` as a pole set: lines closer than
         ``merge_frac * eta`` merged (they are one feature at that width), the
@@ -507,7 +527,7 @@ def holstein_atom(omega0: float, g: float, U: float, mu: float, beta: float,
 def sample_discrete_spectrum(family: str, beta: float, rng: torch.Generator,
                              omega_bandwidth: tuple[float, float] = (1.0, 9.0),
                              omega_max: float = 14.0) -> DiscreteSpectrum:
-    """Draw one exactly diagonalised model.  Draws whose lines (carrying more
+    r"""Draw one exactly diagonalised model.  Draws whose lines (carrying more
     than 1e-3 of the weight) reach beyond ``omega_max`` are redrawn: the
     package's band box is :math:`|\omega| \le 20` and comparison methods use
     a narrower window still."""

@@ -31,9 +31,9 @@ What a user gets from :func:`continue_posterior`
    samples survive the accept step, the samples sit at the model's pole-slot
    cap, the inputs fall outside the range the checkpoint was trained on.
 
-Measured limits (TRAINING.md (xxii)).  On draws of the prior and on exact
-lattice spectra the window intervals hold the truth at their stated rate.
-On exactly diagonalised line spectra they hold it at 0.52 / 0.86 (for
+Measured limits (TRAINING.md (xxii), (xxiii)).  On draws of the prior and
+on exact lattice spectra the window intervals hold the truth at their stated
+rate.  On exactly diagonalised line spectra they hold it at 0.54 / 0.92 (for
 0.50 / 0.90) where narrow lines are flagged and at 0.29 / 0.64 where the
 lines are too dense to be flagged; for a spectrum that may be discrete the
 prior-free bracket is the statement to use -- it held in every window.
@@ -56,7 +56,7 @@ from .physics.poles import PoleSet
 
 __all__ = ["PosteriorReport", "continue_posterior", "prior_free_bounds", "BOX_SIGMA",
            "DEFAULT_WINDOWS", "BAND_TARGETS", "band_levels", "fit_band_table",
-           "weight_at_width_floor", "FLOOR_TRIGGER", "FLOOR_FACTOR", "FLOOR_WITHIN",
+           "weight_at_width_floor", "FLOOR_TRIGGER", "FLOOR_FACTOR", "FLOOR_WITHIN", "FLOOR_FOLLOW",
            "central_interval"]
 
 
@@ -88,6 +88,10 @@ BAND_TARGETS = (0.5, 0.68, 0.9, 0.95)
 FLOOR_TRIGGER = 0.1
 #: What ``floor_factor="auto"`` divides the trained width floor by.
 FLOOR_FACTOR = 4.0
+#: In a fit with a lowered floor, poles the flow pinned at its trained floor start pinned at the
+#: lowered one (``LoweredFloor.recode(follow_within=FLOOR_WITHIN)``).  ``False`` starts every
+#: pole at the width the flow gave it, which is what TRAINING.md (xxii) judged.
+FLOOR_FOLLOW = True
 
 
 def band_levels(table: dict | None, rel_noise: float, beta: float) -> dict:
@@ -361,11 +365,13 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         the floor the flow was trained with; a number above 1 always lets
         the fit narrow a pole down to the trained floor divided by it, on a
         quadrature that much finer.  The flow's proposals are the same in
-        every case.  Measured (TRAINING.md (xxii)): the second fit is run
-        on none of 100 exact lattice spectra and on 10% of held-out prior
-        draws, where it changes neither error nor coverage; on exact line
-        spectra it is run on 4 in 10 and lowers the error on those by
-        4-20%, at four to five times the fitting time.
+        every case; in the second fit a pole the flow pinned at its floor
+        starts pinned at the lowered one (:data:`FLOOR_FOLLOW`).  Measured
+        (TRAINING.md (xxii), (xxiii)): the second fit is run on none of 100
+        exact lattice spectra and on 10% of held-out prior draws, where it
+        changes neither error nor coverage; on exact line spectra it is run
+        on 4 in 10 and lowers the error on those by 18% on average, at four
+        to five times the fitting time.
 
         Whenever a tenth or more of the weight is on poles no wider than
         :data:`FLOOR_WITHIN` trained floors, the window intervals span both
@@ -477,7 +483,7 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         factor = float(floor_factor)
     if factor != 1.0:
         low = LoweredFloor(flow, factor)
-        ps, c2, n_born = fit(low, low.recode(z))
+        ps, c2, n_born = fit(low, low.recode(z, follow_within=FLOOR_WITHIN if FLOOR_FOLLOW else None))
     gmin_fit = gmin_trained / factor
     acc = c2 <= band_edge
     warnings = []
@@ -630,7 +636,8 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         diagnostics={"accepted_fraction": frac, "raw_chi2_median": float(c_raw.median()),
                      "samples_given_a_pole": int((n_born[acc] > 0).sum()),
                      "n_poles_median": float(n_pres.float().median()),
-                     "weight_at_width_floor": at_floor, "floor_factor": factor, **floor_diag,
+                     "weight_at_width_floor": at_floor, "floor_factor": factor,
+                     "floor_follow": bool(FLOOR_FOLLOW and factor != 1.0), **floor_diag,
                      "relative_error_bar": rel_stat, "sigma_floor": sigma_floor,
                      "bootstrap_redraw": bins is not None, "band_calibrated": bool(table),
                      "band_table_withheld": withheld, "line_shape_readings": bool(line_shape),

@@ -186,3 +186,23 @@ def test_exact_pole_truths_are_valid_pole_sets_inside_the_band_box():
         assert 1 <= len(eps) <= 12 and abs(sum(a) - 1) < 1e-9 and all(v == 0.0 for v in b)
         assert min(gam) >= 1.05 * X.GAMMA_MIN / 8.0 - 1e-12 and max(abs(e) for e in eps) < 20.0
     assert len(seen) >= 4
+
+
+def test_line_spectra_go_through_the_canonical_label_protocol():
+    from spevae.data.label_bank import extract_smooth_label
+    sp = X.holstein_atom(omega0=0.8, g=1.1, U=0.0, mu=0.4, beta=8.0)
+    # the protocol's inputs, each against its definition
+    om, F = sp.matsubara(8)
+    w = sp.weights / sp.weights.sum()
+    assert np.allclose(F, [(w / (1j * o - sp.energies)).sum() for o in om])
+    grid = np.linspace(-40.0, 40.0, 16001)
+    assert abs(np.trapezoid(sp.mollified_A(grid, 0.3), grid) - 1.0) < 1e-6
+    assert sp.support_bound() >= np.abs(sp.energies[w > 1e-6]).max()
+    # a dense ladder of lines is representable: the label reproduces the exact G(tau)
+    lab = extract_smooth_label(sp, P_max=12, residue_mode="dispersive")
+    from spevae.physics import PoleGreens, PoleSet, SpectralQuadrature
+    ps = PoleSet(*(torch.tensor(np.asarray(v), dtype=torch.float64).unsqueeze(0)
+                   for v in (lab.eps * 8.0, lab.gamma * 8.0, lab.a, lab.b)))
+    x = np.linspace(0.0, 1.0, 65)
+    G = PoleGreens(SpectralQuadrature.for_beta(8.0, dtype=torch.float64))(ps, torch.tensor(x))[0].numpy()
+    assert np.abs(G - sp.greens(x)).max() < 1e-4

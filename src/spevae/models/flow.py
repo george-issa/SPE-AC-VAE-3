@@ -182,12 +182,24 @@ class LoweredFloor:
     def nu_max(self, beta: float) -> float:
         return self.flow.nu_max(beta)
 
-    def recode(self, z: torch.Tensor) -> torch.Tensor:
-        """Token coordinates of the trained flow -> the same poles in these coordinates."""
+    def recode(self, z: torch.Tensor, follow_within: float | None = None) -> torch.Tensor:
+        """Token coordinates of the trained flow -> the same poles in these coordinates.
+
+        With ``follow_within`` (e.g. 1.25), a pole no wider than that many
+        trained floors keeps its *offset above the floor* instead of its
+        width: a pole the flow pinned at its floor says "as narrow as I can
+        draw", so it starts the fit pinned at the lowered floor, and the
+        data widen it if they need to.  Wider poles are unchanged.  Measured
+        (TRAINING.md (xxiii)): on exact line spectra the error is 4-9% lower
+        than with the widths kept, at every setting.
+        """
         c, n = self.trained, self.coords
         gamma = c.gamma_min + torch.exp((z[..., 1] * c.std[1] + c.mean[1]).clamp(-12.0, 8.0))
+        if follow_within is not None:
+            pinned = gamma <= float(follow_within) * c.gamma_min
+            gamma = torch.where(pinned, gamma - (c.gamma_min - n.gamma_min), gamma)
         out = z.clone()
-        out[..., 1] = (torch.log(gamma - n.gamma_min) - n.mean[1]) / n.std[1]
+        out[..., 1] = (torch.log((gamma - n.gamma_min).clamp_min(1e-12)) - n.mean[1]) / n.std[1]
         return out
 
 

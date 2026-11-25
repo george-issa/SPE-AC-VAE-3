@@ -182,6 +182,18 @@ def test_lowered_floor_keeps_the_proposals_and_lets_the_fit_narrow_a_line():
         assert torch.allclose(getattr(p0, k), getattr(p1, k), rtol=1e-5, atol=1e-6), k
     with pytest.raises(ValueError):
         LoweredFloor(m, 0.5)
+    # follow_within: a pole within 1.25 trained floors keeps its offset above the floor
+    # (so it sits as close to the lowered floor as it sat to the trained one); wider poles keep their width
+    z = z.clone()
+    z[:, ::3, 1] = -5.0                                       # every third pole pinned at the floor
+    p0 = m.coords.decode(z, nu_max=m.nu_max(beta))
+    p2 = low.coords.decode(low.recode(z, follow_within=1.25), nu_max=low.nu_max(beta))
+    g0, drop = m.coords.gamma_min, m.coords.gamma_min - low.coords.gamma_min
+    pinned = p0.gamma <= 1.25 * g0
+    assert bool(pinned.any()) and bool((~pinned).any())
+    assert torch.allclose(p2.gamma[pinned], p0.gamma[pinned] - drop, rtol=1e-4, atol=1e-6)
+    assert torch.allclose(p2.gamma[~pinned], p0.gamma[~pinned], rtol=1e-5, atol=1e-6)
+    assert torch.allclose(p2.eps, p0.eps) and torch.allclose(p2.a, p0.a, atol=1e-6)
     # two exact lines at omega = +-1 (a Hubbard atom); proposals: two poles there, 1.5x the floor wide
     x = torch.linspace(0.0, 1.0, 65)
     e = torch.tensor([-1.0, 1.0], dtype=torch.float64) * beta
