@@ -8,6 +8,8 @@ Error throughout is the area between the reconstructed and the exact cumulative 
 
 Spectra with an exact answer, given noise and continued with `continue_posterior` at its defaults (the call a user makes) and with MaxEnt on the same data. Blue: posterior median and 90% band. Grey: MaxEnt. Black: exact. Panel titles give the error of each; a red title marks a spectrum where MaxEnt is the lower.
 
+On line spectra the median curve is low wherever the samples disagree about a line's exact position, and the band is clipped where it towers over the rest; the error is taken on the cumulative weight, which has neither problem. "Narrow lines flagged" in a title means the report warned that the data favour lines narrower than the model was trained on, and states wider window intervals for them.
+
 | setting | lattice spectra: this model / MaxEnt | lower on | line spectra: this model / MaxEnt | lower on |
 |---|---|---|---|---|
 | beta = 8, relative error bar 0.001 | 0.090 / 0.229 | 18 of 20 | 0.209 / 0.280 | 10 of 12 |

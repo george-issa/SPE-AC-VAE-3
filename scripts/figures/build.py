@@ -98,6 +98,11 @@ def main():
               "defaults (the call a user makes) and with MaxEnt on the same data. Blue: posterior median and "
               "90% band. Grey: MaxEnt. Black: exact. Panel titles give the error of each; a red title marks a "
               "spectrum where MaxEnt is the lower.", "",
+              "On line spectra the median curve is low wherever the samples disagree about a line's exact "
+              "position, and the band is clipped where it towers over the rest; the error is taken on the "
+              "cumulative weight, which has neither problem. \"Narrow lines flagged\" in a title means the "
+              "report warned that the data favour lines narrower than the model was trained on, and states "
+              "wider window intervals for them.", "",
               "| setting | lattice spectra: this model / MaxEnt | lower on | line spectra: this model / MaxEnt "
               "| lower on |", "|---|---|---|---|---|"]
     shown = []

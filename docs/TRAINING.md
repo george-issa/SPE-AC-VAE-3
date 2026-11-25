@@ -1355,6 +1355,64 @@ its lattice intervals mean what they say — without one they hold 0.58 /
 0.93 on the 100 lattice spectra.  Not done here: that table, a second
 seed, the real-data runs with this checkpoint.
 
+(xxvi) **The retrained checkpoint with its band table: intervals at their
+stated level on prior draws, on lattice spectra and on flagged line
+spectra; the real dimer inside its intervals in 7 of 7 windows**
+(*measured*, 2026-11-25; `out/step3/cal_F3L_60k_s1_big/` + `cal_F3L_60k_s1/`,
+`F3L_60k_s1.pt.bands.json`, `out/step3/floor_option_F3L_60k_s1_table/`,
+`out/dqmc/F3L_60k_s1/`, `out/step3/holstein_F3L_60k_s1/`,
+`out/step3/suite_F3L_60k_s1/`).  2304 held-out draws of the retrained
+model's own prior (eight repetitions of the design of (xviii), the report at
+its defaults).  The narrow-line flag fires on 303 of them (13%; 118 of the
+178 exact line spectra, 28 broadened-line, 77 pole-mixture, 80 smooth); the
+table, per band of error bar, is fitted on the 2001 others, which are the
+reports it is applied to (`fit_band_calibration.py --unflagged-only`).
+Levels to quote for 50% / 90%: 0.438 / 0.878 pooled.  Each repetition
+scored by a table fitted on the other seven:
+
+| held-out draws, not flagged | 50% | 90% |
+|---|---|---|
+| all 2001 | 0.500 ± 0.006 | 0.899 ± 0.004 |
+| by error-bar band | 0.499–0.501 | 0.890–0.900 |
+| by β (not a stratum of the table) | 0.478–0.527 | 0.876–0.920 |
+| by repetition | 0.482–0.536 | 0.879–0.913 |
+
+Lowest by β is β = 2 at 0.876 ± 0.012.  By kind (the table does not know
+it): pole mixtures 0.473 / 0.886, smooth and lattice labels 0.548 / 0.933,
+broadened lines 0.495 / 0.909, and the 60 exact line spectra the report
+does not flag 0.25 / 0.66.  On the 303 flagged draws the stated intervals
+(both readings, no table) hold 0.71 / 0.97: wide.  Data-fit rank over the
+2016 new draws 0.50; by error bar 0.44 below 1e-4, 0.55, 0.56, 0.52.
+
+The known-answer judge of (xxii) again, with the table in place — exact
+weight inside the stated 50% / 90% interval:
+
+| | spectra | stated 50% | stated 90% |
+|---|---|---|---|
+| lattice (never flagged) | 100 | 0.484 ± 0.027 | 0.910 ± 0.012 |
+| line spectra, flagged | 97 | 0.511 ± 0.030 | 0.903 ± 0.017 |
+| line spectra, not flagged | 23 | 0.342 ± 0.062 | 0.615 ± 0.064 |
+
+Lattice by setting at the 90% level: 0.86 (β = 8, noise 1e-4), 0.94, 0.99
+(noise 1e-2), 0.87 (β = 2), 0.89 (β = 16); at the 50% level 0.37, 0.46,
+0.72, 0.41, 0.45 — too short at the smallest error bar and at β = 2, too
+long at the largest error bar, as for `F3_60k_s1` (0.81 and 0.84 there).
+The bracket from the data alone holds in 1540 of 1540 windows.
+Real data: the DQMC dimer W₁ 0.319 (`F3_60k_s1` 0.325, MaxEnt 0.777, VAE
+0.405), 97% of the weight on poles at the trained floor, so flagged, and
+the exact weight inside the stated 90% interval in 7 of 7 windows (5 of 7
+before).  The Holstein cell: W₁ to the reference continuation 0.143 (0.149;
+MaxEnt 0.107), χ² at 0.98 of target, 179 of 200 samples accepted, no
+warning (the all-slots warning of `F3_60k_s1` is gone).  The 14-spectrum
+suite: 0.0299 / 0.0638 at noise 1e-4 / 1e-3 against 0.0295 / 0.0627
+(1.01 and 1.02 per spectrum; worst single spectrum 1.20).
+Through the call a user makes (200 samples; `scripts/figures/
+known_answers.py`, `figures/README.md`), W₁ of this model / MaxEnt on the
+20 lattice and 12 line spectra of the judge: β = 8, noise 1e-4: 0.040 /
+0.172 and 0.124 / 0.124; 1e-3: 0.090 / 0.229 and 0.209 / 0.280; 1e-2:
+0.302 / 0.578 and 0.507 / 0.702; β = 2: 0.132 / 0.465 and 0.367 / 0.323;
+β = 16: 0.108 / 0.213 and 0.185 / 0.333.
+
 **Gates for calling it shippable**, and where seed 1 stands (2026-11-25,
 after (xxiv)):
 (1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
@@ -1384,12 +1442,23 @@ setting, seed 1's band table transfers ((xxi))*;
 (7) a real DQMC run of a model with a known spectrum — *done: below MaxEnt
 and the VAE, the upper satellite and its neighbour window outside their
 intervals by 0.01 in weight*.
-Since (xxv) the candidate for release is the retrained `F3L_60k_s1`, pending
-its band table and a second seed; the gates above are stated for
-`F3_60k_s1`.  The command a user runs exists since 2026-11-25:
-`spevae continue` gives the posterior report for a flow checkpoint
-(`posterior.continue_measured`), and reproduces the dimer judge's report to
-the digit.  No checkpoint is published.
+Since (xxv) the candidate for release is the retrained `F3L_60k_s1`; the
+gates above are stated for `F3_60k_s1`.  For the candidate, after (xxvi):
+(1) lattice below MaxEnt on 17–20 of 20 at every setting; line spectra
+ahead at β = 8, noise 1e-3 and 1e-2 and at β = 16, level at noise 1e-4
+(0.95 [0.86, 1.06]), behind or level at β = 2 (1.11 [1.00, 1.23]);
+(2) not repeated for this recipe; (3) met on unflagged prior draws (0.50 /
+0.90 held out), on lattice spectra pooled (0.48 / 0.91; by setting 0.86 to
+0.99 at the 90% level) and on flagged line spectra (0.51 / 0.90); not met
+on the line spectra the report cannot flag, now 19% of them (0.34 / 0.62);
+(4) 0.50 pooled, 0.44 below error bars of 1e-4 and 0.56 between 1e-3 and
+1e-2; (5) met (0.0299 / 0.0638); (6) one seed, a second in training;
+(7) done: W₁ 0.319, 7 of 7 windows.
+Not judged for any checkpoint: known answers at β = 1 and 20, at error bars
+of 1e-5, and at a Δτ other than 0.125.  The command a user runs exists
+since 2026-11-25: `spevae continue` gives the posterior report for a flow
+checkpoint (`posterior.continue_measured`), and reproduces the dimer
+judge's report to the digit.  No checkpoint is published.
 
 **Step-2 build (1): the smooth-family label bank — built, judged,
 pinned** (*measured*, 2026-08-27).  `data/label_bank.py` +
