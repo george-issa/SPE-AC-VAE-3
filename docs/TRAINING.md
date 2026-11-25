@@ -958,6 +958,15 @@ exact) already cost W₁ 0.157 at β = 8 and 0.471 at β = 2, and the flow
 scores 0.160 and 0.406.  A Lorentzian of the floor width carries its tails
 whatever the data say; MaxEnt has no floor.  Lowering it means a finer
 quadrature and a retrain, or a separate line component.
+The report now says when this is happening
+(`posterior.weight_at_width_floor`, warning at ≥ 10%): the share of
+spectral weight on poles pinned at the floor is 0.00 on every lattice
+spectrum (100 runs over the five settings; warning on 0 of 20 through
+`continue_posterior`) and 0.2–0.9 on isolated lines (warning on 7 of 12
+line spectra: Hubbard atom 0.86, Anderson cluster 0.44–0.70, dimer 0.63;
+silent on the trimer and other closely spaced lines, where the deficit to
+MaxEnt is also small).  It fires on the real DQMC dimer (0.18) and not on
+the Holstein cell.
 
 *Suite* (`scripts/flow/suite_recon.py`, 14 truths, banked draw, W₁ of the
 posterior mean, geometric mean): 0.0295 at noise 1e-4 and 0.0627 at 1e-3,

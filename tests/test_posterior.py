@@ -126,3 +126,26 @@ def test_a_band_table_narrows_the_window_intervals_and_nothing_else():
     assert sum(w["q95"] - w["q05"] for w in b.windows) < 0.97 * sum(w["q95"] - w["q05"] for w in a.windows)
     assert b.diagnostics["band_calibrated"] and not a.diagnostics["band_calibrated"]
     assert "calibrated on held-out" in b.summary() and "not calibrated" in a.summary()
+
+
+def test_weight_at_width_floor_counts_only_pinned_poles():
+    from spevae.posterior import weight_at_width_floor
+    g0 = 0.1 * math.pi
+    a = torch.tensor([[0.6, 0.4, 0.0], [0.2, 0.8, 0.0], [0.5, 0.5, 0.0]])
+    gam = torch.tensor([[g0 * 1.01, 2.0, 1.0], [g0 * 1.2, 0.9, 1.0], [g0 * 3.0, g0 * 1.3, 1.0]])
+    # per sample 0.6, 0.2, 0.0 -> median 0.2; empty slots (a = 0) never count
+    assert abs(weight_at_width_floor(a, gam, g0) - 0.2) < 1e-12
+    assert weight_at_width_floor(a, torch.full_like(gam, 5.0), g0) == 0.0
+
+
+def test_broad_spectra_do_not_draw_the_width_floor_warning():
+    path = "out/flow/F_60k.pt"
+    if not os.path.exists(path):
+        pytest.skip("reference flow checkpoint not present")
+    from spevae.models.flow import load_flow
+    flow = load_flow(path).eval()
+    inst = C.draw(C.realize("semicircle"), 1e-3, 7)
+    rep = continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr, n_samples=32,
+                             bounds=False, generator=torch.Generator().manual_seed(2))
+    assert rep.diagnostics["weight_at_width_floor"] < 0.1
+    assert not any("minimum width" in w for w in rep.warnings)
