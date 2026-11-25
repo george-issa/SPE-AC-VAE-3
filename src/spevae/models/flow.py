@@ -53,8 +53,8 @@ from ..physics.poles import DISPERSIVE_SCALE, PoleSet
 from .constraints import DEFAULT_GAMMA_MIN, spectral_norm_from_greens
 from .encoder import GreensEncoder
 
-__all__ = ["FlowPosterior", "PoleCoords", "save_flow", "load_flow", "refine_samples",
-           "add_pole", "A_DUST"]
+__all__ = ["FlowPosterior", "PoleCoords", "LoweredFloor", "save_flow", "load_flow",
+           "refine_samples", "add_pole", "A_DUST"]
 
 #: Log-weight of a dust token (an empty slot).  exp(-14) ~ 8e-7.
 A_DUST = -14.0
@@ -147,6 +147,48 @@ class PoleCoords(nn.Module):
             n = norm.reshape(-1, 1)
             a, b = a * n, b * n
         return PoleSet(eps=eps, gamma=gamma, a=a, b=b)
+
+
+class LoweredFloor:
+    r"""A flow's pole coordinates with the width floor divided by ``factor``.
+
+    For the fit stage only: it stands in for the flow in :func:`refine_samples`
+    and :func:`add_pole`, which read nothing from a flow but its coordinates
+    and its frequency cutoff.  The flow itself is not changed and proposes
+    exactly what it was trained to propose; :meth:`recode` re-expresses those
+    proposals in the new coordinates (same poles, same widths), and the fit
+    may then narrow a pole down to ``gamma_min / factor``.  The quadrature of
+    the fit is sized from the floor of the coordinates it is given, so it is
+    ``factor`` times finer and the fit ``factor`` times dearer per iteration.
+
+    Measured (TRAINING.md (xx)) with ``factor = 4`` on exactly diagonalised
+    line spectra at beta = 8, error bars 1e-4: W1 0.160 -> 0.141 against
+    MaxEnt's 0.124; no change on lattice spectra, where no pole reaches the
+    trained floor; no gain at beta = 2.
+    """
+
+    def __init__(self, flow, factor: float):
+        if not factor >= 1.0:
+            raise ValueError(f"factor={factor!r}; the floor can only be lowered (factor >= 1)")
+        c = flow.coords
+        self.flow = flow
+        self.factor = float(factor)
+        self.trained = c
+        self.coords = PoleCoords(c.gamma_min / self.factor, c.D).to(c.mean.device)
+        self.coords.mean.copy_(c.mean)
+        self.coords.std.copy_(c.std)
+        self.P = flow.P
+
+    def nu_max(self, beta: float) -> float:
+        return self.flow.nu_max(beta)
+
+    def recode(self, z: torch.Tensor) -> torch.Tensor:
+        """Token coordinates of the trained flow -> the same poles in these coordinates."""
+        c, n = self.trained, self.coords
+        gamma = c.gamma_min + torch.exp((z[..., 1] * c.std[1] + c.mean[1]).clamp(-12.0, 8.0))
+        out = z.clone()
+        out[..., 1] = (torch.log(gamma - n.gamma_min) - n.mean[1]) / n.std[1]
+        return out
 
 
 def _time_features(t: torch.Tensor, dim: int = 64) -> torch.Tensor:
@@ -409,8 +451,8 @@ class FlowPosterior(nn.Module):
         return z, norm
 
 
-def refine_samples(flow: FlowPosterior, z0: torch.Tensor, norm: torch.Tensor, beta: float,
-                   x_fit: torch.Tensor, G_fit: torch.Tensor, sigma_fit: torch.Tensor,
+def refine_samples(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: torch.Tensor,
+                   beta: float, x_fit: torch.Tensor, G_fit: torch.Tensor, sigma_fit: torch.Tensor,
                    inv_sqrt_R: torch.Tensor, lam: float, steps: int = 300, lr: float = 0.05,
                    perturb: bool = False, generator: torch.Generator | None = None,
                    anneal: float | None = None, lr_final: float | None = None,
@@ -458,6 +500,10 @@ def refine_samples(flow: FlowPosterior, z0: torch.Tensor, norm: torch.Tensor, be
     Both keep each sample's pole count fixed -- what LM leaves unconverged is
     mostly samples with fewer poles than the truth.
 
+    ``flow`` may be a :class:`LoweredFloor` built on the flow, with ``z0``
+    re-expressed by its ``recode``: the fit then lets poles go below the
+    trained width floor, on a correspondingly finer quadrature.
+
     ``G_fit, sigma_fit`` are ``(N, L)`` (already repeated per sample),
     ``x_fit`` ``(L,)``, ``inv_sqrt_R`` ``(L, L)``.  Returns
     ``(PoleSet, chi2 per point (N,) against the UNperturbed data)``, plus the
@@ -465,7 +511,8 @@ def refine_samples(flow: FlowPosterior, z0: torch.Tensor, norm: torch.Tensor, be
     (what a second pass -- e.g. after a pole birth -- starts from).
     """
     from ..physics import PoleGreens, SpectralQuadrature
-    quad = SpectralQuadrature.for_beta(beta).to(z0.device)
+    # sized from the floor of the coordinates in use: the trained flow's, or a LoweredFloor's
+    quad = SpectralQuadrature.for_beta(beta, gamma_min=flow.coords.gamma_min).to(z0.device)
     fwd = PoleGreens(quad)
     dt = z0.dtype
     x_fit = x_fit.to(dt)
@@ -536,7 +583,7 @@ def refine_samples(flow: FlowPosterior, z0: torch.Tensor, norm: torch.Tensor, be
 
 
 @torch.no_grad()
-def add_pole(flow: FlowPosterior, z: torch.Tensor, donors: PoleSet,
+def add_pole(flow: FlowPosterior | LoweredFloor, z: torch.Tensor, donors: PoleSet,
              generator: torch.Generator | None = None, weight: float = 0.03) -> tuple:
     """Switch on one dormant pole slot in each row of ``z`` (a *birth*).
 
@@ -576,8 +623,8 @@ def add_pole(flow: FlowPosterior, z: torch.Tensor, donors: PoleSet,
     return z, born
 
 
-def _refine_lm(flow: FlowPosterior, z0: torch.Tensor, norm: torch.Tensor, beta: float,
-               x_fit: torch.Tensor, target: torch.Tensor, sigma: torch.Tensor,
+def _refine_lm(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: torch.Tensor,
+               beta: float, x_fit: torch.Tensor, target: torch.Tensor, sigma: torch.Tensor,
                W: torch.Tensor, lam: float, start: torch.Tensor | None, iters: int,
                stages: int, stage_iters: int, chunk: int = 256) -> torch.Tensor:
     """Levenberg--Marquardt on the refinement objective; returns ``u`` ``(N, P, 4)``.
@@ -589,7 +636,7 @@ def _refine_lm(flow: FlowPosterior, z0: torch.Tensor, norm: torch.Tensor, beta: 
     """
     from ..physics import PoleGreens, SpectralQuadrature, lm_solve, rowwise_jacobian
     dd = torch.float64
-    quad = SpectralQuadrature.for_beta(beta, dtype=dd).to(z0.device)
+    quad = SpectralQuadrature.for_beta(beta, gamma_min=flow.coords.gamma_min, dtype=dd).to(z0.device)
     fwd = PoleGreens(quad)
     x = x_fit.to(dd)
     K = fwd.kernel_matrix(x)

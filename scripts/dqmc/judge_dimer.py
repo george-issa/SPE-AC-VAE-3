@@ -9,7 +9,11 @@ spectrum by exact diagonalisation, and
      latent MAP, MaxEnt -- scoring each against the exact cumulative weight.
 
     python scripts/dqmc/judge_dimer.py out/dqmc/hubbard_dimer_U4.00_b8.00_dt0.050-1 4.0 \
-        out/flow/F_60k.pt out/step2/data_arm/D24_60k.pt out/dqmc
+        out/flow/F_60k.pt out/step2/data_arm/D24_60k.pt out/dqmc [floor_factor]
+
+`floor_factor` (a number or `auto`) is handed to `continue_posterior`; without
+it the report's default applies (`auto` since 2026-11-25; the runs banked
+before that used 1, the width floor as trained).
 """
 import json
 import math
@@ -43,6 +47,8 @@ def main():
 
     sim, U = sys.argv[1], float(sys.argv[2])
     flow, vae, out = load_flow(sys.argv[3]).eval(), load_model(sys.argv[4]), Path(sys.argv[5])
+    ff = {} if len(sys.argv) <= 6 else {"floor_factor": sys.argv[6] if sys.argv[6] == "auto" else float(sys.argv[6])}
+    out.mkdir(parents=True, exist_ok=True)
     torch.set_num_threads(6)
     mg = read_smoqy_dir(sim, pair=(0, 1))                       # the two sites are equivalent
     beta, N = mg.beta, mg.n_bins
@@ -64,7 +70,7 @@ def main():
     rep = continue_posterior(flow, mg.mean, mg.x, beta, mg.sigma_encoder / math.sqrt(N),
                              cov["inv_sqrt_R"], bins=mg.bins[:, sl], n_samples=200,
                              chi2_target=cov["chi2_target"], x_fit=mg.x[sl], G_fit=mg.mean[sl],
-                             sigma_fit=cov["sigma"] / math.sqrt(N), omega=WG)
+                             sigma_fit=cov["sigma"] / math.sqrt(N), omega=WG, **ff)
     print(rep.summary())
     rr = refine_latent(vae, mg, RefineConfig(cov_method="structured", min_eigenvalue=1e-10, solver="lm"))
     pv = rr.poles

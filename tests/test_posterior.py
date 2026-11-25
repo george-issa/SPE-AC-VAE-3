@@ -149,3 +149,69 @@ def test_broad_spectra_do_not_draw_the_width_floor_warning():
                              bounds=False, generator=torch.Generator().manual_seed(2))
     assert rep.diagnostics["weight_at_width_floor"] < 0.1
     assert not any("minimum width" in w for w in rep.warnings)
+
+
+def test_auto_floor_refits_line_spectra_and_leaves_broad_ones_alone():
+    path = next((p for p in ("out/step3/F3_60k_s1.pt", "out/flow/F_60k.pt") if os.path.exists(p)), None)
+    if path is None:
+        pytest.skip("no flow checkpoint present")
+    from spevae.models.flow import load_flow
+    from spevae.posterior import FLOOR_FACTOR
+    flow = load_flow(path).eval()
+    beta = 8.0
+    # two exact lines at omega = +-1 (a Hubbard atom, U = 2)
+    x = torch.linspace(0.0, 1.0, 65)
+    e = torch.tensor([-1.0, 1.0], dtype=torch.float64) * beta
+    G = (0.5 * torch.exp(-x.double()[:, None] * e) / (1.0 + torch.exp(-e))).sum(-1).float()
+    sigma = torch.full_like(G, 1e-4 * float(G.max()))
+    G = G + sigma * torch.randn(65, generator=torch.Generator().manual_seed(5))
+    table = {"targets": [0.5, 0.68, 0.9, 0.95], "noise_edges": [], "beta_edges": [],
+             "levels": [[[0.4, 0.58, 0.84, 0.92]]]}
+    kw = dict(n_samples=32, bounds=False, sigma_floor=None, band_calibration=table)
+    a = continue_posterior(flow, G, x, beta, sigma, floor_factor=1.0,
+                           generator=torch.Generator().manual_seed(2), **kw)
+    b = continue_posterior(flow, G, x, beta, sigma, generator=torch.Generator().manual_seed(2), **kw)
+    assert a.diagnostics["floor_factor"] == 1.0 and b.diagnostics["floor_factor"] == FLOOR_FACTOR
+    assert any("floor_factor='auto'" in w for w in a.warnings)
+    assert any("fitted again" in w for w in b.warnings)
+    # narrow lines flagged: the band table is withheld and the window intervals span both
+    # readings of the narrow poles, as fitted and as sharp lines
+    for r in (a, b):
+        assert r.diagnostics["band_table_withheld"] and not r.diagnostics["band_calibrated"]
+        assert r.diagnostics["band_levels"][0.9] == 0.9 and "not applied" in r.summary()
+        assert r.diagnostics["line_shape_readings"] and "both readings" in r.summary()
+        for w in r.windows:
+            assert w["q05"] == min(w["as_fitted"][0], w["sharp_lines"][0])
+            assert w["q95"] == max(w["as_fitted"][1], w["sharp_lines"][1])
+    # the lines sit at +-1, half a unit from the window edges at +-0.5 and +-1.5: read as sharp
+    # lines their weight is all inside [0.5, 1.5); as fitted, part of it leaks into the neighbours
+    mid = next(w for w in b.windows if w["window"] == (0.5, 1.5))
+    assert mid["sharp_lines"][1] > mid["as_fitted"][1] - 1e-9 and mid["sharp_lines"][1] > 0.49
+    assert b.diagnostics["weight_at_trained_width_floor"] == a.diagnostics["weight_at_width_floor"] >= 0.1
+    assert b.diagnostics["weight_below_trained_width_floor"] > 0.1     # the fit used the room
+    gmin = flow.coords.gamma_min / beta
+    assert float(a.poles.gamma[a.poles.a != 0].min()) >= gmin * (1 - 1e-6)
+    assert float(b.poles.gamma[b.poles.a != 0].min()) >= gmin / FLOOR_FACTOR * (1 - 1e-6)
+    assert b.n_accepted >= a.n_accepted
+    # a broad spectrum never triggers it: the two reports are the same report
+    inst = C.draw(C.realize("semicircle"), 1e-3, 7)
+    c, d = (continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr, n_samples=24,
+                               bounds=False, floor_factor=ff, generator=torch.Generator().manual_seed(2))
+            for ff in (1.0, "auto"))                 # "auto" is the default
+    assert d.diagnostics["floor_factor"] == 1.0 and not d.diagnostics["line_shape_readings"]
+    assert "sharp_lines" not in d.windows[0]
+    assert np.array_equal(c.band["mean"], d.band["mean"]) and np.array_equal(c.chi2, d.chi2)
+    with pytest.raises(ValueError):
+        continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr, n_samples=4,
+                           floor_factor="lower")
+
+
+def test_central_interval_is_exact_at_any_sample_count():
+    from spevae.posterior import central_interval
+    rng = np.random.default_rng(0)
+    for n in (25, 60, 200):
+        x = rng.standard_normal((4000, n + 1))                 # n samples and one further draw
+        hit = np.mean([lo <= r[-1] <= hi for r in x for lo, hi in [central_interval(r[:-1], 0.9)]])
+        assert abs(hit - 0.9) < 0.015, (n, hit)
+    lo, hi = central_interval(np.arange(10.0), 0.9)            # too few samples: the range
+    assert (lo, hi) == (0.0, 9.0)

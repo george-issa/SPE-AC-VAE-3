@@ -1039,11 +1039,12 @@ their width.  Cause not established.
 runs.  The fit takes 3.3× as long (4.5 s → 15 s for 64 samples at β = 8).
 Reading: a retrain with a lower floor is not justified by this — the gain
 at β = 8 is available in the fit alone, and β = 2 would not be fixed by it.
-Not yet done: the lowered floor as an option of `refine_samples` /
+Not done here: the lowered floor as an option of `refine_samples` /
 `continue_posterior` (the test patches the coordinates and the quadrature
-from outside), switched on when `weight_at_width_floor` fires; coverage of
-the window intervals on that path; a true line component (γ = 0 has a
-closed form) for the cases a factor 4 does not reach.
+from outside), switched on when `weight_at_width_floor` fires, and coverage
+of the window intervals on that path — both in (xxii); a true line
+component (γ = 0 has a closed form) for the cases a factor 4 does not reach
+— still open.
 
 (xxi) **Three training seeds of the full-length model agree** (*measured*,
 2026-11-25; `scripts/step3/run_full.sh "1 2 3" 60000`,
@@ -1084,25 +1085,137 @@ Reading: the over-coverage of the plain samples and its correction are
 properties of the recipe, so one table serves any seed; seed 1 stays the
 checkpoint carried forward, being the one with the full set of judges.
 
-**Gates for calling it shippable**, and where seed 1 stands (2026-11-25):
+(xxii) **Narrow lines in the report: the lowered floor as the fit's default,
+intervals that span both line shapes, and where the intervals still fail**
+(*measured*, 2026-11-25; `spevae.models.flow.LoweredFloor`,
+`continue_posterior(floor_factor="auto")`, `posterior.central_interval`,
+`scripts/step3/floor_option_judge.py`, `out/step3/floor_option/`).
+*What changed in the package.*  (a) `LoweredFloor` re-expresses the flow's
+proposals in coordinates whose width floor is divided by a factor;
+`refine_samples` sizes its quadrature from the floor of the coordinates it
+is given.  (b) `floor_factor="auto"`, now the default of
+`continue_posterior`: fit as trained; if a tenth or more of the accepted
+samples' weight sits on poles within 1.25 trained floors (the warning of
+69bf13f), fit the same proposals again, against the same noise redraws,
+with the floor divided by 4, and report that fit.  (c) Whenever that share
+is reached, the window intervals span both readings of those poles — as
+fitted, and as sharp lines at their positions — and the band table is not
+applied.  (d) `central_interval`: with n accepted samples the intervals are
+taken at the central level × (n + 1)/(n − 1), the rank convention the band
+table was fitted in; before, a stated 90% was the central 90% of n samples,
+which holds a further draw 0.87 of the time at n = 64 and 0.84 at n = 30.
+With `floor_factor=1` and no narrow lines the report is bit-identical to
+before except for (d).
+*Judge.*  The five settings of the known-answer judge; per setting the 20
+exact lattice spectra and 24 exactly diagonalised line spectra (the judge's
+12 and 12 further draws); the report with 64 samples, with the option and
+with the floor as trained on the same data and seed; MaxEnt on the same
+data.  W₁ of the posterior mean on the line spectra, geometric mean, ratios
+with a paired 95% t interval:
+
+| setting | flagged | as trained | option | MaxEnt | option / as trained | option / MaxEnt |
+|---|---|---|---|---|---|---|
+| β = 8, noise 1e-4 | 14 of 24 | 0.164 | 0.145 | 0.143 | 0.881 [0.813, 0.956] | 1.011 [0.880, 1.162] |
+| β = 8, noise 1e-3 | 11 | 0.254 | 0.241 | 0.291 | 0.947 [0.900, 0.996] | 0.827 [0.735, 0.930] |
+| β = 8, noise 1e-2 | 7 | 0.545 | 0.539 | 0.684 | 0.989 [0.977, 1.002] | 0.789 [0.696, 0.894] |
+| β = 2, noise 1e-3 | 12 | 0.431 | 0.417 | 0.367 | 0.968 [0.941, 0.996] | 1.137 [1.017, 1.272] |
+| β = 16, noise 1e-3 | 5 | 0.224 | 0.218 | 0.338 | 0.975 [0.953, 0.998] | 0.645 [0.560, 0.742] |
+
+On the 49 flagged spectra alone the ratio is 0.885 [0.847, 0.925] (0.805 at
+β = 8, noise 1e-4, where the share of samples that fit rises from 0.76 to
+0.88); 35 improve by more than 2%, 2 get worse by more than 2% (both at
+β = 2).  At β = 8, noise 1e-4 the gap to MaxEnt on line spectra closes
+(1.15 [1.01, 1.30] → 1.01 [0.88, 1.16]); at β = 2 it does not (1.18 → 1.14
+[1.02, 1.27]).  None of the 100 lattice spectra is flagged (the share at the
+floor is 0.000 on every one), so their fits are untouched.  A flagged fit
+takes four to five times as long (47 s against 12 s for 64 samples at β = 8
+with the machine shared).
+*Window intervals against the exact window weights*, all settings pooled,
+every window counted (50% / 90% nominal):
+
+| | spectra | samples as fitted | as the report states them |
+|---|---|---|---|
+| lattice | 100 | 0.581 / 0.929 | 0.501 ± 0.027 / 0.893 ± 0.014 |
+| line spectra, flagged | 49 | 0.350 / 0.708 | 0.519 ± 0.040 / 0.860 ± 0.021 |
+| line spectra, not flagged | 71 | 0.360 / 0.728 | 0.290 ± 0.030 / 0.638 ± 0.035 |
+
+The lattice row is the band table carried from prior draws to exact lattice
+models: nominal pooled, 0.81 ± 0.03 at β = 8, noise 1e-4 and 0.84 ± 0.03 at
+β = 2 (misses of order 1e-3 in weight), 0.99 at noise 1e-2.
+What fails on line spectra is the shape of a line at a window edge, not its
+position or weight.  Grouping the windows of the line spectra by the
+distance of the nearest exact line to a window edge, the central 50% / 90%
+of the samples as fitted hold the exact weight 0.49 / 0.91 of the time at
+0.5 or more, 0.30 / 0.77 at 0.25–0.5, 0.24 / 0.58 at 0.1–0.25 and
+0.28 / 0.45 below 0.1: a Lorentzian of the floor's width leaks
+atan(γ/d)/π of its weight across an edge at distance d (2.5% at β = 8,
+10% at β = 2 for d = 0.5), a sharp line leaks nothing, and the data do not
+say which it is.  Spanning both readings is what (c) does; on the flagged
+spectra it takes the near-edge windows from 0.26 / 0.57 to 0.68 / 0.96
+(0.1–0.25) and from 0.31 / 0.72 to 0.54 / 0.85 (0.25–0.5), at intervals
+about 1.5 times as wide.
+*Not fixed.*  The 71 line spectra that are not flagged — dense sets of lines,
+which the flow draws with broad poles: the share at the floor is exactly
+zero on 67 of them and below 0.08 on the rest, so no threshold would flag
+them — keep intervals that
+are too narrow, 0.29 / 0.64 pooled and 0.12 / 0.27 at β = 2, and there the
+band table makes them narrower still.  Nothing in G(τ) distinguishes such a
+spectrum from a continuous one; a user who knows the system is finite has to
+say so, and the report has no switch for that yet.  The bracket allowed by
+the data alone held the exact weight in all 1540 windows (840 line, 700
+lattice): it is the statement to use for a spectrum that may be discrete.
+*Held-out prior draws* (repetition 8 of `calibration.py`, 288 truths never
+used for the band table; `out/step3/cal_F3_60k_s1_rep8_floor{1,auto}`,
+`_report`).  29 are flagged (10%: 15 of 141 pole mixtures, 7 of 45
+broadened line models, 7 of 102 bank spectra).  With and without the second
+fit, on the same truths and seeds: table coverage 0.501 / 0.887 against
+0.502 / 0.885, data-fit rank 0.514 / 0.513; on the flagged 29 the
+window-weight error ratio is 1.01 ± 0.03.  The intervals exactly as the
+report now states them: 0.520 ± 0.016 / 0.897 ± 0.011 overall; 0.497 / 0.887
+on the 259 not flagged (band table); 0.724 / 0.985 on the 29 flagged (plain
+quantiles, both readings — conservative, as intended for in-prior truths
+whose poles really are Lorentzians); per noise band 0.50–0.53 / 0.88–0.92.
+*Real DQMC dimer* (`out/dqmc/F3_60k_s1_floor_auto/`): flagged at 18%; W₁
+0.330 → 0.327 (MaxEnt 0.777, VAE 0.405); the exact weight is inside the
+stated 90% interval in 5 of 7 windows as before, the two misses smaller
+(0.008 and 0.016 in weight, from 0.020 and 0.027).  The Holstein cell is not
+flagged and its report is unchanged.
+Reading: the option costs nothing where the spectrum is continuous and is
+the default; flagged line spectra now come with intervals close to their
+stated level; unflagged line spectra and line spectra at β = 2 remain
+outside what this model class and prior represent — every pole has a width
+of at least the floor and the flow was trained on nothing narrower.  The
+remedy with a known form is a line token (γ = 0, closed-form kernel) in the
+model and exact line spectra in the prior, which is a retrain.
+
+**Gates for calling it shippable**, and where seed 1 stands (2026-11-25,
+after (xxii)):
 (1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
-lattice families at five settings; not met on line spectra at β = 8, noise
-1e-4 (the width floor: lowered 4× in the fit alone the gap to MaxEnt goes
-from 29% to 14% [−4%, +34%], (xx)) nor at β = 2 (26% behind, not the floor,
-cause open)*; (2) a
-leave-one-family-out arm — *not run; the stand-in is F_60k, trained on none
-of the families: within 7% at β = 8, better on lattices at β = 16*;
-(3) coverage within ±0.03 of nominal per noise band and per β — *met for the
-reported window intervals with the band table (by β 0.49–0.51 / 0.90–0.91,
-by repetition 0.48–0.52 / 0.88–0.92); not met by the samples themselves
-(0.58 / 0.94)*; (4) data-fit rank 0.45–0.55 — *0.49 pooled, 0.43 below
+lattice families at five settings; on line spectra level with MaxEnt at
+β = 8, noise 1e-4 once the fit lowers the floor (1.01 [0.88, 1.16], from
+1.15), ahead at β = 8, noise 1e-3 and 1e-2 and at β = 16, behind at β = 2
+(1.14 [1.02, 1.27]; not the floor, cause open) ((xxii))*; (2) a
+leave-one-family-out arm — *training (`scripts/step3/run_leave_out.sh`: five
+lattice and three line families withheld); the stand-in so far is F_60k,
+trained on none of the families: within 7% at β = 8, better on lattices at
+β = 16*;
+(3) coverage within ±0.03 of nominal per noise band and per β — *met on
+draws of the prior by the intervals as the report states them (fresh 288
+truths: 0.52 / 0.90, per noise band 0.50–0.53 / 0.88–0.92; earlier: by β
+0.49–0.51 / 0.90–0.91, by repetition 0.48–0.52 / 0.88–0.92), and pooled on
+100 exact lattice spectra (0.50 / 0.89), where two settings are low at the
+90% level (0.81 at β = 8, noise 1e-4; 0.84 at β = 2).  Not met on exact line
+spectra: 0.52 / 0.86 where narrow lines are flagged, 0.29 / 0.64 where they
+are not ((xxii)); the bracket from the data alone holds in every window*;
+(4) data-fit rank 0.45–0.55 — *0.49 pooled, 0.43 below
 error bars of 1e-4*; (5) the suite no worse than the banked run — *met
 (0.0295 / 0.0627 against 0.0296 / 0.0833); 7% behind F_60k at equal
-tether at 1e-3*; (6) three training seeds — *met: 0–2% apart on lattice spectra, 1–6% on
-line spectra, same verdict against MaxEnt at every setting, seed 1's band
-table transfers ((xxi))*;
+tether at 1e-3*; (6) three training seeds — *met: 0–2% apart on lattice
+spectra, 1–6% on line spectra, same verdict against MaxEnt at every
+setting, seed 1's band table transfers ((xxi))*;
 (7) a real DQMC run of a model with a known spectrum — *done: below MaxEnt
-and the VAE, one satellite outside its interval*.
+and the VAE, the upper satellite and its neighbour window outside their
+intervals by 0.02 and 0.01 in weight*.
 
 **Step-2 build (1): the smooth-family label bank — built, judged,
 pinned** (*measured*, 2026-08-27).  `data/label_bank.py` +

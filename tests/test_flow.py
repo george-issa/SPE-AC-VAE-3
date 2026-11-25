@@ -165,3 +165,37 @@ def test_feedback_flow_sees_the_likelihood_and_trains(batch, tmp_path):
     m2 = load_flow(path)
     assert m2.feedback and torch.equal(m2.fb_proj.weight, m.fb_proj.weight)
     assert not FlowPosterior(d_model=32, enc_layers=1, flow_layers=1, n_heads=2, d_ff=64).feedback
+
+
+def test_lowered_floor_keeps_the_proposals_and_lets_the_fit_narrow_a_line():
+    from spevae.models.flow import LoweredFloor, refine_samples
+    torch.manual_seed(0)
+    beta = 8.0
+    m = FlowPosterior(d_model=32, enc_layers=1, flow_layers=1, n_heads=2, d_ff=64).eval()
+    low = LoweredFloor(m, 4.0)
+    assert abs(low.coords.gamma_min - m.coords.gamma_min / 4.0) < 1e-15 and low.P == m.P
+    # the same token coordinates, re-expressed, are the same poles
+    z = torch.randn(5, m.P, 5)
+    p0 = m.coords.decode(z, nu_max=m.nu_max(beta))
+    p1 = low.coords.decode(low.recode(z), nu_max=low.nu_max(beta))
+    for k in ("eps", "gamma", "a", "b"):
+        assert torch.allclose(getattr(p0, k), getattr(p1, k), rtol=1e-5, atol=1e-6), k
+    with pytest.raises(ValueError):
+        LoweredFloor(m, 0.5)
+    # two exact lines at omega = +-1 (a Hubbard atom); proposals: two poles there, 1.5x the floor wide
+    x = torch.linspace(0.0, 1.0, 65)
+    e = torch.tensor([-1.0, 1.0], dtype=torch.float64) * beta
+    G = (0.5 * torch.exp(-x.double()[:, None] * e) / (1.0 + torch.exp(-e))).sum(-1).float()
+    sigma = torch.full_like(G, 1e-4 * float(G.max()))
+    lab = {"eps": e.float()[None], "gamma": torch.full((1, 2), 1.5 * m.coords.gamma_min),
+           "a": torch.full((1, 2), 0.5), "b": torch.zeros(1, 2)}
+    z0 = torch.cat([m.coords.encode(lab), torch.zeros(1, m.P - 2, 5)], 1)
+    z0[0, 2:, 4] = -1.0
+    z0 = z0.repeat(3, 1, 1)
+    args = (torch.ones(3), beta, x, G.expand(3, -1), sigma.expand(3, -1), torch.eye(65), 1.0)
+    ps, chi = refine_samples(m, z0, *args)
+    ps_low, chi_low = refine_samples(low, low.recode(z0), *args)
+    assert float(ps.gamma[:, :2].min()) >= m.coords.gamma_min                # the trained floor binds
+    assert float(ps_low.gamma[:, :2].max()) < m.coords.gamma_min             # the lowered one is used
+    assert float(ps_low.gamma[:, :2].min()) >= low.coords.gamma_min
+    assert float(chi_low.max()) < 0.5 * float(chi.min())                     # and the lines fit better

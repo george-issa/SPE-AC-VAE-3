@@ -27,6 +27,10 @@ every noise level is seen at `reps` temperatures (default 1: 288 truths;
 for testing a band table on a run it was not fitted on.
 `count.pt` is a pole-count classifier (`scripts/step3/train_count.py`); with
 it the reported samples are resampled to its count posterior.
+`CAL_FLOOR` is handed to the report as `floor_factor` (default `auto`, the
+report's own default; `CAL_FLOOR=1` is the width floor as trained, which is
+what every run before 2026-11-25 used); each truth records the factor its
+fit used and the intervals as the report states them.
 """
 import json
 import math
@@ -46,6 +50,8 @@ NOISES = np.exp(np.linspace(math.log(1e-5), math.log(3e-2), 12)).tolist()
 BETAS = (1.0, 2.0, 4.0, 8.0, 12.0, 20.0)
 DTAUS = (0.05, 0.125, 0.25, 0.1, 0.02, 0.2, 0.5)
 M, S = int(os.environ.get("CAL_TRUTHS", 24)), int(os.environ.get("CAL_SAMPLES", 32))
+FLOOR = os.environ.get("CAL_FLOOR", "auto")
+FLOOR = FLOOR if FLOOR == "auto" else float(FLOOR)
 ARMS = ("raw", "posterior", "posterior_count")
 BANDS = ((1e-5, 1e-4), (1e-4, 1e-3), (1e-3, 1e-2), (1e-2, 1.0))      # noise bands of the shipping gate
 COL = {"raw": "#2a78d6", "posterior": "#eb6834", "posterior_count": "#0f8a8a"}
@@ -169,13 +175,19 @@ def run(flow_path, bank, out, shard, nshards, lam=10.0, base_scale=None, reps=1,
             rec["arms"]["raw"].append({"w": window_weights_poles(raw, beta, DEFAULT_WINDOWS).tolist(),
                                        "chi2": (dr * dr).mean(-1).tolist()})
             rep = continue_posterior(flow, b.G[m], b.x, beta, b.sigma[m], b.inv_sqrt_R, n_samples=S,
-                                     bounds=False, lam=lam,
+                                     bounds=False, lam=lam, floor_factor=FLOOR,
                                      generator=torch.Generator().manual_seed(900 + 97 * i + m))
             dim = PoleSet(rep.poles.eps * beta, rep.poles.gamma * beta, rep.poles.a, rep.poles.b)
             rec["arms"]["posterior"].append({
                 "w": window_weights_poles(dim, beta, DEFAULT_WINDOWS).tolist(), "chi2": rep.chi2.tolist(),
                 "accepted": rep.n_accepted, "kept_raw": rep.n_kept_raw,
-                "born": rep.diagnostics.get("samples_given_a_pole", 0), "warnings": len(rep.warnings)})
+                "born": rep.diagnostics.get("samples_given_a_pole", 0), "warnings": len(rep.warnings),
+                "floor_factor": rep.diagnostics["floor_factor"],
+                # the intervals exactly as the report states them: (q05, q25, q75, q95) per window
+                "reported": [[w_["q05"], w_["q25"], w_["q75"], w_["q95"]] for w_ in rep.windows],
+                "line_shape": bool(rep.diagnostics.get("line_shape_readings")),
+                "at_floor": rep.diagnostics.get("weight_at_trained_width_floor",
+                                                rep.diagnostics["weight_at_width_floor"])})
             rec["arms"]["posterior"][-1]["n"] = (rep.poles.a != 0).sum(-1).tolist()
             if count_model is not None:               # the same samples, counts matched to the classifier
                 rec["arms"].setdefault("posterior_count", []).append(

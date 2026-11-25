@@ -6,7 +6,7 @@ the same data and the same noise redraws:
 
   standard   the floor the model was trained with
   lowered    the floor divided by `factor` (default 4), on a quadrature
-             refined by the same factor
+             refined by the same factor (`spevae.models.flow.LoweredFloor`)
 
 and, for the lowered floor, once more with a weaker tether (1 instead of 10),
 so that a null result cannot be the tether holding the widths at the proposal.
@@ -51,51 +51,9 @@ LABEL = {"standard": "flow, floor as trained", "lowered": "flow, floor lowered i
          "lowered_weak": "same, weaker tether (1)", "maxent": "MaxEnt"}
 
 
-class Lowered:
-    """The flow's pole coordinates with the width floor divided by `factor`."""
-
-    def __init__(self, flow, factor):
-        from spevae.models.flow import PoleCoords
-        c = flow.coords
-        self.old = c
-        self.coords = PoleCoords(c.gamma_min / factor, c.D)
-        self.coords.mean.copy_(c.mean)
-        self.coords.std.copy_(c.std)
-        self.nu_max = flow.nu_max
-
-    def recode(self, z):
-        """The same pole sets, written in the lowered coordinates."""
-        c, n = self.old, self.coords
-        u_g = z[..., 1] * c.std[1] + c.mean[1]
-        gamma = c.gamma_min + torch.exp(u_g.clamp(-12.0, 8.0))
-        out = z.clone()
-        out[..., 1] = (torch.log(gamma - n.gamma_min) - n.mean[1]) / n.std[1]
-        return out
-
-
-class finer_quadrature:
-    """Quadrature step tied to the lowered floor while the block runs."""
-
-    def __init__(self, gamma_min):
-        self.g = float(gamma_min)
-
-    def __enter__(self):
-        from spevae.physics import SpectralQuadrature
-        self.cls, self.orig = SpectralQuadrature, SpectralQuadrature.for_beta.__func__
-        orig, g = self.orig, self.g
-
-        def for_beta(cls, beta, *a, **kw):
-            kw.setdefault("gamma_min", g)
-            return orig(cls, beta, *a, **kw)
-        SpectralQuadrature.for_beta = classmethod(for_beta)
-
-    def __exit__(self, *exc):
-        self.cls.for_beta = classmethod(self.orig)
-
-
 def run_truth(flow, item, beta, noise, arms, factor):
     from spevae.evaluation import cases as C
-    from spevae.models.flow import refine_samples
+    from spevae.models.flow import LoweredFloor, refine_samples
     from spevae.posterior import weight_at_width_floor
     inst = C.draw(item["truth"], noise, J.SEED)
     tr = inst.truth
@@ -104,7 +62,7 @@ def run_truth(flow, item, beta, noise, arms, factor):
     z, norm = flow.sample_coords(inst.G, tr.x, beta, sigma=inst.sigma, n_samples=J.S, generator=g,
                                  inv_sqrt_R=inst.isr)
     state = g.get_state()
-    low = Lowered(flow, factor)
+    low = LoweredFloor(flow, factor)
     out = {}
     for arm in arms:
         fac, lam = ARM[arm]
@@ -115,8 +73,7 @@ def run_truth(flow, item, beta, noise, arms, factor):
         if fac == 1.0:
             ps, c2 = refine_samples(flow, z, *args, **kw)
         else:
-            with finer_quadrature(low.coords.gamma_min):
-                ps, c2 = refine_samples(low, low.recode(z), *args, **kw)
+            ps, c2 = refine_samples(low, low.recode(z), *args, **kw)
         acc = (c2 <= 1.0 + 3.0 * math.sqrt(2.0 / L)).numpy()
         none_fit = not acc.any()
         if none_fit:
