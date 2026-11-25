@@ -209,7 +209,7 @@ def _s_gauss(z, mu, sigma):
 
 @dataclass
 class SmoothTruth:
-    """One smooth spectral truth: family + parameters + beta.
+    r"""One smooth spectral truth: family + parameters + beta.
 
     Internally reduced to components of three kinds -- signed Gaussians
     (closed forms), and resolution-broadened semicircle / box cores (exact
@@ -960,9 +960,12 @@ class LabelBank:
         """The exact truth of entry ``i`` (a :class:`SmoothTruth`, or an
         :class:`~spevae.data.exact_models.ExactTruth` for the exactly
         solvable lattice families -- same interface)."""
-        from .exact_models import EXACT_CONTINUUM, ExactTruth
+        from .exact_models import EXACT_CONTINUUM, EXACT_DISCRETE, ExactTruth
         if self.family[i] in EXACT_CONTINUUM:
             return ExactTruth(self.family[i], float(self.beta[i]), self.params[i])
+        if self.family[i] in EXACT_DISCRETE:
+            raise ValueError(f"entry {i} is an exact line spectrum ({self.family[i]}); its lines are in "
+                             "the bank's .lines.pt file, not rebuilt from the parameters")
         return SmoothTruth(self.family[i], float(self.beta[i]), self.params[i])
 
     def label(self, i: int) -> PoleSet:
@@ -1009,14 +1012,20 @@ def draw_bank_truths(n_per_family: int, seed: int, beta_range=(2.0, 20.0),
                       families: tuple[str, ...] = SMOOTH_FAMILIES,
                       beta_choices: tuple[float, ...] | None = None) -> list:
     """The truths of a bank, from one rng stream (seed-deterministic).  Smooth
-    families and the exactly solvable lattice families may be mixed."""
-    from .exact_models import EXACT_CONTINUUM, sample_exact_truth
+    families, the exactly solvable lattice families and the exactly
+    diagonalised (line) families may be mixed; a line truth is a
+    :class:`~spevae.data.exact_models.DiscreteSpectrum`, which carries the
+    interface the label protocol reads."""
+    from .exact_models import (EXACT_CONTINUUM, EXACT_DISCRETE, sample_discrete_spectrum,
+                               sample_exact_truth)
 
     rng = torch.Generator().manual_seed(int(seed))
 
     def draw(fam, beta):
         if fam in EXACT_CONTINUUM:
             return sample_exact_truth(fam, beta, rng)
+        if fam in EXACT_DISCRETE:
+            return sample_discrete_spectrum(fam, beta, rng)
         return sample_smooth_truth(fam, beta, rng)
 
     lo, hi = (math.log(v) for v in beta_range)

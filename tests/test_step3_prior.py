@@ -51,3 +51,55 @@ def test_defaults_leave_the_step2_stream_untouched():
     assert torch.equal(x.G, y.G) and x.family == y.family
     with pytest.raises(ValueError):
         PolePriorGenerator(p_exact=1.5)
+
+
+def test_line_spectra_in_the_bank_give_exact_data_and_their_pole_label(tmp_path):
+    """An exact line spectrum in the label bank: the training data are the lines' own G(tau)
+    in closed form, the target is the canonical pole label, the node spectrum is the lines
+    binned onto the nodes."""
+    import numpy as np
+    from spevae.data import exact_models as X
+    from spevae.data.label_bank import LabelBank, draw_bank_truths, extract_smooth_label
+    beta = 8.0
+    truths = draw_bank_truths(2, seed=11, families=("holstein_atom",), beta_choices=(beta,))
+    assert all(isinstance(t, X.DiscreteSpectrum) for t in truths)
+    labs = [extract_smooth_label(t, P_max=12) for t in truths]
+    P, n = 12, len(truths)
+    cols = {k: torch.zeros(n, P) for k in ("eps", "gamma", "a", "b")}
+    cols["gamma"] += 1.0
+    for row, lab in enumerate(labs):
+        for k in cols:
+            cols[k][row, :lab.n] = torch.tensor(getattr(lab, k)).float()
+    bank = LabelBank(P_max=P, beta=torch.full((n,), beta), n_true=torch.tensor([lab.n for lab in labs]),
+                     resid=torch.tensor([lab.resid for lab in labs]).float(),
+                     neg_weight=torch.tensor([lab.neg_weight for lab in labs]).float(),
+                     family=[t.family for t in truths], params=[t.params for t in truths],
+                     ladders=[lab.ladder for lab in labs], meta={}, **cols)
+    path = str(tmp_path / "bank.pt")
+    bank.save(path)
+    torch.save({row: (torch.tensor(t.energies), torch.tensor(t.weights / t.weights.sum()))
+                for row, t in enumerate(truths)}, path + ".lines.pt")
+    with pytest.raises(ValueError):
+        LabelBank.load(path).truth(0)                              # lines are not rebuilt from parameters
+
+    g = PolePriorGenerator(residue_mode="dispersive", beta_choices=(beta,), smooth_bank=path, p_smooth=1.0,
+                           dtau_choices=(0.125,), dtype=torch.float64)
+    g.seed_scalars(0)
+    b = g.batch(6, torch.Generator().manual_seed(0))
+    assert all(f == "lines:holstein_atom" for f in b.family)
+    x = b.x.double().numpy()
+    for i in range(6):
+        row = next(r for r in range(n) if int(b.poles_true["n_true"][i]) == labs[r].n
+                   and torch.allclose(b.poles_true["eps"][i, :labs[r].n].float(), cols["eps"][r, :labs[r].n] * beta))
+        t = truths[row]
+        exact = t.greens(x) / t.weights.sum()
+        assert np.abs(b.G_clean[i].numpy() - exact).max() < 1e-12      # closed form, not quadrature
+        # the label reproduces those data (a dense ladder is representable) ...
+        from spevae.physics import PoleGreens, PoleSet
+        lab = PoleSet(*(b.poles_true[k][i:i + 1] for k in ("eps", "gamma", "a", "b")))
+        assert float((PoleGreens(b.quad)(lab, b.x)[0] - b.G_clean[i]).abs().max()) < 1e-4
+        # ... and the node spectrum carries the lines' weight, line by line
+        assert abs(float((b.A_true[i] * b.quad.weights).sum()) - 1.0) < 1e-9
+        nodes = b.quad.nodes / beta
+        lo = float((b.A_true[i] * b.quad.weights * (nodes < 0)).sum())
+        assert abs(lo - float((t.weights / t.weights.sum())[t.energies < 0].sum())) < 1e-6

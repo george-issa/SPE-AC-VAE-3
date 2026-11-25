@@ -41,6 +41,7 @@ import os
 import torch
 
 from ..physics.forward import PoleGreens, SpectralQuadrature
+from ..physics.kernel import fermi_kernel
 from ..physics.poles import DISPERSIVE_SCALE, PoleSet
 from ..physics.positivity import certify
 from .noise import NoiseModel, sample_correlated_noise, whitener
@@ -49,6 +50,19 @@ from .synthetic import TrainingBatch
 __all__ = ["PolePriorGenerator", "MixedGenerator"]
 
 MOTIFS = ("lorentz", "smooth_band", "edged_band", "fano", "ladder")
+
+
+def lines_on_nodes(energies: torch.Tensor, weights: torch.Tensor, beta: float,
+                   quad: SpectralQuadrature) -> torch.Tensor:
+    """An exact line spectrum as a node spectrum: every line's weight on its nearest quadrature
+    node (dimensionless, so that ``(A * quad.weights).sum() = sum(weights)``).  For window sums
+    and plots only -- a line's G(tau) is evaluated in closed form, never from this."""
+    nodes, order = torch.sort(quad.nodes.detach().cpu().double())      # the rule's own order is not ascending
+    nu = (float(beta) * energies.double()).clamp(float(nodes[0]), float(nodes[-1]))
+    k = order[torch.bucketize(nu, 0.5 * (nodes[1:] + nodes[:-1]))]
+    A = torch.zeros_like(nodes)
+    A.index_add_(0, k, weights.double() / quad.weights.detach().cpu().double()[k])
+    return A
 
 
 class PolePriorGenerator:
@@ -148,6 +162,12 @@ class PolePriorGenerator:
         self._bank_nodes = None
         if bank_path is not None and os.path.exists(bank_path + ".nodes.pt"):
             self._bank_nodes = torch.load(bank_path + ".nodes.pt", weights_only=False)
+        # exact line spectra in the bank: row -> (energies, weights), physical units.  Their
+        # G(tau) is a finite sum of kernels, evaluated in closed form (no quadrature can hold a
+        # delta); the node spectrum of such a row is the lines binned onto the nodes.
+        self._bank_lines = {}
+        if bank_path is not None and os.path.exists(bank_path + ".lines.pt"):
+            self._bank_lines = torch.load(bank_path + ".lines.pt", weights_only=False)
         # A discrete beta grid instead of a continuous range: bank labels are
         # beta-dependent, so smooth / lattice truths can only join batches
         # drawn at a beta the bank holds.
@@ -332,6 +352,9 @@ class PolePriorGenerator:
                 if k is not None:
                     A = pre["A"][k].to(self.dtype)
                     self._smooth_A[key] = A
+        if A is None and j in self._bank_lines:
+            A = lines_on_nodes(*self._bank_lines[j], beta, quad).to(self.dtype)
+            self._smooth_A[key] = A
         if A is None:
             tr = self.smooth_bank.truth(j)
             nu = quad.nodes.detach().cpu().double().numpy()
@@ -399,7 +422,7 @@ class PolePriorGenerator:
                 lab["gamma"][i, :m] = bk.gamma[j, :m] * beta
                 lab["a"][i, :m] = bk.a[j, :m]
                 lab["b"][i, :m] = bk.b[j, :m]
-                family[i] = f"smooth:{bk.family[j]}"
+                family[i] = f"{'lines' if j in self._bank_lines else 'smooth'}:{bk.family[j]}"
                 smooth[i] = j
                 continue
             e, g, a, b = self.sample_poles(beta)
@@ -422,6 +445,11 @@ class PolePriorGenerator:
                 A_true[i] = self._smooth_A_nodes(j, beta, quad).to(A_true.device)
         K = PoleGreens(quad).kernel_matrix(x)
         G_clean = (A_true * quad.weights.to(A_true.dtype)) @ K
+        for i, j in smooth.items():                  # exact line spectra: closed form
+            if j in self._bank_lines:
+                e, w = (v.to(G_clean.dtype).to(G_clean.device) for v in self._bank_lines[j])
+                G_clean[i] = (w.unsqueeze(-1) * fermi_kernel(x.reshape(1, -1).to(G_clean.dtype),
+                                                             (beta * e).reshape(-1, 1))).sum(0)
 
         model = NoiseModel.sample(self._cpu_rng,
                                   scale_range=self.noise_scale_range,

@@ -1,4 +1,4 @@
-"""Step-3 label bank: smooth families + exactly solvable lattice models, on a beta grid.
+"""Step-3 label bank: smooth families + exactly solvable models, on a beta grid.
 
 For every beta in the grid and every family -- the five smooth families of
 step 2 and the ten exact lattice families of `data/exact_models.py` -- draw
@@ -14,6 +14,17 @@ Entries are kept ("trusted") when the gap is below `--gap-max` and the
 label's negative weight is within the dip tolerance, as in step 2.
 
     python scripts/step3/build_physics_bank.py --out out/step3/bank --n-per-family 64 --workers 14
+
+The exactly diagonalised (line) families go through the same protocol
+(`--families hubbard_atom ...`): data from the exact lines in closed form,
+target the canonical pole label.  A label is trusted only where the pole
+model can reproduce the lines' G(tau) -- dense sets of lines; isolated
+sharp lines are narrower than the width floor and fail the gap.  The lines
+of the kept entries are written to `<bank>.lines.pt` (the generator
+evaluates their G(tau) from them); their node spectrum is the lines binned
+onto the nodes.  `--base BANK` appends the kept entries to an existing
+trusted bank and writes the merged bank, with its node and line files, to
+`--out`.
 """
 import argparse
 import json
@@ -52,17 +63,56 @@ def entry(job):
     beta = truth.beta
     quad = _quad(beta)
     nu = quad.nodes.double().numpy()
-    A = torch.tensor(truth.A(nu / beta) / beta, dtype=torch.float64)
     x = torch.linspace(0.0, 1.0, 65, dtype=torch.float64)
     fwd = PoleGreens(quad)
     K = fwd.kernel_matrix(x)
-    G_truth = (A * quad.weights.double()) @ K
+    lines = None
+    if hasattr(truth, "energies"):                  # an exact line spectrum
+        from spevae.data.pole_prior import lines_on_nodes
+        w = truth.weights / truth.weights.sum()
+        lines = (torch.tensor(truth.energies, dtype=torch.float64), torch.tensor(w, dtype=torch.float64))
+        A = lines_on_nodes(*lines, beta, quad)
+        G_truth = torch.tensor(truth.greens(x.numpy()) / truth.weights.sum())
+    else:
+        A = torch.tensor(truth.A(nu / beta) / beta, dtype=torch.float64)
+        G_truth = (A * quad.weights.double()) @ K
     ps = PoleSet(eps=torch.tensor(lab.eps).double().unsqueeze(0) * beta,
                  gamma=torch.tensor(lab.gamma).double().unsqueeze(0) * beta,
                  a=torch.tensor(lab.a).double().unsqueeze(0),
                  b=torch.tensor(lab.b).double().unsqueeze(0))
     gap = float((fwd(ps, x, kernel_matrix=K)[0] - G_truth).abs().max())
-    return lab, A.float().numpy(), gap, time.time() - t0
+    return lab, A.float().numpy(), gap, time.time() - t0, lines
+
+
+def merge(base_path, add, add_nodes, add_lines, out_path):
+    """Append the bank `add` (with its node spectra and lines) to the trusted bank at `base_path`."""
+    from spevae.data.label_bank import LabelBank
+    base = LabelBank.load(base_path)
+    if base.P_max != add.P_max:
+        raise SystemExit(f"P_max differs: {base.P_max} and {add.P_max}")
+    n0 = int(base.beta.numel())
+    cat = lambda k: torch.cat([getattr(base, k), getattr(add, k)], 0)
+    merged = LabelBank(P_max=base.P_max, **{k: cat(k) for k in ("beta", "eps", "gamma", "a", "b", "n_true",
+                                                                "resid", "neg_weight")},
+                       family=list(base.family) + list(add.family), params=list(base.params) + list(add.params),
+                       ladders=list(base.ladders) + list(add.ladders),
+                       meta={**base.meta, "appended": add.meta, "base": str(base_path)})
+    merged.save(out_path)
+    nodes = torch.load(str(base_path) + ".nodes.pt", weights_only=False)
+    for beta, d in add_nodes.items():
+        tgt = nodes.setdefault(beta, {"index": {}, "A": torch.zeros(0, d["A"].shape[1])})
+        if tgt["A"].shape[1] != d["A"].shape[1]:
+            raise SystemExit(f"node count differs at beta {beta}")
+        off = tgt["A"].shape[0]
+        tgt["A"] = torch.cat([tgt["A"], d["A"]], 0)
+        tgt["index"].update({n0 + row: off + k for row, k in d["index"].items()})
+    torch.save(nodes, str(out_path) + ".nodes.pt")
+    lines = {}
+    if Path(str(base_path) + ".lines.pt").exists():
+        lines.update(torch.load(str(base_path) + ".lines.pt", weights_only=False))
+    lines.update({n0 + row: v for row, v in add_lines.items()})
+    torch.save(lines, str(out_path) + ".lines.pt")
+    print(f"merged: {n0} + {int(add.beta.numel())} entries, {len(lines)} of them line spectra -> {out_path}")
 
 
 def main():
@@ -79,6 +129,8 @@ def main():
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--gap-max", type=float, default=3e-5)
     ap.add_argument("--residue-mode", default="complex")
+    ap.add_argument("--base", type=Path, default=None,
+                    help="an existing trusted bank to append the kept entries to")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -137,6 +189,11 @@ def main():
     for d in nodes.values():
         d["A"] = torch.stack(d["A"])
     torch.save(nodes, str(args.out / "label_bank_trusted.pt") + ".nodes.pt")
+    lines = {row: results[i][4] for row, i in enumerate(map(int, keep)) if results[i][4] is not None}
+    if lines:
+        torch.save(lines, str(args.out / "label_bank_trusted.pt") + ".lines.pt")
+    if args.base is not None:
+        merge(args.base, trusted, nodes, lines, args.out / "label_bank_merged.pt")
 
     fams = list(dict.fromkeys(t.family for t in truths))
     report = {"meta": meta, "wall_seconds": time.time() - t0, "per_family": {}, "per_beta": {}}

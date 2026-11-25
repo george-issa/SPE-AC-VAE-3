@@ -27,6 +27,9 @@ every noise level is seen at `reps` temperatures (default 1: 288 truths;
 for testing a band table on a run it was not fitted on.
 `count.pt` is a pole-count classifier (`scripts/step3/train_count.py`); with
 it the reported samples are resampled to its count posterior.
+`CAL_P_SMOOTH`, `CAL_P_EXACT` set the mixture of the prior the truths are
+drawn from (default 0.35 / 0.15, the step-3 recipe); with a bank that holds
+exact line spectra those are drawn with the bank's share.
 `CAL_FLOOR` is handed to the report as `floor_factor` (default `auto`, the
 report's own default; `CAL_FLOOR=1` is the width floor as trained, which is
 what every run before 2026-11-25 used); each truth records the factor its
@@ -50,6 +53,8 @@ NOISES = np.exp(np.linspace(math.log(1e-5), math.log(3e-2), 12)).tolist()
 BETAS = (1.0, 2.0, 4.0, 8.0, 12.0, 20.0)
 DTAUS = (0.05, 0.125, 0.25, 0.1, 0.02, 0.2, 0.5)
 M, S = int(os.environ.get("CAL_TRUTHS", 24)), int(os.environ.get("CAL_SAMPLES", 32))
+# mixture of the prior the truths are drawn from: the step-3 recipe unless the checkpoint's differs
+P_SMOOTH, P_EXACT = float(os.environ.get("CAL_P_SMOOTH", 0.35)), float(os.environ.get("CAL_P_EXACT", 0.15))
 FLOOR = os.environ.get("CAL_FLOOR", "auto")
 FLOOR = FLOOR if FLOOR == "auto" else float(FLOOR)
 ARMS = ("raw", "posterior", "posterior_count")
@@ -85,7 +90,7 @@ def cell_batch(bank, j):
     nz = NOISES[i_]
     beta = BETAS[(i_ + r_) % len(BETAS)]
     gen = PolePriorGenerator(omega_c=20.0, P_max=12, residue_mode="dispersive", smooth_bank=bank,
-                             p_smooth=0.35, p_exact=0.15, beta_choices=(beta,),
+                             p_smooth=P_SMOOTH, p_exact=P_EXACT, beta_choices=(beta,),
                              noise_scale_range=(nz, nz),
                              dtau_choices=(DTAUS[(i_ + 2 * r_) % len(DTAUS)],))
     with gen.fixed_scalars(31000 + j):
