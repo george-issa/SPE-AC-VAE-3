@@ -91,6 +91,8 @@ def run(flow, vae, noise, beta, lam=1.0, seed=None):
     from spevae.evaluation import cases as C
     from spevae.evaluation import methods as M
     from spevae.models.flow import refine_samples
+    from spevae.posterior import band_levels
+    table = getattr(flow, "meta", {}).get("band_calibration")
     rows = []
     for k, item in enumerate(make_truths(beta)):
         inst = C.draw(item["truth"], noise, SEED if seed is None else int(seed) + k)
@@ -108,7 +110,10 @@ def run(flow, vae, noise, beta, lam=1.0, seed=None):
         if none_fit:
             acc[:] = True
         A = a_phys(ps, beta)[acc]
-        q = np.quantile(A, [0.05, 0.5, 0.95], axis=0)
+        # the 90% band as the package reports it: calibrated if the checkpoint ships a band table
+        h90 = band_levels(table, float((inst.sigma / inst.G.abs().amax()).median()), beta)[0.9] / 2.0
+        q = np.quantile(A, [0.5 - h90, 0.5, 0.5 + h90], axis=0)
+        q_plain = np.quantile(A, [0.05, 0.95], axis=0)
         zd = M.make_method("zdlm", vae).synthetic(inst)
         A_zd = a_phys(zd.poles, beta)[0]
         me = M.make_method("maxent").synthetic(inst)
@@ -127,6 +132,9 @@ def run(flow, vae, noise, beta, lam=1.0, seed=None):
         if item["kind"] == "continuum":
             At = item["A_grid"]
             row["flow_band90_cover"] = float(((At >= q[0] - 1e-9) & (At <= q[2] + 1e-9))[core].mean())
+            row["flow_band90_cover_plain"] = float(
+                ((At >= q_plain[0] - 1e-9) & (At <= q_plain[1] + 1e-9))[core].mean())
+            row["flow_band90_width"] = float((q[2] - q[0])[core].mean())
         rows.append((row, (q, A_zd, A_me, item)))
         w = row["w1"]
         print(f"{item['kind']:9s} {item['family']:16s} W1 flow {w['flow']:.4f} VAE {w['vae']:.4f} "
@@ -218,6 +226,11 @@ def main():
             "flow_frac_accepted_min_median": [float(min(r["flow_frac_accepted"] for r in sel)),
                                               float(np.median([r["flow_frac_accepted"] for r in sel]))],
             "flow_no_sample_fits": int(sum(r["flow_no_sample_fits"] for r in sel))}
+        if kind == "continuum":
+            summ[kind]["band90_pointwise_cover"] = float(np.mean([r["flow_band90_cover"] for r in sel]))
+            summ[kind]["band90_pointwise_cover_plain"] = float(
+                np.mean([r["flow_band90_cover_plain"] for r in sel]))
+            summ[kind]["band_table"] = bool(getattr(flow, "meta", {}).get("band_calibration"))
     with open(out / f"exact_models_{tag}.json", "w") as fh:
         json.dump({"noise": noise, "beta": beta, "samples": S, "tether": lam, "noise_seed": seed,
                    "summary": summ,

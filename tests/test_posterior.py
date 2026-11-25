@@ -72,3 +72,54 @@ def test_small_error_bars_draw_the_systematics_warning_unless_a_floor_is_set():
                              sigma_floor=1e-3, **kw)
     assert not any("Trotter" in w for w in rep.warnings)
     assert rep.diagnostics["sigma_floor"] == 1e-3 and rep.diagnostics["relative_error_bar"] < 1e-4
+
+
+def test_band_table_recovers_a_known_overdispersion():
+    """Samples twice as wide as the truth's distribution: the table finds the narrower level."""
+    from statistics import NormalDist
+    from spevae.posterior import BAND_TARGETS, band_levels, fit_band_table
+
+    rng = np.random.default_rng(0)
+    n, S = 4000, 64
+    truth = rng.normal(size=(n, 1))
+    samples = 2.0 * rng.normal(size=(n, S))                       # over-dispersed by a factor 2
+    pit = ((samples < truth).sum(1) + rng.random(n)) / (S + 1)
+    need = np.abs(2 * pit - 1)[:, None]
+    noise, beta = np.full(n, 1e-3), np.full(n, 8.0)
+    table = fit_band_table(need, noise, beta)
+    lev = band_levels(table, 1e-3, 8.0)
+    nd = NormalDist()
+    for t in BAND_TARGETS:                                        # exact: 2 Phi(z_t / 2) - 1
+        want = 2 * nd.cdf(nd.inv_cdf(0.5 + t / 2) / 2.0) - 1
+        assert abs(lev[t] - want) < 0.03, (t, lev[t], want)
+    assert band_levels(None, 1e-3, 8.0) == {t: t for t in BAND_TARGETS}
+    # strata: a stratum with too few truths falls back to the pooled levels
+    noise[:50] = 1e-5
+    t2 = fit_band_table(need, noise, beta, noise_edges=(1e-4,), min_truths=100)
+    assert t2["truths"] == [[50], [n - 50]] and t2["levels"][0][0] == t2["pooled"]
+    assert band_levels(t2, 3e-6, 8.0) == band_levels(t2, 1e-5, 8.0)
+
+
+def test_a_band_table_narrows_the_reported_bands_and_leaves_the_samples_alone():
+    path = "out/flow/F_60k.pt"
+    if not os.path.exists(path):
+        pytest.skip("reference flow checkpoint not present")
+    from spevae.models.flow import load_flow
+    flow = load_flow(path).eval()
+    inst = C.draw(C.realize("lorentz pair"), 1e-3, 7)
+    table = {"targets": [0.5, 0.68, 0.9, 0.95], "noise_edges": [], "beta_edges": [],
+             "levels": [[[0.4, 0.55, 0.8, 0.88]]]}
+    kw = dict(n_samples=48, bounds=True)
+    a = continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr, band_calibration=None,
+                           generator=torch.Generator().manual_seed(3), **kw)
+    b = continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr, band_calibration=table,
+                           generator=torch.Generator().manual_seed(3), **kw)
+    assert torch.equal(a.poles.eps, b.poles.eps) and np.array_equal(a.band["mean"], b.band["mean"])
+    assert np.array_equal(a.band["q50"], b.band["q50"])
+    wa, wb = a.band["q95"] - a.band["q05"], b.band["q95"] - b.band["q05"]
+    assert (wb <= wa + 1e-12).all() and wb.mean() < 0.95 * wa.mean()
+    assert (b.band["q05"] <= b.band["q16"] + 1e-12).all() and (b.band["q16"] <= b.band["q25"] + 1e-12).all()
+    assert (b.band["q75"] <= b.band["q84"] + 1e-12).all()
+    assert b.diagnostics["band_calibrated"] and not a.diagnostics["band_calibrated"]
+    assert b.windows[3]["q95"] - b.windows[3]["q05"] <= a.windows[3]["q95"] - a.windows[3]["q05"] + 1e-12
+    assert "calibrated on held-out" in b.summary() and "not calibrated" in a.summary()

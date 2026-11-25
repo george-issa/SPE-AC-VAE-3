@@ -833,6 +833,57 @@ and ten times the length is worth 10%: the full-length step-3 runs should
 gain on both counts, modestly.  The large factor is the pipeline, not the
 checkpoint.
 
+(xvii) **Part of the excess width is a mixture over pole counts**
+(*measured*, 2026-11-24; `scripts/step3/count_diagnostic.py` →
+`out/step3/count_diag_F3_6k/`; `models/count.py`, `scripts/step3/
+train_count.py`; F3_6k, λ = 10).  On 192 held-out pole-set truths (6 noise /
+β cells, 96 samples each) the reported samples carry +1.35 poles on average
+and their count is off by −6 … +8; 9% have the true count *whatever the
+true count is* — the flow's count is the prior's.  Coverage inside groups
+of samples, same truths: all 0.615 / 0.954, true count 0.528 / 0.919; within
+one pole 0.565 / 0.925; two or more too many 0.614 / 0.959.  Samples with
+too many poles are over-dispersed (rms z of the group mean 0.6–0.8), those
+with too few are overconfident (1.2–2.0).  On the full step-3 prior (288
+truths, all kinds) conditioning on the true count takes 0.60–0.65 / 0.94–0.97
+to 0.57–0.60 / 0.91–0.96: a third to a half of the excess, not all of it.
+The count is only weakly identifiable.  A classifier p(n | G, σ, β) on the
+same encoder reaches cross-entropy 2.12 nats against a prior entropy of 2.36
+after 6k steps (2.03 at 10k of a 30k run), gives the true count probability
+0.15, and does not sharpen as the noise falls: several poles can make one
+smooth feature.  Resampling the reported samples to its count posterior
+(`continue_posterior(count_model=...)`, off by default; paired arm of the
+calibration judge, 96 samples per truth) moves coverage 0.647 / 0.962 →
+0.626 / 0.950 and the window-weight error 0.0467 → 0.0447 at an effective
+sample size of about 70%.  Right direction, a sixth of the gap.
+
+(xviii) **Band table: the reported bands are calibrated, the samples are
+not** (*measured*, 2026-11-24; `posterior.band_levels`, `fit_band_table`,
+`scripts/step3/fit_band_calibration.py`, sidecar `<checkpoint>.bands.json`
+read by `load_flow`).  For every held-out truth and window the central level
+of its sample ensemble at which the truth is just covered is |2·PIT − 1|;
+the level to quote for a target coverage is the matching quantile over
+held-out truths.  F3_6k, 288 truths (96 samples each), fitted on the even
+truths of every cell and tested on the odd ones:
+
+| | 50% band | 68% | 90% band | 95% | strata rms z |
+|---|---|---|---|---|---|
+| plain sample quantiles | 0.642 | 0.807 | 0.954 | 0.981 | 3.46 |
+| pooled table (central 38% / 53% / 79% / 88% of the samples) | 0.508 ± 0.022 | 0.670 | 0.896 ± 0.014 | 0.930 | 0.80 |
+
+By noise band 0.46–0.55 / 0.89–0.90, by β 0.42–0.55 / 0.85–0.94, all within
+1.6 standard errors of nominal at 24–48 truths per stratum; β = 1 reads low
+(0.42 ± 0.06 / 0.85 ± 0.04) and is the stratum to watch — there the plain
+quantiles are already closest to calibrated.  Independent check on the exact
+lattice spectra, pointwise in ω (a statistic the table was not fitted on):
+the 90% band holds the exact A(ω) at 0.975 → 0.923 of frequencies at noise
+1e-3 and 0.990 → 0.944 at 1e-2 (lowest single spectrum 0.80 / 0.84).
+This is a calibration of the *bands*, by construction valid for data that
+resemble the training prior and stratified only as far as it has been
+tested; the samples in `PosteriorReport.poles` stay over-dispersed and say
+so.  The table for a shipped checkpoint must come from the crossed design
+(`calibration.py … reps`), with strata, and its held-out test goes in the
+release notes.
+
 **Gates for calling it shippable** (none claimed yet): known-answer W₁ on
 held-out parameters at or below MaxEnt on every family, and a
 leave-one-family-out arm; PIT coverage within ±0.03 of nominal per noise

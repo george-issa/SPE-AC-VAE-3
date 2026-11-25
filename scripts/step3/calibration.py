@@ -154,6 +154,8 @@ def run(flow_path, bank, out, shard, nshards, lam=10.0, base_scale=None, reps=1,
         rec = {"noise": nz, "beta": beta, "n_tau": int(L), "rep": r_, "reps": int(reps), "samples": S,
                "family": list(b.family), "w_true": w_true.tolist(),
                "n_true": [int(v) for v in b.poles_true["n_true"]],
+               # the stratum variable of the band table, exactly as continue_posterior computes it
+               "rel_noise": (b.sigma / b.G.abs().amax(-1, keepdim=True)).median(-1).values.tolist(),
                "chi2_truth": c_true.tolist(), "arms": {"raw": [], "posterior": []}}
         for m in range(M):
             g = torch.Generator().manual_seed(500 + 97 * i + m)

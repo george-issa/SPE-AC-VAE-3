@@ -43,7 +43,56 @@ from .physics import PoleGreens, SpectralQuadrature
 from .physics.poles import PoleSet
 
 __all__ = ["PosteriorReport", "continue_posterior", "prior_free_bounds", "BOX_SIGMA",
-           "DEFAULT_WINDOWS"]
+           "DEFAULT_WINDOWS", "BAND_TARGETS", "band_levels", "fit_band_table"]
+
+#: Coverages the reported bands are stated at.
+BAND_TARGETS = (0.5, 0.68, 0.9, 0.95)
+
+
+def band_levels(table: dict | None, rel_noise: float, beta: float) -> dict:
+    """Central level of the sample ensemble that holds the truth with each target probability.
+
+    The samples are over-dispersed: measured on held-out draws of the training
+    prior, their central 90% holds the truth about 96% of the time.  A band
+    table, fitted and tested on such draws (:func:`fit_band_table`,
+    ``scripts/step3/fit_band_calibration.py``) and shipped beside the
+    checkpoint, says which central level to quote for each target, per
+    stratum of relative error bar and beta.  Without a table the levels are
+    the targets themselves.
+    """
+    if not table:
+        return {t: t for t in BAND_TARGETS}
+    i = int(np.searchsorted(np.asarray(table.get("noise_edges", []), float), rel_noise, side="right"))
+    k = int(np.searchsorted(np.asarray(table.get("beta_edges", []), float), beta, side="right"))
+    return {float(t): float(v) for t, v in zip(table["targets"], table["levels"][i][k])}
+
+
+def fit_band_table(need, rel_noise, beta, noise_edges=(), beta_edges=(), targets=BAND_TARGETS,
+                   min_truths: int = 100) -> dict:
+    """Band table from held-out truths.
+
+    ``need`` is ``(n_truths, n_stats)``: for every truth and statistic, the
+    central level of its sample ensemble at which the truth is just covered,
+    ``|2 PIT - 1|``.  The level to quote for a target coverage ``t`` is the
+    ``t``-quantile of ``need`` in the stratum; a stratum with fewer than
+    ``min_truths`` truths takes the pooled value.
+    """
+    need, rel_noise, beta = np.asarray(need, float), np.asarray(rel_noise, float), np.asarray(beta, float)
+    pooled = [float(np.quantile(need, t)) for t in targets]
+    ni = np.searchsorted(np.asarray(noise_edges, float), rel_noise, side="right")
+    bi = np.searchsorted(np.asarray(beta_edges, float), beta, side="right")
+    levels, counts = [], []
+    for i in range(len(noise_edges) + 1):
+        levels.append([])
+        counts.append([])
+        for k in range(len(beta_edges) + 1):
+            sel = (ni == i) & (bi == k)
+            counts[-1].append(int(sel.sum()))
+            levels[-1].append([float(np.quantile(need[sel], t)) for t in targets]
+                              if sel.sum() >= min_truths else list(pooled))
+    return {"targets": [float(t) for t in targets], "noise_edges": [float(v) for v in noise_edges],
+            "beta_edges": [float(v) for v in beta_edges], "levels": levels, "pooled": pooled,
+            "truths": counts}
 
 #: Half-width, in standard deviations, of the per-residual box that defines
 #: "consistent with the data" for the prior-free bracket.  With 65 residuals
@@ -110,7 +159,9 @@ class PosteriorReport:
 
     poles: PoleSet                       # accepted samples, physical units
     omega: np.ndarray
-    band: dict                           # q05, q16, q50, q84, q95, mean on omega
+    band: dict                           # q05, q16, q25, q50, q75, q84, q95, mean on omega:
+    #                                      the 90% / 68% / 50% bands (calibrated if the
+    #                                      checkpoint carries a band table) and the median
     chi2: np.ndarray                     # accepted samples, per point, vs the measured data
     chi2_target: float
     n_samples: int
@@ -133,6 +184,14 @@ class PosteriorReport:
             f"{np.quantile(self.chi2, 0.95) / self.chi2_target:.2f}]",
             f"  prior    : {self.prior}",
         ]
+        lev = self.diagnostics.get("band_levels") or {}
+        if self.diagnostics.get("band_calibrated"):
+            lines.append(f"  bands    : calibrated on held-out draws of that prior; the 90% band is the "
+                         f"central {lev.get(0.9, 0.9):.0%} of the samples, the 50% band the central "
+                         f"{lev.get(0.5, 0.5):.0%}")
+        else:
+            lines.append("  bands    : plain sample quantiles, not calibrated (measured conservative: the "
+                         "90% band holds the truth about 96% of the time)")
         if self.windows:
             lines.append("  weight per window: posterior 5-95%  |  allowed by the data alone  "
                          "|  share of the bracket")
@@ -158,7 +217,8 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                        lam: float = 10.0, generator: torch.Generator | None = None,
                        x_fit=None, G_fit=None, sigma_fit=None,
                        max_births: int = 2, sigma_floor: float | None = None,
-                       count_model=None, count_floor: float = 0.02) -> PosteriorReport:
+                       count_model=None, count_floor: float = 0.02,
+                       band_calibration="auto") -> PosteriorReport:
     r"""Posterior over spectra for one dataset, with its evidence and warnings.
 
     Parameters
@@ -203,6 +263,12 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         is usually the larger of the two, and fitting to the statistical
         error alone then fits the discretisation.  Off by default; the
         report warns when the error bars are that small and no floor is set.
+    band_calibration
+        The band table that turns sample quantiles into bands of stated
+        coverage (:func:`band_levels`).  ``"auto"`` uses the one shipped with
+        the checkpoint (``flow.meta["band_calibration"]``) if there is one;
+        ``None`` reports plain sample quantiles.  The samples themselves
+        (``poles``) are never changed.
     count_model
         A :class:`~spevae.models.count.CountPosterior`.  When given, the
         accepted samples are resampled so that their pole counts follow the
@@ -339,8 +405,12 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
     nu = torch.tensor(omega * beta, dtype=torch.float64)
     p64 = PoleSet(*(getattr(sel, k).double() for k in ("eps", "gamma", "a", "b")))
     A = (p64.spectral(nu) * beta).numpy()
-    q = np.quantile(A, [0.05, 0.16, 0.5, 0.84, 0.95], axis=0)
-    band = dict(zip(("q05", "q16", "q50", "q84", "q95"), q), mean=A.mean(0))
+    table = (getattr(flow, "meta", {}).get("band_calibration") if isinstance(band_calibration, str)
+             else band_calibration)
+    lev = band_levels(table, rel_stat, float(beta))
+    h90, h68, h50 = lev[0.9] / 2.0, lev[0.68] / 2.0, lev[0.5] / 2.0
+    q = np.quantile(A, [0.5 - h90, 0.5 - h68, 0.5 - h50, 0.5, 0.5 + h50, 0.5 + h68, 0.5 + h90], axis=0)
+    band = dict(zip(("q05", "q16", "q25", "q50", "q75", "q84", "q95"), q), mean=A.mean(0))
 
     win = []
     if windows:
@@ -361,7 +431,7 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         for (lo_w, hi_w), bnd in zip(windows, pf):
             wgt = ((cdf(hi_w) - cdf(lo_w)) / tot).numpy()
             row = {"window": (float(lo_w), float(hi_w)), "mean": float(wgt.mean()),
-                   "q05": float(np.quantile(wgt, 0.05)), "q95": float(np.quantile(wgt, 0.95))}
+                   "q05": float(np.quantile(wgt, 0.5 - h90)), "q95": float(np.quantile(wgt, 0.5 + h90))}
             if bnd is not None and bnd["feasible"]:
                 width = max(bnd["hi"] - bnd["lo"], 1e-12)
                 row.update(lo=bnd["lo"], hi=bnd["hi"],
@@ -389,4 +459,5 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                      "samples_given_a_pole": int((n_born[acc] > 0).sum()),
                      "n_poles_median": float(n_pres.float().median()),
                      "relative_error_bar": rel_stat, "sigma_floor": sigma_floor,
-                     "bootstrap_redraw": bins is not None, **count_diag})
+                     "bootstrap_redraw": bins is not None, "band_calibrated": bool(table),
+                     "band_levels": lev, **count_diag})

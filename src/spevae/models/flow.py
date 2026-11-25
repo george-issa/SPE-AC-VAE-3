@@ -41,7 +41,9 @@ the pole tokens (self-attention: poles coordinate) that cross-attends to the
 
 from __future__ import annotations
 
+import json
 import math
+import os
 
 import numpy as np
 import torch
@@ -662,4 +664,9 @@ def load_flow(path: str, map_location="cpu") -> FlowPosterior:
     m = FlowPosterior(**ck["config"])
     m.load_state_dict(ck["state_dict"])
     m.meta = ck.get("meta", {})
+    # the band table fitted for this checkpoint, if it ships with one (posterior.band_levels)
+    side = str(path) + ".bands.json"
+    if os.path.exists(side):
+        with open(side) as fh:
+            m.meta["band_calibration"] = json.load(fh)
     return m.eval()
