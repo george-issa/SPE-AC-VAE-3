@@ -14,17 +14,21 @@ Judged on the spectral weight in the report's seven frequency windows:
   * the window-weight error of the posterior mean.
 
     python scripts/step3/calibration.py out/step3/F3_6k.pt out/step3/bank/label_bank_trusted.pt \
-        out/step3/cal_F3_6k [shard nshards [tether [base_scale [reps]]]]
+        out/step3/cal_F3_6k [shard nshards [tether [base_scale [reps [count.pt]]]]]
     python scripts/step3/calibration.py fig out/step3/cal_F3_6k
+    python scripts/step3/calibration.py recount SRC_DIR DST_DIR count.pt bank.pt
 
 `tether` is `lam` of the refinement: how firmly each sample is held at the
 flow's own proposal while it is fitted (default 10, the package default).
 `reps` repeats the noise grid with beta and dtau shifted against it, so that
 every noise level is seen at `reps` temperatures (default 1: 288 truths;
 4 gives 1152, enough to judge coverage per noise band and per beta).
+`count.pt` is a pole-count classifier (`scripts/step3/train_count.py`); with
+it the reported samples are resampled to its count posterior.
 """
 import json
 import math
+import os
 import sys
 import time
 import warnings
@@ -39,9 +43,10 @@ import torch
 NOISES = np.exp(np.linspace(math.log(1e-5), math.log(3e-2), 12)).tolist()
 BETAS = (1.0, 2.0, 4.0, 8.0, 12.0, 20.0)
 DTAUS = (0.05, 0.125, 0.25, 0.1, 0.02, 0.2, 0.5)
-M, S = 24, 32
+M, S = int(os.environ.get("CAL_TRUTHS", 24)), int(os.environ.get("CAL_SAMPLES", 32))
+ARMS = ("raw", "posterior", "posterior_count")
 BANDS = ((1e-5, 1e-4), (1e-4, 1e-3), (1e-3, 1e-2), (1e-2, 1.0))      # noise bands of the shipping gate
-COL = {"raw": "#2a78d6", "posterior": "#eb6834"}
+COL = {"raw": "#2a78d6", "posterior": "#eb6834", "posterior_count": "#0f8a8a"}
 MUTED, GRID = "#52514e", "#d9d8d4"
 
 
@@ -60,8 +65,67 @@ def window_weights_poles(ps, beta, windows):
     return torch.stack([(cdf(hi) - cdf(lo)) / tot for lo, hi in windows], -1).numpy()
 
 
-def run(flow_path, bank, out, shard, nshards, lam=10.0, base_scale=None, reps=1):
+def cell_batch(bank, j):
+    """Cell ``j`` of the design: ``(noise, beta, repetition, batch, true window weights)``.
+
+    Repetition 0 (``j < 12``) is the original design; later repetitions shift
+    beta and dtau against the noise grid.  Deterministic in ``j``.
+    """
     from spevae.data.pole_prior import PolePriorGenerator
+    from spevae.posterior import DEFAULT_WINDOWS
+    r_, i_ = divmod(j, len(NOISES))
+    nz = NOISES[i_]
+    beta = BETAS[(i_ + r_) % len(BETAS)]
+    gen = PolePriorGenerator(omega_c=20.0, P_max=12, residue_mode="dispersive", smooth_bank=bank,
+                             p_smooth=0.35, p_exact=0.15, beta_choices=(beta,),
+                             noise_scale_range=(nz, nz),
+                             dtau_choices=(DTAUS[(i_ + 2 * r_) % len(DTAUS)],))
+    with gen.fixed_scalars(31000 + j):
+        b = gen.batch(M, torch.Generator().manual_seed(32000 + j))
+    nodes = (b.quad.nodes.double() / beta).numpy()
+    wq = b.quad.weights.double().numpy()
+    A_true = b.A_true.double().numpy()                            # exact, dimensionless, on nodes
+    tot = (A_true * wq).sum(-1)
+    w_true = np.stack([(A_true * wq * ((nodes >= lo) & (nodes < hi))).sum(-1) / tot
+                       for lo, hi in DEFAULT_WINDOWS], -1)        # (M, 7)
+    return nz, beta, r_, b, w_true
+
+
+def count_arm(count_model, b, m, beta, last, j):
+    """The posterior arm's samples of truth ``m``, resampled to the classifier's counts."""
+    from spevae.models.count import resample_by_count
+    p_n = count_model.probs(b.G[m], b.x, beta, sigma=b.sigma[m])[0]
+    take, cd = resample_by_count(p_n, torch.tensor(last["n"]),
+                                 generator=torch.Generator().manual_seed(1300 + 97 * j + m))
+    t = take.numpy()
+    return {"w": np.asarray(last["w"])[t].tolist(), "chi2": np.asarray(last["chi2"])[t].tolist(),
+            "ess": cd["count_ess"], "covered": cd["count_mass_covered"],
+            "p_true": float(p_n[int(b.poles_true["n_true"][m]) - 1])}
+
+
+def recount(src, dst, count_path, bank):
+    """Re-score a finished run with another count classifier: same samples, new weights."""
+    from spevae.models.count import load_count
+    torch.set_num_threads(4)                       # as in run(): bit-identical classifier outputs
+    count_model = load_count(count_path)
+    dst.mkdir(parents=True, exist_ok=True)
+    for p in sorted(src.glob("calibration.shard*.json")):
+        rows = json.load(open(p))
+        for r in rows:
+            j = r.get("rep", 0) * len(NOISES) + min(range(len(NOISES)), key=lambda k: abs(NOISES[k] - r["noise"]))
+            nz, beta, _, b, w_true = cell_batch(bank, j)
+            if abs(nz - r["noise"]) > 1e-12 or np.abs(w_true - np.array(r["w_true"])).max() > 1e-9:
+                raise SystemExit(f"{p}: cell {j} does not regenerate the stored truths")
+            if "n" not in r["arms"]["posterior"][0]:
+                raise SystemExit(f"{p}: this run did not store the samples' pole counts")
+            r["arms"]["posterior_count"] = [count_arm(count_model, b, m, beta, a, j)
+                                            for m, a in enumerate(r["arms"]["posterior"])]
+        with open(dst / p.name, "w") as fh:
+            json.dump(rows, fh)
+    print(f"{src} re-scored with {count_path} -> {dst}")
+
+
+def run(flow_path, bank, out, shard, nshards, lam=10.0, base_scale=None, reps=1, count_path=None):
     from spevae.models.flow import load_flow
     from spevae.physics import PoleGreens
     from spevae.physics.poles import PoleSet
@@ -71,34 +135,25 @@ def run(flow_path, bank, out, shard, nshards, lam=10.0, base_scale=None, reps=1)
     flow = load_flow(flow_path).eval()
     if base_scale is not None:
         flow.base_scale = float(base_scale)
+    count_model = None
+    if count_path:
+        from spevae.models.count import load_count
+        count_model = load_count(count_path)
     rows = []
     path = out / f"calibration.shard{shard}.json"
     for j in range(int(reps) * len(NOISES)):
         if j % nshards != shard:
             continue
-        r_, i_ = divmod(j, len(NOISES))            # repetition 0 is the original 12-cell design
-        nz = NOISES[i_]
-        beta = BETAS[(i_ + r_) % len(BETAS)]
+        nz, beta, r_, b, w_true = cell_batch(bank, j)
         i = j                                      # seeds below are per cell
-        gen = PolePriorGenerator(omega_c=20.0, P_max=12, residue_mode="dispersive", smooth_bank=bank,
-                                 p_smooth=0.35, p_exact=0.15, beta_choices=(beta,),
-                                 noise_scale_range=(nz, nz),
-                                 dtau_choices=(DTAUS[(i_ + 2 * r_) % len(DTAUS)],))
-        with gen.fixed_scalars(31000 + i):
-            b = gen.batch(M, torch.Generator().manual_seed(32000 + i))
         L = b.x.numel()
-        nodes = (b.quad.nodes.double() / beta).numpy()
-        wq = b.quad.weights.double().numpy()
-        A_true = b.A_true.double().numpy()                        # exact, dimensionless, on nodes
-        tot = (A_true * wq).sum(-1)
-        w_true = np.stack([(A_true * wq * ((nodes >= lo) & (nodes < hi))).sum(-1) / tot
-                           for lo, hi in DEFAULT_WINDOWS], -1)    # (M, 7)
         d = ((b.G_clean - b.G) / b.sigma) @ b.inv_sqrt_R.T
         c_true = (d * d).mean(-1).numpy()
         fwd = PoleGreens(b.quad)
         t0 = time.time()
-        rec = {"noise": nz, "beta": beta, "n_tau": int(L), "rep": r_, "reps": int(reps),
+        rec = {"noise": nz, "beta": beta, "n_tau": int(L), "rep": r_, "reps": int(reps), "samples": S,
                "family": list(b.family), "w_true": w_true.tolist(),
+               "n_true": [int(v) for v in b.poles_true["n_true"]],
                "chi2_truth": c_true.tolist(), "arms": {"raw": [], "posterior": []}}
         for m in range(M):
             g = torch.Generator().manual_seed(500 + 97 * i + m)
@@ -116,6 +171,10 @@ def run(flow_path, bank, out, shard, nshards, lam=10.0, base_scale=None, reps=1)
                 "w": window_weights_poles(dim, beta, DEFAULT_WINDOWS).tolist(), "chi2": rep.chi2.tolist(),
                 "accepted": rep.n_accepted, "kept_raw": rep.n_kept_raw,
                 "born": rep.diagnostics.get("samples_given_a_pole", 0), "warnings": len(rep.warnings)})
+            rec["arms"]["posterior"][-1]["n"] = (rep.poles.a != 0).sum(-1).tolist()
+            if count_model is not None:               # the same samples, counts matched to the classifier
+                rec["arms"].setdefault("posterior_count", []).append(
+                    count_arm(count_model, b, m, beta, rec["arms"]["posterior"][-1], j))
         rec["seconds"] = time.time() - t0
         rows.append(rec)
         acc = np.mean([a["accepted"] for a in rec["arms"]["posterior"]]) / S
@@ -142,12 +201,14 @@ def summarise(out):
     if len(rows) != reps * len(NOISES):          # shards write cell by cell: refuse a partial run
         raise SystemExit(f"{out}: {len(rows)} of {reps * len(NOISES)} cells present -- still running?")
     rng = np.random.default_rng(3)
+    arms = [a for a in ARMS if all(a in r["arms"] for r in rows)]
+    n_samp = rows[0].get("samples", 32)
     cells = []
     for r in rows:
         wt, ct = np.array(r["w_true"]), np.array(r["chi2_truth"])
         c = {"noise": r["noise"], "beta": r["beta"], "n_tau": r["n_tau"],
              "kind": [f.split(":")[0] for f in r["family"]]}
-        for arm in ("raw", "posterior"):
+        for arm in arms:
             pit, fit, err = [], [], []
             for m, a in enumerate(r["arms"][arm]):
                 w, ch = np.array(a["w"]), np.array(a["chi2"])
@@ -156,18 +217,23 @@ def summarise(out):
                 fit.append(((ch < ct[m]).sum() + rng.random()) / (n + 1))
                 err.append(np.abs(w.mean(0) - wt[m]).sum())
             c[arm] = (np.array(pit), np.array(fit), np.array(err))
-        c["accepted"] = float(np.mean([a["accepted"] for a in r["arms"]["posterior"]]) / S)
-        c["born"] = float(np.mean([a["born"] for a in r["arms"]["posterior"]]) / S)
+        c["accepted"] = float(np.mean([a["accepted"] for a in r["arms"]["posterior"]]) / n_samp)
+        c["born"] = float(np.mean([a["born"] for a in r["arms"]["posterior"]]) / n_samp)
+        if "posterior_count" in arms:
+            pc = r["arms"]["posterior_count"]
+            c["count"] = {k: float(np.mean([a[k] for a in pc])) for k in ("ess", "covered", "p_true")}
         cells.append(c)
 
     def group(sel):
         g = {arm: _stats(*(np.concatenate([c[arm][k] for c in sel]) for k in range(3)))
-             for arm in ("raw", "posterior")}
+             for arm in arms}
+        if "count" in sel[0]:
+            g["count"] = {k: float(np.mean([c["count"][k] for c in sel])) for k in ("ess", "covered", "p_true")}
         g["accepted"] = float(np.mean([c["accepted"] for c in sel]))
         g["born"] = float(np.mean([c["born"] for c in sel]))
         return g
 
-    res = {"design": {"reps": reps, "truths_per_cell": M, "samples": S}, "levels": [], "cells": [],
+    res = {"design": {"reps": reps, "truths_per_cell": M, "samples": n_samp}, "levels": [], "cells": [],
            "by_beta": {}, "by_noise_band": {}}
     for nz in sorted({c["noise"] for c in cells}):
         sel = [c for c in cells if c["noise"] == nz]
@@ -184,7 +250,7 @@ def summarise(out):
         if sel:
             res["by_noise_band"][f"{lo:g}-{hi:g}"] = group(sel)
     res["pooled"] = {}
-    for arm in ("raw", "posterior"):
+    for arm in arms:
         pit, fit, err = (np.concatenate([c[arm][k] for c in cells]) for k in range(3))
         kind = np.array(sum((c["kind"] for c in cells), []))
         n = len(pit)
@@ -213,8 +279,9 @@ def fig(out):
     lv = res["levels"]
     x = [l["noise"] for l in lv]
     f, axes = plt.subplots(1, 5, figsize=(21.5, 3.9), constrained_layout=True)
-    for arm in ("raw", "posterior"):
-        lab = "raw flow" if arm == "raw" else "reported posterior"
+    for arm in [a for a in ARMS if a in res["pooled"]]:
+        lab = {"raw": "raw flow", "posterior": "reported posterior",
+               "posterior_count": "reported posterior, pole counts matched to the classifier"}[arm]
         axes[0].plot(x, [l[arm]["cov50"] for l in lv], "o-", color=COL[arm], lw=1.2, ms=4, label=lab)
         axes[1].plot(x, [l[arm]["cov90"] for l in lv], "o-", color=COL[arm], lw=1.2, ms=4)
         axes[2].plot(x, [l[arm]["fit_rank"] for l in lv], "o-", color=COL[arm], lw=1.2, ms=4)
@@ -228,10 +295,12 @@ def fig(out):
     axes[3].set_title("window-weight error of the posterior mean (median)", fontsize=9.5)
     bb = res["by_beta"]
     xb = [float(k) for k in bb]
+    shown = [a for a in ("posterior", "posterior_count") if a in res["pooled"]]
     for key, mk, nom in (("cov50", "o", 0.5), ("cov90", "s", 0.9)):
-        axes[4].errorbar(xb, [bb[k]["posterior"][key] for k in bb],
-                         yerr=[bb[k]["posterior"][key + "_se"] for k in bb], color=COL["posterior"],
-                         marker=mk, ms=4, lw=1.2, capsize=2, label=f"{int(nom * 100)}% interval")
+        for arm in shown:
+            axes[4].errorbar(xb, [bb[k][arm][key] for k in bb], yerr=[bb[k][arm][key + "_se"] for k in bb],
+                             color=COL[arm], marker=mk, ms=4, lw=1.2, capsize=2,
+                             label=f"{int(nom * 100)}% interval" if arm == shown[0] else None)
         axes[4].axhline(nom, color=MUTED, ls="--", lw=0.9)
     axes[4].set_ylim(0, 1.02)
     axes[4].set_xscale("log")
@@ -248,22 +317,33 @@ def fig(out):
             ax.spines[s_].set_visible(False)
     axes[0].legend(fontsize=8, frameon=False, loc="lower left")
     p = res["pooled"]["posterior"]
-    f.suptitle(f"Calibration on the step-3 prior ({p['truths']} held-out truths, {S} samples each): reported "
+    extra = ""
+    if "posterior_count" in res["pooled"]:
+        pc = res["pooled"]["posterior_count"]
+        extra = f"; with pole counts matched {pc['cov50']:.2f} / {pc['cov90']:.2f}"
+    f.suptitle(f"Calibration on the step-3 prior ({p['truths']} held-out truths, {res['design']['samples']} samples each): reported "
                f"posterior covers {p['cov50']:.2f} / {p['cov90']:.2f} (nominal 0.50 / 0.90), data-fit rank "
-               f"{p['fit_rank_mean']:.2f}", fontsize=10.5)
+               f"{p['fit_rank_mean']:.2f}{extra}", fontsize=10.5)
     f.savefig(out / "calibration.png", dpi=150)
     print(json.dumps(res["pooled"], indent=1))
     for name in ("by_noise_band", "by_beta"):
         for k, g in res[name].items():
-            q = g["posterior"]
-            print(f"{name:14s} {k:>12s}: {q['truths']:4d} truths  coverage {q['cov50']:.3f}±{q['cov50_se']:.3f} / "
-                  f"{q['cov90']:.3f}±{q['cov90_se']:.3f}  fit rank {q['fit_rank']:.2f}  accepted {g['accepted']:.2f}")
+            for arm in shown:
+                q = g[arm]
+                tail = (f"accepted {g['accepted']:.2f}" if arm == "posterior" else
+                        f"ESS {g['count']['ess']:.0f}, count mass covered {g['count']['covered']:.2f}, "
+                        f"p(true count) {g['count']['p_true']:.2f}")
+                print(f"{name:14s} {k:>12s} {arm:15s}: {q['truths']:4d} truths  coverage {q['cov50']:.3f}±"
+                      f"{q['cov50_se']:.3f} / {q['cov90']:.3f}±{q['cov90_se']:.3f}  fit rank {q['fit_rank']:.2f}  "
+                      f"error {q['weight_error']:.4f}  {tail}")
     print(f"-> {out}/calibration.json + .png")
 
 
 if __name__ == "__main__":
     if sys.argv[1] == "fig":
         fig(Path(sys.argv[2]))
+    elif sys.argv[1] == "recount":
+        recount(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4], sys.argv[5])
     else:
         o = Path(sys.argv[3])
         o.mkdir(parents=True, exist_ok=True)
@@ -271,4 +351,5 @@ if __name__ == "__main__":
             int(sys.argv[5]) if len(sys.argv) > 5 else 1,
             float(sys.argv[6]) if len(sys.argv) > 6 else 10.0,
             float(sys.argv[7]) if len(sys.argv) > 7 else None,
-            int(sys.argv[8]) if len(sys.argv) > 8 else 1)
+            int(sys.argv[8]) if len(sys.argv) > 8 else 1,
+            sys.argv[9] if len(sys.argv) > 9 else None)

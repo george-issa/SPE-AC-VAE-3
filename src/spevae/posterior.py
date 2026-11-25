@@ -157,7 +157,8 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                        windows=DEFAULT_WINDOWS, bounds: bool = True, accept_sigma: float = 3.0,
                        lam: float = 10.0, generator: torch.Generator | None = None,
                        x_fit=None, G_fit=None, sigma_fit=None,
-                       max_births: int = 2, sigma_floor: float | None = None) -> PosteriorReport:
+                       max_births: int = 2, sigma_floor: float | None = None,
+                       count_model=None, count_floor: float = 0.02) -> PosteriorReport:
     r"""Posterior over spectra for one dataset, with its evidence and warnings.
 
     Parameters
@@ -202,6 +203,13 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         is usually the larger of the two, and fitting to the statistical
         error alone then fits the discretisation.  Off by default; the
         report warns when the error bars are that small and no floor is set.
+    count_model
+        A :class:`~spevae.models.count.CountPosterior`.  When given, the
+        accepted samples are resampled so that their pole counts follow the
+        classifier's :math:`p(n \mid G)` instead of the flow's own, which
+        barely depends on the data (``count_floor`` mixes in a uniform share
+        to bound the weights).  The effective sample size is reported in
+        ``diagnostics``.
     max_births
         A sample that cannot reach the data is given up to this many extra
         poles, one at a time, each placed where a sample that does fit has
@@ -292,6 +300,23 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                         "were rejected. The data sit at the edge of the training prior.")
     sel = PoleSet(*(getattr(ps, k)[acc] for k in ("eps", "gamma", "a", "b")))
     n_pres = (sel.a != 0).sum(-1)
+    chi2_sel = c2[acc]
+    count_diag = {}
+    if count_model is not None:
+        from .models.count import resample_by_count
+        p_n = count_model.probs(G, x, beta, sigma=sigma)[0]
+        before = float(n_pres.float().mean())
+        take, count_diag = resample_by_count(p_n, n_pres, generator=g, floor=count_floor)
+        sel = PoleSet(*(getattr(sel, k)[take] for k in ("eps", "gamma", "a", "b")))
+        n_pres, chi2_sel = n_pres[take], chi2_sel[take]
+        count_diag.update(count_mean_before=before, count_mean_after=float(n_pres.float().mean()))
+        if count_diag["count_mass_covered"] < 0.5:
+            warnings.append(f"the samples contain pole counts holding only "
+                            f"{count_diag['count_mass_covered']:.0%} of the count posterior; "
+                            "draw more samples.")
+        elif count_diag["count_ess"] < 8:
+            warnings.append(f"only {count_diag['count_ess']:.0f} effective samples after matching "
+                            "the pole-count posterior; draw more samples.")
     if float(n_pres.float().median()) >= flow.P:
         warnings.append(f"the accepted samples use all {flow.P} pole slots; the spectrum may need "
                         "more structure than the model can place.")
@@ -357,11 +382,11 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                "positive, normalised, causal spectra with widths above the resolution floor")
     return PosteriorReport(
         poles=PoleSet(sel.eps / beta, sel.gamma / beta, sel.a, sel.b), omega=omega, band=band,
-        chi2=c2[acc].numpy(), chi2_target=float(chi2_target), n_samples=S,
+        chi2=chi2_sel.numpy(), chi2_target=float(chi2_target), n_samples=S,
         n_accepted=int(acc.sum()), n_kept_raw=int((acc & fits_raw).sum()), windows=win,
         warnings=warnings, prior=prior,
         diagnostics={"accepted_fraction": frac, "raw_chi2_median": float(c_raw.median()),
                      "samples_given_a_pole": int((n_born[acc] > 0).sum()),
                      "n_poles_median": float(n_pres.float().median()),
                      "relative_error_bar": rel_stat, "sigma_floor": sigma_floor,
-                     "bootstrap_redraw": bins is not None})
+                     "bootstrap_redraw": bins is not None, **count_diag})
