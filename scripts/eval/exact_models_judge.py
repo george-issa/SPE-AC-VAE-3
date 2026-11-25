@@ -144,7 +144,7 @@ def run(flow, vae, noise, beta, lam=1.0, seed=None):
     return rows
 
 
-def fig(rows, kind, path, noise, beta, trained_on_them=False):
+def fig(rows, kind, path, noise, beta, trained_on_them=False, left_out=()):
     sel = [r for r in rows if r[0]["kind"] == kind]
     ncol = 5 if kind == "continuum" else 4
     nrow = math.ceil(len(sel) / ncol)
@@ -191,6 +191,10 @@ def fig(rows, kind, path, noise, beta, trained_on_them=False):
             else "exactly diagonalised models (delta spectra)")
     seen = ("the flow was trained on these families (other parameters), the VAE was not"
             if trained_on_them else "none of these is in either checkpoint's training set")
+    held = sorted({r[0]["family"] for r in sel} & set(left_out))
+    if trained_on_them and held:
+        seen = ("the flow never saw " + ", ".join(held) + " (left out of its training); "
+                "it was trained on the other families, the VAE on none")
     f.suptitle(f"Known answers, {what}: beta = {beta:g}, noise {noise:g}; {seen}\n"
                f"Panel titles give W$_1$ to the exact answer, lowest in "
                f"brackets: flow {wins['flow']}, VAE {wins['VAE']}, MaxEnt {wins['MaxEnt']} of {len(sel)}",
@@ -216,7 +220,8 @@ def main():
     recipe = getattr(flow, "meta", {}).get("recipe", {}) or {}
     for kind in ("continuum", "discrete"):
         fig(rows, kind, out / f"exact_{kind}_{tag}.png", noise, beta,
-            trained_on_them=float(recipe.get("p_exact", 0) or 0) > 0)
+            trained_on_them=float(recipe.get("p_exact", 0) or 0) > 0,
+            left_out=recipe.get("left_out") or ())
     summ = {}
     for kind in ("continuum", "discrete"):
         sel = [r for r, _ in rows if r["kind"] == kind]

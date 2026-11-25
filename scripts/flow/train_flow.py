@@ -43,6 +43,9 @@ def main():
                     help="draw each batch's beta from this grid (must match the bank's)")
     ap.add_argument("--p-exact", type=float, default=0.0,
                     help="fraction of truths from exactly diagonalised models")
+    ap.add_argument("--exact-families", nargs="+", default=None,
+                    help="restrict the exactly diagonalised models to these families "
+                         "(default: all; a leave-out arm names the ones it keeps)")
     ap.add_argument("--noise-range", type=float, nargs=2, default=(3e-5, 3e-2))
     ap.add_argument("--dtau-choices", type=float, nargs="+",
                     default=(0.05, 0.1, 0.125, 0.2, 0.25))
@@ -60,6 +63,8 @@ def main():
         kw = dict(smooth_bank=args.smooth_bank, p_smooth=args.p_smooth)
     if args.beta_choices is not None:
         kw["beta_choices"] = tuple(args.beta_choices)
+    if args.exact_families is not None:
+        kw["exact_families"] = tuple(args.exact_families)
     gen = PolePriorGenerator(omega_c=20.0, P_max=12, residue_mode="dispersive",
                              beta_range=(8.0, 8.0), device=dev, p_exact=args.p_exact,
                              noise_scale_range=tuple(args.noise_range),
@@ -130,6 +135,12 @@ def main():
             save_flow(ema.cpu(), args.out + ".partial", step=step + 1, history=hist)
             ema.to(dev)
     recipe = {k: v for k, v in vars(args).items()}
+    # families this run never saw: those missing from the bank and from the diagonalised models
+    from spevae.data.exact_models import EXACT_DISCRETE
+    left = set(getattr(gen.smooth_bank, "meta", None) and gen.smooth_bank.meta.get("left_out") or [])
+    if args.p_exact > 0 and args.exact_families is not None:
+        left |= set(EXACT_DISCRETE) - set(args.exact_families)
+    recipe["left_out"] = sorted(left)
     recipe.update(noise_lo=args.noise_range[0], noise_hi=args.noise_range[1],
                   beta_choices=list(args.beta_choices or [8.0]))
     save_flow(ema.cpu(), args.out, steps=args.steps, history=hist, recipe=recipe,
