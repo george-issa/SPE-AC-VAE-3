@@ -155,7 +155,7 @@ class PosteriorReport:
 def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=None,
                        n_samples: int = 200, omega=None, chi2_target: float = 1.0,
                        windows=DEFAULT_WINDOWS, bounds: bool = True, accept_sigma: float = 3.0,
-                       lam: float = 1.0, generator: torch.Generator | None = None,
+                       lam: float = 10.0, generator: torch.Generator | None = None,
                        x_fit=None, G_fit=None, sigma_fit=None,
                        max_births: int = 2, sigma_floor: float | None = None) -> PosteriorReport:
     r"""Posterior over spectra for one dataset, with its evidence and warnings.
@@ -185,6 +185,15 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
     accept_sigma
         A sample is accepted when its misfit is within this many standard
         deviations (:math:`\sqrt{2/L}` per point) of the target.
+    lam
+        How firmly each sample is held at the flow's own proposal while it is
+        fitted to the data (weight of :math:`\tfrac12\lambda\|u-u_k\|^2` in
+        the flow's normalised pole coordinates).  The data fix a few
+        directions; this decides who sets the rest, the flow or the
+        least-squares path.  Measured at 1, 10 and 100: 10 lowers the error
+        on exactly solvable models by about a third and leaves the misfit
+        calibrated; at 100 the samples no longer fit the data as well as
+        the truth does (data-fit rank 0.29).
     sigma_floor
         A systematic-error floor, relative to :math:`\max|G|`, added in
         quadrature to every error bar (same correlation structure).  DQMC

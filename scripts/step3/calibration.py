@@ -14,8 +14,11 @@ Judged on the spectral weight in the report's seven frequency windows:
   * the window-weight error of the posterior mean.
 
     python scripts/step3/calibration.py out/step3/F3_6k.pt out/step3/bank/label_bank_trusted.pt \
-        out/step3/cal_F3_6k [shard nshards]
+        out/step3/cal_F3_6k [shard nshards [tether [base_scale]]]
     python scripts/step3/calibration.py fig out/step3/cal_F3_6k
+
+`tether` is `lam` of the refinement: how firmly each sample is held at the
+flow's own proposal while it is fitted (default 10, the package default).
 """
 import json
 import math
@@ -53,7 +56,7 @@ def window_weights_poles(ps, beta, windows):
     return torch.stack([(cdf(hi) - cdf(lo)) / tot for lo, hi in windows], -1).numpy()
 
 
-def run(flow_path, bank, out, shard, nshards):
+def run(flow_path, bank, out, shard, nshards, lam=10.0, base_scale=None):
     from spevae.data.pole_prior import PolePriorGenerator
     from spevae.models.flow import load_flow
     from spevae.physics import PoleGreens
@@ -62,6 +65,8 @@ def run(flow_path, bank, out, shard, nshards):
 
     torch.set_num_threads(4)
     flow = load_flow(flow_path).eval()
+    if base_scale is not None:
+        flow.base_scale = float(base_scale)
     rows = []
     path = out / f"calibration.shard{shard}.json"
     for i, nz in enumerate(NOISES):
@@ -95,7 +100,8 @@ def run(flow_path, bank, out, shard, nshards):
             rec["arms"]["raw"].append({"w": window_weights_poles(raw, beta, DEFAULT_WINDOWS).tolist(),
                                        "chi2": (dr * dr).mean(-1).tolist()})
             rep = continue_posterior(flow, b.G[m], b.x, beta, b.sigma[m], b.inv_sqrt_R, n_samples=S,
-                                     bounds=False, generator=torch.Generator().manual_seed(900 + 97 * i + m))
+                                     bounds=False, lam=lam,
+                                     generator=torch.Generator().manual_seed(900 + 97 * i + m))
             dim = PoleSet(rep.poles.eps * beta, rep.poles.gamma * beta, rep.poles.a, rep.poles.b)
             rec["arms"]["posterior"].append({
                 "w": window_weights_poles(dim, beta, DEFAULT_WINDOWS).tolist(), "chi2": rep.chi2.tolist(),
@@ -114,6 +120,8 @@ def summarise(out):
     for p in sorted(out.glob("calibration.shard*.json")):
         rows += json.load(open(p))
     rows.sort(key=lambda r: r["noise"])
+    if len(rows) != len(NOISES):                 # shards write level by level: refuse a partial run
+        raise SystemExit(f"{out}: {len(rows)} of {len(NOISES)} noise levels present -- still running?")
     rng = np.random.default_rng(3)
     res = {"levels": []}
     pooled = {a: {"pit": [], "fit": [], "err": [], "kind": []} for a in ("raw", "posterior")}
@@ -204,4 +212,6 @@ if __name__ == "__main__":
         o = Path(sys.argv[3])
         o.mkdir(parents=True, exist_ok=True)
         run(sys.argv[1], sys.argv[2], o, int(sys.argv[4]) if len(sys.argv) > 4 else 0,
-            int(sys.argv[5]) if len(sys.argv) > 5 else 1)
+            int(sys.argv[5]) if len(sys.argv) > 5 else 1,
+            float(sys.argv[6]) if len(sys.argv) > 6 else 10.0,
+            float(sys.argv[7]) if len(sys.argv) > 7 else None)

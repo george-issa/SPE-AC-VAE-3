@@ -740,6 +740,60 @@ width in (v) of the re-measurement, seen from the accuracy side, and it
 makes the feedback arm (x) the decisive one: a flow whose own samples fit
 the data needs no refinement, so what it learned survives.  Until that arm
 is judged, longer step-3 training would improve only the raw column.
+(xiii) **Tether strength of the refinement: 10, not 1** (*measured*,
+2026-11-24; `scripts/step3/tether_scan.py` → `out/step3/tether_scan.{json,png}`;
+the judges take the tether as an argument and tag their outputs `_lam<t>`).
+The refinement minimises ½χ² + ½λ‖u − u_k‖² from each flow sample u_k; λ = 1
+was chosen when the fits did not converge.  Known answers (β = 8, noise 1e-3,
+W₁ geometric mean, lattice / exactly diagonalised):
+
+| flow | λ = 1 | λ = 10 | λ = 100 |
+|---|---|---|---|
+| F_6k (step-2 recipe) | 0.132 / 0.257 | 0.096 / 0.267 | 0.087 / 0.287 |
+| F3_6k (step-3 recipe) | 0.140 / 0.241 | 0.095 / 0.241 | 0.080 / 0.262 |
+| F_60k (step-2 recipe) | 0.123 / 0.246 | 0.088 / 0.257 | — |
+
+Held-out step-3 prior (288 truths, F3_6k, reported posterior):
+
+| λ | coverage 50% / 90% | data-fit rank | window-weight error | accepted |
+|---|---|---|---|---|
+| 1 | 0.630 / 0.957 | 0.50 | 0.0562 | 0.96 |
+| 10 | 0.612 / 0.957 | 0.47 | 0.0443 | 0.96 |
+| 100 | 0.629 / 0.954 | 0.29 | 0.0459 | 0.94 |
+
+Real data: DQMC dimer W₁ 0.328 / 0.318 / 0.374 (F_60k) and 0.355 / 0.336 /
+0.362 (F3_6k) at λ = 1 / 10 / 100; Holstein cell χ²/target 0.97 → 0.99,
+178 of 200 accepted, band width unchanged (0.165 → 0.160).
+Reading: λ = 10 lowers the lattice error by a third and the in-prior
+window-weight error by a fifth with the misfit still calibrated; λ = 100
+stops the samples short of the data (rank 0.29) — rejected.  At λ = 10 the
+flow has the lowest W₁ on 16 of 20 lattice and 9 of 12 exactly diagonalised
+truths (F3_6k) and is behind MaxEnt on one family, the Holstein atom (0.232
+against 0.222).  `continue_posterior(lam=10)` is the default.
+Two things λ does NOT do.  (a) It does not make the answer depend on the
+flow: three flows whose raw errors differ by 2.3× land within 9% of each
+other at λ = 10 (0.088–0.096).  The gain is the fit being held in place,
+not the prior showing through; (xii) stands.  (b) It does not move the
+coverage: 0.61–0.63 / 0.96 at every λ.  The excess width is therefore not
+made by the refinement.  The raw flow is already too wide (0.69 / 0.97) and
+the refinement inherits it in every direction the data leave open.
+
+(xiv) **Sampling temperature — tested, not adopted** (*measured*,
+2026-11-24; `FlowPosterior.base_scale`, `scripts/step3/
+compare_calibrations.py` → `out/step3/temperature_scan.{json,png}`).  Base
+noise scaled by T at sampling, F3_6k, λ = 10, same 288 truths: reported
+posterior 0.612 / 0.957 (T = 1), 0.584 / 0.947 (0.9), 0.567 / 0.931 (0.8);
+window-weight error 0.0443 → 0.0445 → 0.0467; KS 0.130 → 0.115 → 0.110
+(critical 0.094).  It narrows the bands on average but not evenly: at
+T = 0.8 the β = 1, noise 8e-4 level reads 0.42 / 0.86 while β = 8, noise
+9e-5 still reads 0.67 / 0.95.  One scalar cannot meet a per-band gate, and
+an error bar that is too narrow somewhere is worse for a tool than one that
+is too wide everywhere.  The attribute stays (default 1) as a per-checkpoint
+constant should a better-trained flow make it uniform.
+Standing statement for the report until that changes: the bands are
+conservative — the nominal 50% band holds the truth about 61% of the time,
+the 90% band about 96%.
+
 **Gates for calling it shippable** (none claimed yet): known-answer W₁ on
 held-out parameters at or below MaxEnt on every family, and a
 leave-one-family-out arm; PIT coverage within ±0.03 of nominal per noise

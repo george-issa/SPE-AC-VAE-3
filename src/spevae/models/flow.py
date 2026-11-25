@@ -169,6 +169,9 @@ class FlowPosterior(nn.Module):
                            n_matsubara=n_matsubara, omega_c=omega_c, gamma_min=gamma_min,
                            dispersive_scale=dispersive_scale, feedback=bool(feedback))
         self.feedback = bool(feedback)
+        #: Scale of the base noise at sampling time (1 = as trained).  A plain
+        #: attribute, not a weight: a per-checkpoint calibration constant.
+        self.base_scale = 1.0
         self.P = int(num_poles)
         self.omega_c = float(omega_c)
         self.coords = PoleCoords(gamma_min, dispersive_scale)
@@ -392,8 +395,8 @@ class FlowPosterior(nn.Module):
         mem = mem.repeat_interleave(S, 0)
         keep = keep.repeat_interleave(S, 0)
         norm = norm.repeat_interleave(S, 0)
-        z = torch.randn(mem.shape[0], self.P, 5, generator=generator,
-                        device="cpu").to(mem.device, mem.dtype)
+        z = float(self.base_scale) * torch.randn(mem.shape[0], self.P, 5, generator=generator,
+                                                 device="cpu").to(mem.device, mem.dtype)
         ts = torch.linspace(0.0, 1.0, steps + 1, device=mem.device, dtype=mem.dtype)
         for k in range(steps):
             t0, t1 = ts[k], ts[k + 1]

@@ -14,7 +14,11 @@ Score: W1 between cumulative spectral weights on a fine grid (exact step
 functions for the delta spectra).
 
     python scripts/eval/exact_models_judge.py out/eval/exact_models \
-        out/flow/F_60k.pt out/step2/data_arm/D24_60k.pt [noise=1e-3] [beta=8]
+        out/flow/F_60k.pt out/step2/data_arm/D24_60k.pt [noise=1e-3] [beta=8] [tether=10]
+
+`tether` is the strength of the pull that holds each sample at the flow's own
+proposal during the fit (`lam` of `refine_samples`).  Outputs are tagged
+`_lam<tether>`; untagged files are the earlier runs at tether 1.
 """
 import json
 import math
@@ -78,7 +82,7 @@ def make_truths(beta):
     return out
 
 
-def run(flow, vae, noise, beta):
+def run(flow, vae, noise, beta, lam=1.0):
     from spevae.evaluation import cases as C
     from spevae.evaluation import methods as M
     from spevae.models.flow import refine_samples
@@ -92,7 +96,7 @@ def run(flow, vae, noise, beta):
         z, norm = flow.sample_coords(inst.G, tr.x, beta, sigma=inst.sigma, n_samples=S, generator=g,
                                      inv_sqrt_R=inst.isr)
         ps, c2 = refine_samples(flow, z, norm, beta, tr.x, inst.G.expand(S, -1),
-                                inst.sigma.expand(S, -1), inst.isr, 1.0, perturb=True,
+                                inst.sigma.expand(S, -1), inst.isr, lam, perturb=True,
                                 generator=g, anneal_from=1e-2)
         acc = (c2 <= 1.0 + 3.0 * math.sqrt(2.0 / L)).numpy()
         none_fit = not acc.any()
@@ -188,8 +192,9 @@ def main():
     beta = float(sys.argv[5]) if len(sys.argv) > 5 else 8.0
     torch.set_num_threads(6)
     flow, vae = load_flow(sys.argv[2]).eval(), load_model(sys.argv[3])
-    rows = run(flow, vae, noise, beta)
-    tag = f"b{beta:g}_n{noise:g}"
+    lam = float(sys.argv[6]) if len(sys.argv) > 6 else 10.0
+    rows = run(flow, vae, noise, beta, lam)
+    tag = f"b{beta:g}_n{noise:g}" + ("" if lam == 1.0 else f"_lam{lam:g}")
     for kind in ("continuum", "discrete"):
         fig(rows, kind, out / f"exact_{kind}_{tag}.png", noise, beta)
     summ = {}
@@ -207,7 +212,7 @@ def main():
                                               float(np.median([r["flow_frac_accepted"] for r in sel]))],
             "flow_no_sample_fits": int(sum(r["flow_no_sample_fits"] for r in sel))}
     with open(out / f"exact_models_{tag}.json", "w") as fh:
-        json.dump({"noise": noise, "beta": beta, "samples": S, "summary": summ,
+        json.dump({"noise": noise, "beta": beta, "samples": S, "tether": lam, "summary": summ,
                    "rows": [r for r, _ in rows]}, fh, indent=1)
     print(json.dumps(summ, indent=1))
     print(f"-> {out}/exact_models_{tag}.json + exact_continuum_{tag}.png, exact_discrete_{tag}.png")
