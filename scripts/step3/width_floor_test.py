@@ -15,7 +15,10 @@ cumulative weight); MaxEnt's score on the same draw is read from that judge's
 output.
 
     python scripts/step3/width_floor_test.py out/step3/width_floor out/step3/F3_60k_s1.pt \
-        out/eval/exact_models_F3_60k_s1 [factor=4] [quick]
+        out/eval/exact_models_F3_60k_s1 [factor=4] [lines] [quick]
+
+`lines` runs the two line-spectrum settings only (a large factor makes the
+lattice settings, where nothing changes, very slow).
 
 Writes width_floor_test.{json,png}.  `quick` runs the first line spectrum of
 the first setting only and prints; `fig DIR` re-renders the figure from the
@@ -134,11 +137,12 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     flow = load_flow(sys.argv[2]).eval()
     judged = Path(sys.argv[3])
-    factor = float(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] != "quick" else 4.0
+    factor = float(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] not in ("quick", "lines") else 4.0
     quick = sys.argv[-1] == "quick"
+    settings = [s for s in SETTINGS if s[2] == "discrete"] if "lines" in sys.argv else SETTINGS
     torch.set_num_threads(4)
     res = []
-    for beta, noise, kind, arms in SETTINGS[:1] if quick else SETTINGS:
+    for beta, noise, kind, arms in settings[:1] if quick else settings:
         rec = json.load(open(judged / f"exact_models_b{beta:g}_n{noise:g}_lam10.json"))
         ref = [r for r in rec["rows"] if r["kind"] == kind]
         items = [t for t in J.make_truths(beta) if t["kind"] == kind]

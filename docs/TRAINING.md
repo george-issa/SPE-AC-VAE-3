@@ -1180,13 +1180,24 @@ whose poles really are Lorentzians); per noise band 0.50–0.53 / 0.88–0.92.
 stated 90% interval in 5 of 7 windows as before, the two misses smaller
 (0.008 and 0.016 in weight, from 0.020 and 0.027).  The Holstein cell is not
 flagged and its report is unchanged.
+*A lower floor still* (`width_floor_test.py ... 16 lines`,
+`out/step3/width_floor_16/`; the protocol of (xx), 12 line spectra per
+setting).  Dividing the floor by 16 instead of 4 gains little: W₁ ratio
+0.962 [0.925, 1.000] at β = 8, noise 1e-4 (0.141 → 0.136; MaxEnt 0.124) and
+0.978 [0.947, 1.009] at β = 2 (0.396 → 0.388; MaxEnt 0.323), at three times
+the fitting time of the factor 4 (54 s against 18 s and 4 s as trained, 64
+samples at β = 8).  The factor stays at 4.  Width is therefore no longer
+what limits the line spectra: making the poles sharper in the fit, down to
+effectively a line, moves the error by 2–4%.
 Reading: the option costs nothing where the spectrum is continuous and is
 the default; flagged line spectra now come with intervals close to their
 stated level; unflagged line spectra and line spectra at β = 2 remain
-outside what this model class and prior represent — every pole has a width
-of at least the floor and the flow was trained on nothing narrower.  The
-remedy with a known form is a line token (γ = 0, closed-form kernel) in the
-model and exact line spectra in the prior, which is a retrain.
+outside what this prior represents.  What is left is in the proposals —
+where the flow puts lines and how many it draws — and the flow was trained
+on no spectrum of sharp lines (its line models are broadened to at least
+the floor).  A line token (γ = 0, closed-form kernel) with exact line
+spectra in the prior is the candidate remedy; it is a retrain, and whether
+it closes the gap at β = 2 is not established by anything measured here.
 
 **Gates for calling it shippable**, and where seed 1 stands (2026-11-25,
 after (xxii)):
