@@ -855,6 +855,14 @@ smooth feature.  Resampling the reported samples to its count posterior
 calibration judge, 96 samples per truth) moves coverage 0.647 / 0.962 →
 0.626 / 0.950 and the window-weight error 0.0467 → 0.0447 at an effective
 sample size of about 70%.  Right direction, a sixth of the gap.
+A classifier trained five times longer (30k steps: cross-entropy 1.89, true
+count at probability 0.22) re-scored on the same samples
+(`calibration.py recount`) gives 0.611 / 0.937 at an effective sample size
+of 58%: more of the gap, still under half.  It does not pay once the bands
+are calibrated (xviii): each arm given its own band table, the
+count-matched 50% and 90% bands are 3–11% *wider* at equal held-out
+coverage, and the window-weight error is unchanged (0.0451 against 0.0467).
+Count matching stays in the code, off, and no classifier ships.
 
 (xviii) **Band table: the reported bands are calibrated, the samples are
 not** (*measured*, 2026-11-24; `posterior.band_levels`, `fit_band_table`,
