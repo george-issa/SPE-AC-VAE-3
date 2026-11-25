@@ -163,3 +163,23 @@ def test_run_suite_end_to_end(tmp_path, tiny_model):
     write_report(card, str(tmp_path / "rep"), figures=False)
     assert (tmp_path / "rep" / "scorecard.json").exists()
     assert (tmp_path / "rep" / "summary.md").exists()
+
+
+def test_paired_interval_does_not_flag_two_agreeing_pairs():
+    """Two pairs that agree in sign are not evidence; eight consistent ones are."""
+    from spevae.evaluation.stats import compare_pairs
+
+    def recs(ratios):
+        out = []
+        for s, r in enumerate(ratios):
+            for g, v in (("A", 1.0), ("B", r)):
+                out.append({"kind": "synthetic", "model": g, "method": "m", "case": "c",
+                            "noise": 1e-3, "seed": s, "w1": v})
+        return out
+
+    c = compare_pairs(recs([0.9, 0.7]), ("A", "m"), ("B", "m"))[0]
+    assert c["n"] == 2 and c["lo"] < 1.0 < c["hi"] and abs(c["ratio"] - (0.9 * 0.7) ** 0.5) < 1e-12
+    c = compare_pairs(recs([0.8, 0.75, 0.85, 0.7, 0.9, 0.8, 0.78, 0.82]), ("A", "m"), ("B", "m"))[0]
+    assert c["hi"] < 1.0
+    c = compare_pairs(recs([0.8]), ("A", "m"), ("B", "m"))[0]
+    assert c["lo"] == 0.0 and c["hi"] == float("inf")

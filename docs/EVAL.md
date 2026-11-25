@@ -108,15 +108,20 @@ cannot narrow the interval. Model comparisons are **paired** (both models saw th
 same draws): the geometric-mean error ratio with a paired bootstrap interval and the
 fraction of draws on which the second model is better.
 
-**Known limits of these intervals (found in review 2026-11-24, not yet fixed).**
-(i) The paired interval is a percentile bootstrap of the mean log-ratio; with two
-pairs it is exactly [min, max], so it "excludes 1" whenever the two pairs agree in
-sign — half the time when the arms are identical. The scan-pipeline rows are run on
-the first seed pair only (n = 2): their `**` flags and better/worse tallies are not
-significance statements. Simulated false-positive rates of the flag for identical
-arms (600 trials each through `compare_pairs`): 49% at n = 2, 19% at n = 4, 11% at n = 8. (ii) `cases.draw` seeds the noise
-generator with the seed alone, so every case and both noise levels reuse the same
-eight standardised noise patterns; cells are not independent draws of the noise.
+**The paired interval is a *t* interval on the log-ratios** (changed 2026-11-24).
+It was a percentile bootstrap of the mean log-ratio; with two pairs that is exactly
+[min, max], so it "excluded 1" whenever the two pairs agreed in sign. Simulated rates
+of the `**` flag for identical arms (600 trials through `compare_pairs`): 49% / 19% /
+11% at n = 2 / 4 / 8 before, 4.2% / 5.5% / 4.8% now. Reports rendered before this
+date carry the old flags; the scan-pipeline rows (first seed pair only, n = 2) were
+never significance statements.
+
+**Known limit, not fixed.** `cases.draw` seeds the noise generator with the seed
+alone, so every case and both noise levels reuse the same eight standardised noise
+patterns; cells are not independent draws of the noise. Changing it would move every
+banked number, so it stays; the step-3 judges (`scripts/step3/calibration.py`,
+`scripts/eval/exact_models_judge.py` with a seed argument) draw their own noise per
+truth.
 
 **Read the intervals with care.** Reconstruction error varies far less across noise
 draws than across training seeds (measured: two 6k M1-recipe seeds differ 2.4× on the

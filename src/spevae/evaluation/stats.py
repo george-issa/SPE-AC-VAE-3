@@ -94,13 +94,15 @@ def compare_pairs(records: list[dict], a: tuple, b: tuple, metric: str = "w1",
     Model-free references (MaxEnt, DEAC) have group ``"-"``.
 
     Per (case, noise): the geometric-mean ratio :math:`b/a` of the metric over
-    matched (training run, noise seed) draws, a paired bootstrap 95% interval,
-    and the fraction of draws on which ``b`` is better.  A ratio below 1 means
-    ``b`` has the smaller error.  Draws are matched by noise seed; when the two
+    matched (training run, noise seed) draws, a 95% paired *t* interval on the
+    log-ratios, and the fraction of draws on which ``b`` is better.  A ratio
+    below 1 means ``b`` has the smaller error.  (A percentile bootstrap of the
+    mean was used before; with two pairs it is exactly [min, max] and flagged
+    identical arms as different 49% of the time, 19% at four pairs.  The *t*
+    interval holds its 5% at every n; with one pair there is no interval.)  Draws are matched by noise seed; when the two
     groups have different numbers of training runs, runs are paired by index
     modulo the smaller count.
     """
-    rng = np.random.default_rng(seed)
     vals = defaultdict(lambda: defaultdict(dict))
     for r in records:
         if r.get("kind") != "synthetic" or r.get(metric) is None:
@@ -127,10 +129,13 @@ def compare_pairs(records: list[dict], a: tuple, b: tuple, metric: str = "w1",
         if not pairs:
             continue
         lr = np.asarray(pairs)
-        boot = np.array([lr[rng.integers(0, lr.size, lr.size)].mean() for _ in range(N_BOOT)])
+        if lr.size > 1:
+            from scipy.stats import t as student_t
+            half = float(student_t.ppf(0.975, lr.size - 1)) * lr.std(ddof=1) / np.sqrt(lr.size)
+            lo, hi = float(np.exp(lr.mean() - half)), float(np.exp(lr.mean() + half))
+        else:
+            lo, hi = 0.0, float("inf")
         rows.append({"case": case, "noise": noise, "n": int(lr.size),
-                     "ratio": float(np.exp(lr.mean())),
-                     "lo": float(np.exp(np.percentile(boot, 2.5))),
-                     "hi": float(np.exp(np.percentile(boot, 97.5))),
+                     "ratio": float(np.exp(lr.mean())), "lo": lo, "hi": hi,
                      "b_better": float((lr < 0).mean())})
     return rows
