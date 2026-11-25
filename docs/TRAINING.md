@@ -952,12 +952,13 @@ On every lattice family at every setting the flow is at or below MaxEnt
 spectra at β = 16.  **Line spectra are where it loses**: at β = 8, noise
 1e-4 and at β = 2 MaxEnt is lower on the exactly diagonalised families
 (Hubbard atom 0.092 against 0.042, Anderson cluster 0.169 against 0.088).
-The cause is the model class, not the training: the exact lines given the
-narrowest width the pole form allows (γ = 0.1π/β, positions and weights
-exact) already cost W₁ 0.157 at β = 8 and 0.471 at β = 2, and the flow
-scores 0.160 and 0.406.  A Lorentzian of the floor width carries its tails
-whatever the data say; MaxEnt has no floor.  Lowering it means a finer
-quadrature and a retrain, or a separate line component.
+The exact lines given the narrowest width the pole form allows
+(γ = 0.1π/β, positions and weights exact) cost W₁ 0.157 at β = 8 and 0.471
+at β = 2, and the flow scores 0.160 and 0.406.  [*Corrected 2026-11-25,
+(xx)*: that agreement is one of averages only.  Case by case the flow runs
+from half to 2.5× the floor-only cost, so the comparison does not show that
+the floor is the cause.  Tested directly in (xx): it is the binding limit
+at β = 8, noise 1e-4, and it is not what loses at β = 2.]
 The report now says when this is happening
 (`posterior.weight_at_width_floor`, warning at ≥ 10%): the share of
 spectral weight on poles pinned at the floor is 0.00 on every lattice
@@ -983,17 +984,73 @@ pseudogap (0.055 → 0.118); MaxEnt keeps the Gaussian pair (0.012 against
 the 90% window interval in 5 of 7 windows, with or without the table and on
 three seeds: the upper satellite (ω = +3.83, weight 0.073) is put at ≤ 0.05
 and its weight on the main line; the data-only bracket for that window is
-0–0.235.  Holstein cell: 177 of 200 accepted, χ²/target 0.99, W₁ to the
-SmoQyDEAC reference 0.148 (F_60k 0.145), but the samples use all 12 pole
+0–0.235.  Holstein cell (`scripts/step3/holstein_report.py`,
+`out/step3/holstein_F3_60k_s1/`): 177 of 200 accepted, χ²/target 0.99, W₁
+to the SmoQyDEAC reference 0.149 (F_60k 0.145; MaxEnt 0.107, VAE 0.193 —
+the reference is itself a continuation), but the samples use all 12 pole
 slots (warning) and the band is 1.7× wider than F_60k's.
 
 *Count matching* on the crossed design: 0.579 / 0.935 → 0.564 / 0.920; off,
 as decided in (xvii).
 
-**Gates for calling it shippable**, and where seed 1 stands (2026-11-24):
+(xx) **The width floor, tested directly: binding at β = 8 and small error
+bars, not the cause at β = 2** (*measured*, 2026-11-25;
+`scripts/step3/width_floor_test.py`, `width_floor_figure.py`,
+`out/step3/width_floor/`).  The floor is γ ≥ 0.1π/β, a tenth of the first
+Matsubara frequency, and the quadrature step is the floor / 3.5, so the
+cost of every forward evaluation scales as 1/floor.  The test needs no
+retraining: the same 64 proposals of F3_60k_s1 are refined against the same
+data and the same noise redraws with the floor as trained and with the
+floor divided by 4 (coordinates re-expressed, quadrature refined 4×), the
+latter also at tether 1.  W₁ of the posterior mean, geometric mean, 12 line
+spectra / 20 lattice spectra per setting; ratios with a paired 95% t
+interval on the log-ratios:
+
+| setting | as trained | floor / 4 | floor / 4, tether 1 | MaxEnt |
+|---|---|---|---|---|
+| lines, β = 8, noise 1e-4 | 0.160 | 0.141 | 0.131 | 0.124 |
+| lines, β = 2, noise 1e-3 | 0.406 | 0.396 | 0.412 | 0.323 |
+| lattice, β = 8, noise 1e-3 | 0.088 | 0.089 | — | 0.229 |
+| lattice, β = 8, noise 1e-4 | 0.041 | 0.042 | — | 0.172 |
+
+*β = 8, noise 1e-4.*  Lowered / as trained 0.88 [0.79, 0.99] (tether 1:
+0.82 [0.70, 0.95]).  Against MaxEnt the flow goes from 1.29 [1.02, 1.62]
+to 1.14 [0.96, 1.34] (tether 1: 1.05 [0.88, 1.26]): no longer separable
+from MaxEnt on 12 truths, and not shown to be below it.  Eight of the 12
+truths use the room (weight on poles below the trained floor); on those
+0.141 → 0.117 → 0.103 against MaxEnt 0.098, and the four with dense lines
+(trimer, 4-ring, Holstein atom) do not move.  The cleanest case, the
+Hubbard atom: with the trained floor the samples cannot reach the data
+(median χ² per point 7.0, 27% accepted, 88% of the weight on poles at the
+floor, peak height that of a floor-width Lorentzian while MaxEnt's is 2.3×
+taller); with the floor / 4, χ² 1.6, 45% accepted, W₁ 0.078 → 0.051
+(MaxEnt 0.042).  The second atom still does not fit at floor / 4 (χ² 5.2):
+a factor 4 is not always enough at this error bar.
+*β = 2, noise 1e-3.*  Lowered / as trained 0.98 [0.94, 1.01], tether 1
+1.02 [0.95, 1.09]; against MaxEnt 1.26 → 1.23.  Every sample already fits
+(χ² 0.85, accepted 98%) and the posterior mean is two to three times
+broader than floor-width lines at the exact positions
+(`width_floor.png`, Hubbard trimer: W₁ 0.416, of which 0.062 from weight
+more than 1 away from every line; floor-width lines 0.497, of which 0.256).
+The loss there is the spread of line positions over the samples, not
+their width.  Cause not established.
+*Lattice spectra.*  Lowered / as trained 1.009 [1.004, 1.014] and 1.012
+[1.006, 1.017]; no pole goes below the trained floor on any of the 40
+runs.  The fit takes 3.3× as long (4.5 s → 15 s for 64 samples at β = 8).
+Reading: a retrain with a lower floor is not justified by this — the gain
+at β = 8 is available in the fit alone, and β = 2 would not be fixed by it.
+Not yet done: the lowered floor as an option of `refine_samples` /
+`continue_posterior` (the test patches the coordinates and the quadrature
+from outside), switched on when `weight_at_width_floor` fires; coverage of
+the window intervals on that path; a true line component (γ = 0 has a
+closed form) for the cases a factor 4 does not reach.
+
+**Gates for calling it shippable**, and where seed 1 stands (2026-11-25):
 (1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
-lattice families at five settings; not met on line spectra at small error
-bars or high temperature, by the width floor (xix)*; (2) a
+lattice families at five settings; not met on line spectra at β = 8, noise
+1e-4 (the width floor: lowered 4× in the fit alone the gap to MaxEnt goes
+from 29% to 14% [−4%, +34%], (xx)) nor at β = 2 (26% behind, not the floor,
+cause open)*; (2) a
 leave-one-family-out arm — *not run; the stand-in is F_60k, trained on none
 of the families: within 7% at β = 8, better on lattices at β = 16*;
 (3) coverage within ±0.03 of nominal per noise band and per β — *met for the
