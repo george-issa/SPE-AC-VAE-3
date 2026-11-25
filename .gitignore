@@ -13,5 +13,7 @@ __pycache__/
 *.npz
 *.jld2
 *.h5
-# the one versioned data file: a small DQMC run with a known answer
+# the two versioned data files: a small DQMC run with a known answer, and the
+# Holstein judge cell (400 bins and its reference spectrum)
 !src/spevae/evaluation/fixtures/hubbard_dimer_U4_b8.npz
+!src/spevae/evaluation/fixtures/holstein_b8_w1_n1_l0325.npz
