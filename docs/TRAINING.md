@@ -1045,6 +1045,45 @@ from outside), switched on when `weight_at_width_floor` fires; coverage of
 the window intervals on that path; a true line component (γ = 0 has a
 closed form) for the cases a factor 4 does not reach.
 
+(xxi) **Three training seeds of the full-length model agree** (*measured*,
+2026-11-25; `scripts/step3/run_full.sh "1 2 3" 60000`,
+`scripts/step3/seed_summary.py`, `out/step3/seeds.{json,png}`).  Seeds 2
+and 3 are the recipe of (xix) with only the training seed changed, each
+judged by the same chain: calibration on 288 held-out truths of the prior
+and the known-answer set at five settings.  W₁ of the posterior mean,
+geometric mean, seeds 1 / 2 / 3:
+
+| setting | lattice (n = 20) | MaxEnt | lines (n = 12) | MaxEnt |
+|---|---|---|---|---|
+| β = 8, noise 1e-4 | 0.041 / 0.042 / 0.041 | 0.172 | 0.160 / 0.151 / 0.160 | 0.124 |
+| β = 8, noise 1e-3 | 0.088 / 0.088 / 0.088 | 0.229 | 0.236 / 0.233 / 0.234 | 0.280 |
+| β = 8, noise 1e-2 | 0.298 / 0.292 / 0.294 | 0.578 | 0.526 / 0.527 / 0.523 | 0.702 |
+| β = 2, noise 1e-3 | 0.142 / 0.143 / 0.142 | 0.465 | 0.406 / 0.409 / 0.411 | 0.323 |
+| β = 16, noise 1e-3 | 0.109 / 0.111 / 0.110 | 0.213 | 0.204 / 0.212 / 0.206 | 0.333 |
+
+Spread (max − min over the mean) 0–2% on lattice spectra, 1–6% on line
+spectra.  The verdict against MaxEnt is the same for all three seeds at all
+ten settings: ahead on eight, behind on line spectra at β = 8, noise 1e-4
+and at β = 2.  Both the wins and the two losses belong to the method, not
+to a training run.
+*Held-out prior.*  Plain sample coverage 0.566 / 0.923, 0.564 / 0.928,
+0.579 / 0.928 (nominal 0.50 / 0.90); data-fit rank 0.49, 0.48, 0.49; error
+of the refined mean 0.0415, 0.0398, 0.0392 (unrefined 0.089, 0.087, 0.090).
+*One band table for all seeds.*  The table fitted on seed 1's calibration
+sets, applied unchanged to the 288 held-out truths of the other seeds
+(`fit_band_calibration.py out/step3/cal_F3_60k_s<k> out/step3/F3_60k_s1.pt
+--evaluate`, `band_table_test.json`): seed 2 0.477 ± 0.016 / 0.901 ± 0.010,
+seed 3 0.495 ± 0.016 / 0.906 ± 0.009 at nominal 0.50 / 0.90 (plain
+quantiles on the same truths 0.565 / 0.930 and 0.581 / 0.934).  Over the
+ten strata (four noise bands, six β) the deviations scatter as sampling
+noise would: rms z 0.83 and 0.88, largest |z| 1.70 and 1.88, against 2.4
+and 2.5 (largest 7.2 and 4.6) for plain quantiles.  The largest stratum
+gap is 0.06; with 24–120 truths per stratum the ±0.03 of gate (3) is not
+resolved stratum by stratum on one seed's 288 truths — pooled it holds.
+Reading: the over-coverage of the plain samples and its correction are
+properties of the recipe, so one table serves any seed; seed 1 stays the
+checkpoint carried forward, being the one with the full set of judges.
+
 **Gates for calling it shippable**, and where seed 1 stands (2026-11-25):
 (1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
 lattice families at five settings; not met on line spectra at β = 8, noise
@@ -1059,7 +1098,9 @@ by repetition 0.48–0.52 / 0.88–0.92); not met by the samples themselves
 (0.58 / 0.94)*; (4) data-fit rank 0.45–0.55 — *0.49 pooled, 0.43 below
 error bars of 1e-4*; (5) the suite no worse than the banked run — *met
 (0.0295 / 0.0627 against 0.0296 / 0.0833); 7% behind F_60k at equal
-tether at 1e-3*; (6) three training seeds — *one judged, two training*;
+tether at 1e-3*; (6) three training seeds — *met: 0–2% apart on lattice spectra, 1–6% on
+line spectra, same verdict against MaxEnt at every setting, seed 1's band
+table transfers ((xxi))*;
 (7) a real DQMC run of a model with a known spectrum — *done: below MaxEnt
 and the VAE, one satellite outside its interval*.
 
