@@ -717,6 +717,29 @@ held-out truths per level from the step-3 prior (all three sources), each
 through `continue_posterior` as a user's data would be; PIT coverage of
 the spectral weight in the report's seven windows, the data-fit rank, and
 the window-weight error, per noise level and per truth source.
+(xii) **First step-3 screen: the flow learns the new truths, the refinement
+erases the gain** (*measured*, 2026-11-24; `out/step3/F3_6k.pt`, 6000 steps,
+18 min on MPS, p_smooth 0.35 / p_exact 0.15 / pole motifs 0.5, β grid,
+noise 1e-5–3e-2; known-answer judge at β = 8, noise 1e-3, same 32 truths
+and draws; W₁ geometric means of the flow posterior mean).
+
+| flow | lattice, raw | lattice, refined | exact-diag., raw | exact-diag., refined |
+|---|---|---|---|---|
+| F_60k (step-2 recipe, 60k steps) | 0.249 | 0.123 | 0.500 | 0.246 |
+| F_6k (step-2 recipe, 6k steps) | 0.567 | 0.132 | 0.742 | 0.257 |
+| F3_6k (step-3 recipe, 6k steps) | 0.403 | 0.140 | 0.658 | 0.241 |
+
+(VAE latent MAP 0.181 / 0.386, MaxEnt 0.229 / 0.280.)  At equal training
+length the step-3 recipe makes the RAW flow clearly better on these spectra
+(0.567 → 0.403, 0.742 → 0.658), and length matters as much (0.567 → 0.249
+from 6k to 60k) — but after refinement all three flows land on the same
+error.  The refined answer is set by the least-squares step from a weakly
+tethered start, not by what the flow knows: better priors do not reach the
+output through this pipeline.  This is the same defect as the excess band
+width in (v) of the re-measurement, seen from the accuracy side, and it
+makes the feedback arm (x) the decisive one: a flow whose own samples fit
+the data needs no refinement, so what it learned survives.  Until that arm
+is judged, longer step-3 training would improve only the raw column.
 **Gates for calling it shippable** (none claimed yet): known-answer W₁ on
 held-out parameters at or below MaxEnt on every family, and a
 leave-one-family-out arm; PIT coverage within ±0.03 of nominal per noise
