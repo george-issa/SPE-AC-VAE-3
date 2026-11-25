@@ -1206,7 +1206,9 @@ the lowered one; and what pole labels of exact line data would be**
 `out/step3/floor_option_keep/`; `scripts/step3/line_label_probe.py`,
 `out/step3/line_labels/`).
 *Why.*  At β = 2 the positions and weights of the line groups are right
-(group means within 0.02 of exact) and the loss is in the tails: a pole
+(on four spectra looked at sample by sample: weight of each half of the
+spectrum within 0.02, its mean position within 0.1) and the loss is in the
+tails: a pole
 kept at the trained floor is a Lorentzian of half-width 0.157 there, 10% of
 its weight more than 0.5 away, and the second fit of (xxii) left it that
 wide because the data are indifferent.  A pole the flow pins at its floor
