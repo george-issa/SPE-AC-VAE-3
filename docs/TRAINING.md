@@ -1296,6 +1296,65 @@ full model are therefore not an artefact of training on the judged
 families.  One arm, one seed, eight families withheld at once — not a
 family-by-family leave-one-out.
 
+(xxv) **Exact line spectra as training targets: same error, twice as many
+line spectra flagged, stated intervals on line spectra 0.39 / 0.75 →
+0.49 / 0.86** (*measured*, 2026-11-25, one seed; `scripts/step3/
+build_physics_bank.py --base`, `run_lines.sh`, `lines_retrain_summary.py`,
+`out/step3/F3L_60k_s1.pt`, `out/step3/lines_retrain.{json,png}`).  The
+remedy (xxiii) pointed to, with no change of the model: exact line spectra
+enter the label bank the way lattice spectra do — data computed from the
+lines in closed form, target the canonical pole label fitted to that data.
+2129 of 3840 drawn line spectra have a label that reproduces their G(τ) to
+1e-5 and are kept (bank 9417 → 11546); at `--p-smooth 0.45 --p-exact 0.10`
+the generator gives about 8% such rows, 35% smooth and lattice labels, 46%
+pole mixtures and 11% broadened lines.  Otherwise the recipe of (xix), seed
+1, 60k steps (2.4 h; held-out loss 0.173 against 0.170, different mixes).
+Judged against `F3_60k_s1` on the same known answers and noise draws, per
+spectrum, geometric mean of the W₁ ratio with a 95% t interval:
+
+| | n | retrain / before |
+|---|---|---|
+| lattice, samples as trained | 100 | 1.005 [0.992, 1.018] |
+| lines, samples as trained | 60 | 0.965 [0.940, 0.991] |
+| lines, through the report | 120 | 0.969 [0.945, 0.992] |
+
+By family as trained the gains are hubbard_trimer 0.875 [0.771, 0.993],
+anderson_cluster 0.942 [0.889, 0.997], hubbard_ring4 0.972 [0.954, 0.990];
+tb_chain is at 1.049 [1.000, 1.100].  Through the report, line spectra per
+setting (24 each), W₁ before / retrain / MaxEnt and retrain over MaxEnt:
+β = 8, noise 1e-4: 0.139 / 0.136 / 0.143, 0.95 [0.86, 1.06]; 1e-3: 0.233 /
+0.222 / 0.291, 0.76 [0.67, 0.87]; 1e-2: 0.532 / 0.516 / 0.684, 0.76 [0.66,
+0.86]; β = 2: 0.399 / 0.406 / 0.367, 1.11 [1.00, 1.23]; β = 16: 0.215 /
+0.199 / 0.338, 0.59 [0.49, 0.70].  So the headroom the labels showed in
+(xxiii), a factor of two to three, is not what the retrain delivers: 3%.
+
+What changes is the report.  The retrained flow puts poles at the width
+floor where it was shown labels that do, so the narrow-line flag of (xxii)
+fires on 97 of the 120 line spectra instead of 49 (20, 20, 20, 15, 22 of 24
+per setting against 14, 11, 7, 12, 5), on none of the 100 lattice spectra
+for either model, and every spectrum flagged before is flagged still.
+Share of windows whose exact weight lies inside the 50% / 90% interval the
+report states (± one standard error over spectra):
+
+| line spectra | n | before | retrain |
+|---|---|---|---|
+| all | 120 | 0.393 ± 0.027 / 0.751 ± 0.025 | 0.486 ± 0.027 / 0.855 ± 0.020 |
+| flagged by the retrain only | 48 | 0.259 / 0.658 | 0.461 / 0.902 |
+| flagged by both | 49 | 0.542 / 0.915 | 0.560 / 0.904 |
+| flagged by neither | 23 | 0.354 / 0.596 | 0.379 / 0.652 |
+
+The line spectra the report still cannot flag are 23 of 120 (19%; 71
+before), 11 of them holstein_atom, 6 hubbard_ring4, 9 at β = 2; on those
+the intervals are as short as before.  On draws of the retrained model's
+own prior (288 truths) the flag fires on 41 (14%), where the stated
+intervals are wide (0.72 / 0.99); on the 247 others the central sample
+quantiles hold 0.558 / 0.928, the same over-dispersion as (xviii), so this
+checkpoint needs its own band table (fitted on the unflagged truths, the
+ones it is applied to: `fit_band_calibration.py --unflagged-only`) before
+its lattice intervals mean what they say — without one they hold 0.58 /
+0.93 on the 100 lattice spectra.  Not done here: that table, a second
+seed, the real-data runs with this checkpoint.
+
 **Gates for calling it shippable**, and where seed 1 stands (2026-11-25,
 after (xxiv)):
 (1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
@@ -1325,6 +1384,12 @@ setting, seed 1's band table transfers ((xxi))*;
 (7) a real DQMC run of a model with a known spectrum — *done: below MaxEnt
 and the VAE, the upper satellite and its neighbour window outside their
 intervals by 0.01 in weight*.
+Since (xxv) the candidate for release is the retrained `F3L_60k_s1`, pending
+its band table and a second seed; the gates above are stated for
+`F3_60k_s1`.  The command a user runs exists since 2026-11-25:
+`spevae continue` gives the posterior report for a flow checkpoint
+(`posterior.continue_measured`), and reproduces the dimer judge's report to
+the digit.  No checkpoint is published.
 
 **Step-2 build (1): the smooth-family label bank — built, judged,
 pinned** (*measured*, 2026-08-27).  `data/label_bank.py` +
