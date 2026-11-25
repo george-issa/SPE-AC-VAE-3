@@ -1262,17 +1262,51 @@ it sees noise-free data — so this bounds what teaching line spectra the way
 lattice spectra are taught could gain; it does not measure it.  That is a
 change of the training data and a retrain, with no change of the model.
 
+(xxiv) **Leave-families-out arm: 5% on lattice families never seen, nothing
+measurable on line families** (*measured*, 2026-11-25;
+`scripts/step3/run_leave_out.sh`, `leave_out_bank.py`,
+`leave_out_summary.py`, `out/step3/F3_60k_lo.pt`,
+`out/step3/leave_out.{json,png}`).  The recipe of (xix), seed 1, with five
+lattice families removed from the label bank (tb_square, tb_honeycomb,
+ssh_chain, bcs, falicov_kimball: 3157 of 9417 labels) and three line
+families removed from the generator (hubbard_dimer, hubbard_ring4,
+holstein_atom); judged on the known-answer set at the five settings.  Per
+spectrum and setting, W₁ of the leave-out model over W₁ of the full model
+(seed 1), geometric mean with a 95% t interval; the other two seeds of the
+full model give the size of a ratio that means nothing:
+
+| | n | leave-out / full | other seed / full | leave-out / MaxEnt | full / MaxEnt |
+|---|---|---|---|---|---|
+| lattice, never seen | 50 | 1.052 [1.028, 1.078] | 1.006 [0.997, 1.014] | 0.482 [0.390, 0.597] | 0.458 |
+| lattice, trained on | 50 | 1.001 [0.979, 1.022] | 0.993 [0.981, 1.005] | 0.308 [0.260, 0.365] | 0.308 |
+| lines, never seen | 30 | 1.014 [0.990, 1.039] | 0.981 [0.964, 0.998] | 0.901 [0.818, 0.992] | 0.888 |
+| lines, trained on | 30 | 1.017 [0.997, 1.038] | 1.014 [1.000, 1.028] | 0.951 [0.784, 1.154] | 0.935 |
+
+By family the largest are bcs 1.085 [1.011, 1.165], hubbard_dimer 1.073
+[1.029, 1.120] and tb_honeycomb 1.055 [1.009, 1.103]; holstein_atom and
+hubbard_ring4 are at 0.98 and 0.99.  The leave-out model is below MaxEnt on
+40 of the 50 never-seen lattice spectra (the full model on 42).  The real
+DQMC dimer through the leave-out model, which never saw a Hubbard dimer:
+W₁ 0.331 (full model 0.325, MaxEnt 0.777, VAE 0.405), the exact weight
+inside the stated interval in 5 of 7 windows as for the full model
+(`out/dqmc/F3_60k_lo/`).
+Reading: having seen a lattice family is worth about 5%, an order of
+magnitude less than the margin over MaxEnt; the known-answer scores of the
+full model are therefore not an artefact of training on the judged
+families.  One arm, one seed, eight families withheld at once — not a
+family-by-family leave-one-out.
+
 **Gates for calling it shippable**, and where seed 1 stands (2026-11-25,
-after (xxiii)):
+after (xxiv)):
 (1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
 lattice families at five settings; on line spectra ahead of MaxEnt at
 β = 8, noise 1e-3 and 1e-2 and at β = 16, level at β = 8, noise 1e-4
 (0.97 [0.85, 1.11]) and at β = 2 (1.09 [0.97, 1.22]) once the fit lowers
 the floor ((xxii), (xxiii))*; (2) a
-leave-one-family-out arm — *training (`scripts/step3/run_leave_out.sh`: five
-lattice and three line families withheld); the stand-in so far is F_60k,
-trained on none of the families: within 7% at β = 8, better on lattices at
-β = 16*;
+leave-families-out arm — *done with eight families withheld at once: 5%
+worse on the five lattice families never seen (1.05 [1.03, 1.08]; still
+0.48 of MaxEnt's error), no measurable cost on the three line families, the
+real DQMC dimer unchanged ((xxiv))*;
 (3) coverage within ±0.03 of nominal per noise band and per β — *met on
 draws of the prior by the intervals as the report states them (fresh 288
 truths: 0.52 / 0.90, per noise band 0.50–0.53 / 0.88–0.92; earlier: by β

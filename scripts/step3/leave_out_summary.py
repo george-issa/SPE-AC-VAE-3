@@ -107,7 +107,7 @@ def main():
         a0.plot([i - 0.38, i + 0.38], [g, g], color=col, lw=2.0, zorder=4)
     a0.axhline(1.0, color=INK, lw=0.8, ls=":")
     a0.set_yscale("log")
-    a0.set_xticks(range(len(fams)), [f.replace("_", "\n") for f in fams], fontsize=8)
+    a0.set_xticks(range(len(fams)), [f.replace("_", "\n") for f in fams], fontsize=7)
     a0.set_ylabel(r"W$_1$ of the leave-out model / W$_1$ of the full model")
     a0.plot([], [], "o", color=HELD, label="family never seen by the leave-out model")
     a0.plot([], [], "o", color=KEPT, label="family it was trained on")
