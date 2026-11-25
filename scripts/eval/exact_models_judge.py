@@ -20,6 +20,9 @@ functions for the delta spectra).
 proposal during the fit (`lam` of `refine_samples`).  Outputs are tagged
 `_lam<tether>`; untagged files are the earlier runs at tether 1.
 
+`JUDGE_DTAU` in the environment sets the tau step of the judged data
+(default 0.125; every banked run used the default).
+
 Without `seed` every truth gets the same standardised noise pattern (seed 7,
 as in the suite).  With it, truth k is drawn with noise seed `seed + k`, and
 the outputs are tagged `_s<seed>`: run a few to see how much of a W1
@@ -27,6 +30,7 @@ difference is the noise draw.
 """
 import json
 import math
+import os
 import sys
 import time
 import warnings
@@ -42,7 +46,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-S, DTAU, SEED, PER_FAMILY = 64, 0.125, 7, 2
+S, SEED, PER_FAMILY = 64, 7, 2
+DTAU = float(os.environ.get("JUDGE_DTAU", 0.125))      # the tau step of every judged dataset
 WG = np.linspace(-30.0, 30.0, 60001)
 DW = WG[1] - WG[0]
 FLOW, VAE, ME, INK = "#2a78d6", "#eb6834", "#7d7c78", "#0b0b0b"

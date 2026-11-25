@@ -148,19 +148,19 @@ def run(out, flow_path, beta, noise, extra):
                "extra": bool(item.get("extra")), "fired": fired, "near_edge": [n for _, n in truth_w],
                "auto": score(rep, item, DEFAULT_WINDOWS, truth_w, gphys), "seconds_auto": t_auto}
         row["standard"] = score(call(1.0), item, DEFAULT_WINDOWS, truth_w, gphys) if fired else row["auto"]
-        if item["kind"] == "discrete":
-            me = M.make_method("maxent").synthetic(inst)
-            A_me = np.interp(J.WG, me.omega, me.A, left=0.0, right=0.0)
-            row["maxent"] = {"w1": J.w1_cdf(np.cumsum(A_me) * J.DW, item["cdf"])}
+        me = M.make_method("maxent").synthetic(inst)          # lattice spectra too since 2026-11-25
+        A_me = np.interp(J.WG, me.omega, me.A, left=0.0, right=0.0)
+        row["maxent"] = {"w1": J.w1_cdf(np.cumsum(A_me) * J.DW, item["cdf"])}
         rows.append(row)
         print(f"{item['kind']:9s} {item['family']:16s} {'FIRED' if fired else '     '} "
               f"W1 as trained {row['standard']['w1']:.4f} auto {row['auto']['w1']:.4f}"
               + (f" MaxEnt {row['maxent']['w1']:.4f}" if "maxent" in row else "")
               + f" | accepted {row['standard']['accepted']:.0%} -> {row['auto']['accepted']:.0%}"
               f" | {t_auto:.0f}s", flush=True)
-    res = {"flow": flow_path, "beta": beta, "noise": noise, "samples": S,
+    res = {"flow": flow_path, "beta": beta, "noise": noise, "dtau": J.DTAU, "samples": S,
            "windows": [list(w) for w in DEFAULT_WINDOWS], "rows": rows}
-    path = Path(out) / f"floor_option_b{beta:g}_n{noise:g}.json"
+    tag = "" if J.DTAU == 0.125 else f"_dt{J.DTAU:g}"          # JUDGE_DTAU, see exact_models_judge.py
+    path = Path(out) / f"floor_option_b{beta:g}_n{noise:g}{tag}.json"
     with open(path, "w") as fh:
         json.dump(res, fh, indent=1, default=float)
     print(f"-> {path}")
