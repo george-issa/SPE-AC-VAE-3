@@ -46,7 +46,8 @@ COPIES = (
      "Middle and right: green is what the report states, by error bar and by beta; the dashed lines are the "
      "nominal 0.5 and 0.9. Orange is the raw sample quantiles before the correction."),
     ("3_error_bars", "narrow_lines.png",
-     ("out/step3/floor_option_{m}/floor_option.png", "F3_60k_s1=out/step3/floor_option/floor_option.png"),
+     ("out/step3/floor_option_{m}_table/floor_option.png", "out/step3/floor_option_{m}/floor_option.png",
+      "F3_60k_s1=out/step3/floor_option/floor_option.png"),
      "Exact line spectra: what the narrow-line handling of the report does to the error and to the intervals.",
      "Left: error per setting, as trained, with the narrow-line fit, and MaxEnt. Right: share of windows whose "
      "exact weight lies inside the stated interval (filled) for flagged line spectra, unflagged line spectra "
@@ -63,8 +64,14 @@ COPIES = (
      "model and MaxEnt recover from noisy data.",
      "The gap between the dark points and the squares is what better training on line spectra could gain at "
      "most."),
+    ("4_checks", "line_spectra_as_training_targets.png", ("out/step3/lines_retrain.png",),
+     "The model trained with exact line spectra as targets (`F3L_60k_s1`) against the one trained on broadened "
+     "lines only (`F3_60k_s1`), on the same known answers.",
+     "Left and middle: the error barely moves. Right: the stated intervals on line spectra, which improve "
+     "because the retrained model's report flags narrow lines on twice as many of them."),
 )
-SHARED = {"training_seeds.png", "families_left_out.png", "line_spectra_headroom.png"}   # made on the F3_60k family
+SHARED = {"training_seeds.png", "families_left_out.png", "line_spectra_headroom.png",
+          "line_spectra_as_training_targets.png"}   # made on the F3_60k family
 
 
 def main():
@@ -113,8 +120,8 @@ def main():
     # 2-4. copied from the judges
     heads = {"2_real_data": "Real DQMC data.",
              "3_error_bars": "Whether the stated intervals contain the truth as often as they say.",
-             "4_checks": "Checks behind the numbers. These three were made on the `F3_60k` trainings and are "
-                         "not redrawn per model."}
+             "4_checks": "Checks behind the numbers. The first three were made on the `F3_60k` trainings "
+                         "(the same recipe without exact line spectra as targets) and are not redrawn per model."}
     done = set()
     for folder, name, cands, what, how in COPIES:
         if folder not in done:
