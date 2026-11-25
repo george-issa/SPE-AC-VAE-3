@@ -215,3 +215,30 @@ def test_central_interval_is_exact_at_any_sample_count():
         assert abs(hit - 0.9) < 0.015, (n, hit)
     lo, hi = central_interval(np.arange(10.0), 0.9)            # too few samples: the range
     assert (lo, hi) == (0.0, 9.0)
+
+
+def test_the_continue_command_gives_the_posterior_report_for_a_flow_checkpoint(tmp_path, capsys):
+    import os
+    path = next((q for q in ("out/step3/F3_60k_s1.pt", "out/flow/F_60k.pt") if os.path.exists(q)), None)
+    if path is None:
+        pytest.skip("no flow checkpoint present")
+    from spevae.cli import main
+    from spevae.evaluation import cases as C
+    mg, _ = C.hubbard_dimer_cell()                   # real DQMC bins, four exact lines
+    bins = tmp_path / "bins.txt"
+    np.savetxt(bins, mg.bins.double().numpy())
+    out, figure = tmp_path / "report.npz", tmp_path / "report.png"
+    main(["continue", "--bins", str(bins), "--beta", str(mg.beta), "--checkpoint", path,
+          "--samples", "24", "--out", str(out), "--figure", str(figure)])
+    text = capsys.readouterr().out
+    assert "flow posterior" in text and "weight per window" in text
+    with np.load(out) as f:
+        n = f["poles_omega"].shape[0]
+        assert 1 <= n <= 24 and f["A_q50"].shape == f["omega"].shape == (4001,)
+        assert f["chi2"].shape == (n,)
+    import json
+    rep = json.load(open(str(out) + ".json"))
+    assert rep["n_samples"] == 24 and len(rep["windows"]) == 7
+    assert abs(sum(w["mean"] for w in rep["windows"]) - 1.0) < 1e-3     # the windows partition the axis
+    assert all(w["lo"] - 1e-6 <= w["hi"] for w in rep["windows"])       # the data-alone bracket is there
+    assert figure.stat().st_size > 10_000

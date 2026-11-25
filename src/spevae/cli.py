@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 
 import numpy as np
@@ -69,7 +70,45 @@ def _add_bins_args(ap: argparse.ArgumentParser) -> None:
                     help="force no negation")
 
 
+def _is_flow_checkpoint(path: str) -> bool:
+    ck = torch.load(path, map_location="cpu", weights_only=False)
+    return isinstance(ck, dict) and ck.get("format") == "flow-1"
+
+
+def _continue_posterior(args) -> None:
+    """``spevae continue`` with a flow-posterior checkpoint: the posterior report."""
+    from .models.flow import load_flow
+    from .posterior import continue_measured
+
+    mg = _load_measured(args)
+    flow = load_flow(args.checkpoint)
+    print(f"model: flow posterior, {sum(p.numel() for p in flow.parameters()):,} parameters, "
+          f"{flow.P} poles per sample")
+    unused = [name for name, on in (("--refine", args.refine), ("--consolidate", args.consolidate),
+                                    ("--ph-symmetric", args.ph_symmetric)) if on]
+    if unused:
+        print(f"note: {', '.join(unused)} belong to the latent-variable model and do nothing here")
+    omega = np.linspace(args.omega_min, args.omega_max, args.n_omega or 4001)
+    rep = continue_measured(flow, mg, min_eigenvalue=args.min_eigenvalue or 1e-10,
+                            n_samples=args.samples or 200, omega=omega,
+                            generator=torch.Generator().manual_seed(args.seed))
+    print(rep.summary())
+    if args.out:
+        rep.save(args.out)
+        print(f"\nsaved -> {args.out} (+.json)")
+    if args.figure:
+        rel = rep.diagnostics.get("relative_error_bar")
+        rep.plot(args.figure, title=f"{os.path.basename(mg.label or 'dataset')}: beta = {mg.beta:g}, "
+                                    f"{mg.n_bins} bins"
+                 + (f", relative error bar {rel:.0e}" if rel else ""))
+        print(f"figure -> {args.figure}")
+
+
 def cmd_continue(args) -> None:
+    if _is_flow_checkpoint(args.checkpoint):
+        return _continue_posterior(args)
+    args.n_omega = args.n_omega or 801
+
     from . import RefineConfig, load_model, refine_latent
 
     mg = _load_measured(args)
@@ -478,11 +517,20 @@ def main(argv=None) -> None:
                     "via a physics-constrained pole-expansion VAE.")
     sub = ap.add_subparsers(dest="command", required=True)
 
-    c = sub.add_parser("continue", help="continue G(tau) bins to A(omega)")
+    c = sub.add_parser("continue", help="continue G(tau) bins to A(omega)",
+                       description="Continue G(tau) bins to A(omega).  With a "
+                       "flow-posterior checkpoint this prints the posterior "
+                       "report: the band of A(omega), how well the samples fit "
+                       "the bins, the weight per frequency window with its "
+                       "interval next to what the data alone allow, and "
+                       "warnings.")
     _add_bins_args(c)
     c.add_argument("--checkpoint", required=True, help="trained model (.pt)")
     c.add_argument("--samples", type=int, default=200,
-                   help="latent samples for the uncertainty band (0 = mean only)")
+                   help="samples for the uncertainty band (latent-variable "
+                        "model: 0 = mean only)")
+    c.add_argument("--seed", type=int, default=0,
+                   help="seed of the posterior samples (flow checkpoints)")
     c.add_argument("--refine", action="store_true",
                    help="refine the latent code against this dataset first")
     c.add_argument("--refine-steps", type=int, default=2000)
@@ -500,7 +548,9 @@ def main(argv=None) -> None:
                         "for half-filled / PH-symmetric data only")
     c.add_argument("--omega-min", type=float, default=-10.0)
     c.add_argument("--omega-max", type=float, default=10.0)
-    c.add_argument("--n-omega", type=int, default=801)
+    c.add_argument("--n-omega", type=int, default=None,
+                   help="points of the output grid (default 801; 4001 for a "
+                        "flow checkpoint, whose lines can be narrow)")
     c.add_argument("--min-eigenvalue", type=float, default=0.0)
     c.add_argument("--out", default=None, help="write result to this .npz")
     c.add_argument("--figure", default=None, help="save A(omega) + G(tau) figure")

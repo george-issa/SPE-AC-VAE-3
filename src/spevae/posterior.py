@@ -57,7 +57,7 @@ from .physics.poles import PoleSet
 __all__ = ["PosteriorReport", "continue_posterior", "prior_free_bounds", "BOX_SIGMA",
            "DEFAULT_WINDOWS", "BAND_TARGETS", "band_levels", "fit_band_table",
            "weight_at_width_floor", "FLOOR_TRIGGER", "FLOOR_FACTOR", "FLOOR_WITHIN", "FLOOR_FOLLOW",
-           "central_interval"]
+           "central_interval", "continue_measured"]
 
 
 #: A pole counts as sitting at the width floor when its half-width is within this factor of it.
@@ -286,6 +286,89 @@ class PosteriorReport:
         if not self.warnings:
             lines.append("  warnings : none")
         return "\n".join(lines)
+
+    def save(self, path) -> None:
+        """Write the report to ``path`` (.npz) and ``path + ".json"``.
+
+        The .npz holds the frequency grid, the pointwise band, the accepted
+        pole sets (one row per sample, physical units) and their misfits; the
+        .json holds the window table, the warnings, the diagnostics and the
+        text of :meth:`summary`.
+        """
+        import json
+
+        p = self.poles
+        np.savez(str(path), omega=self.omega, **{f"A_{k}": np.asarray(v) for k, v in self.band.items()},
+                 poles_omega=p.eps.double().numpy(), poles_gamma=p.gamma.double().numpy(),
+                 residues_re=p.a.double().numpy(), residues_im=p.b.double().numpy(),
+                 chi2=self.chi2, chi2_target=self.chi2_target)
+        plain = (int, float, str, bool, dict, list, tuple, type(None))
+        with open(str(path) + ".json", "w") as fh:
+            json.dump({"n_samples": self.n_samples, "n_accepted": self.n_accepted,
+                       "chi2_over_target_median": float(np.median(self.chi2) / self.chi2_target),
+                       "prior": self.prior, "warnings": self.warnings, "windows": self.windows,
+                       "diagnostics": {k: v for k, v in self.diagnostics.items() if isinstance(v, plain)},
+                       "summary": self.summary()}, fh, indent=1, default=float)
+
+    def plot(self, path, title: str | None = None, omega_max: float | None = None) -> None:
+        """Draw the report: the band of A(omega), the misfit of the samples, the window weights."""
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        blue, ink, pale = "#2a78d6", "#0b0b0b", "#d9d8d3"
+        w, b = np.asarray(self.omega), self.band
+        if omega_max is None:                      # the range holding all but 1% of the mean weight
+            c = np.cumsum(b["mean"])
+            c = c / max(c[-1], 1e-300)
+            omega_max = 1.25 * max(abs(w[np.searchsorted(c, 0.005)]),
+                                   abs(w[min(np.searchsorted(c, 0.995), len(w) - 1)]), 1e-6)
+        m = np.abs(w) <= omega_max
+        st = slice(None, None, max(1, int(m.sum() // 3000)))
+        f, (a0, a1, a2) = plt.subplots(1, 3, figsize=(17, 4.6), constrained_layout=True,
+                                       gridspec_kw={"width_ratios": [1.6, 0.8, 1.3]})
+        a0.fill_between(w[m][st], b["q05"][m][st], b["q95"][m][st], color=blue, alpha=0.25, lw=0,
+                        label="90% band (plain sample quantiles)")
+        a0.plot(w[m][st], b["q50"][m][st], color=blue, lw=1.5, label="median")
+        top = float(b["q95"][m].max())
+        a0.set_ylim(-0.03 * top, 1.15 * top)
+        a0.set_xlabel(r"$\omega$")
+        a0.set_ylabel(r"$A(\omega)$")
+        a0.set_title(f"spectrum; {self.n_accepted} of {self.n_samples} samples fit the data", fontsize=9.5)
+        a0.legend(fontsize=8, frameon=False, loc="upper left")
+        r = self.chi2 / self.chi2_target
+        a1.hist(r, bins=np.linspace(min(0.6, r.min()), max(1.6, r.max()), 28), color=blue, alpha=0.75)
+        a1.axvline(1.0, color=ink, lw=1.2)
+        a1.set_xlabel(r"$\chi^2$ / value a perfect fit scores")
+        a1.set_ylabel("accepted samples")
+        a1.set_title(f"misfit of each sample (median {np.median(r):.2f}); line = perfect fit", fontsize=9.5)
+        y = np.arange(len(self.windows))[::-1]
+        for yy, row in zip(y, self.windows):
+            if row["lo"] == row["lo"]:
+                a2.plot([row["lo"], row["hi"]], [yy, yy], color=pale, lw=9, solid_capstyle="butt")
+            a2.plot([row["q05"], row["q95"]], [yy, yy], color=blue, lw=9, alpha=0.45, solid_capstyle="butt")
+            a2.plot([row["q25"], row["q75"]], [yy, yy], color=blue, lw=9, solid_capstyle="butt")
+        a2.set_yticks(y, [f"[{lo:g}, {hi:g})".replace("inf", "∞") for lo, hi in
+                          (row["window"] for row in self.windows)], fontsize=8.5)
+        a2.set_xlabel("spectral weight in the frequency window")
+        a2.plot([], [], color=pale, lw=7, label="allowed by the data alone")
+        a2.plot([], [], color=blue, lw=7, alpha=0.45, label="posterior 90% interval")
+        a2.plot([], [], color=blue, lw=7, label="posterior 50% interval")
+        a2.legend(fontsize=8, frameon=False, loc="best")
+        d = self.diagnostics
+        kind = ("calibrated intervals" if d.get("band_calibrated") else
+                "both readings of the narrow lines" if d.get("line_shape_readings") else "plain sample quantiles")
+        a2.set_title(f"weight per window ({kind})", fontsize=9.5)
+        for ax in (a0, a1, a2):
+            ax.grid(color="#e4e3df", lw=0.6)
+            ax.set_axisbelow(True)
+            for side in ("top", "right"):
+                ax.spines[side].set_visible(False)
+        n = len(self.warnings)
+        f.suptitle((title + "  |  " if title else "") + ("no warnings" if n == 0 else
+                   f"{n} warning{'s' if n > 1 else ''}: see the printed report"), fontsize=10.5)
+        f.savefig(str(path), dpi=150)
+        plt.close(f)
 
 
 def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=None,
@@ -643,3 +726,22 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                      "band_table_withheld": withheld, "line_shape_readings": bool(line_shape),
                      "weight_on_narrow_poles": narrow_share,
                      "band_levels": lev, **count_diag})
+
+
+def continue_measured(flow, mg, min_eigenvalue: float = 1e-10, cov_method: str = "structured",
+                      **kw) -> PosteriorReport:
+    r""":func:`continue_posterior` for measured bins.
+
+    ``mg`` is a :class:`spevae.data.real.MeasuredGreens` (bins of
+    :math:`G(\tau)` as read by ``spevae.data``).  The covariance of the bin
+    mean is estimated from the bins (``cov_method``, eigenvalues of the
+    correlation floored at ``min_eigenvalue``), slices pinned by a symmetry
+    (zero variance) are left out of the fit, and the samples are redrawn
+    against bootstrap resamples of the bins.  Further keyword arguments go to
+    :func:`continue_posterior`.
+    """
+    cov = mg.covariance(min_eigenvalue, method=cov_method)
+    sl, n = cov["slices"], mg.n_bins
+    return continue_posterior(flow, mg.mean, mg.x, mg.beta, mg.sigma_encoder / math.sqrt(n),
+                              cov["inv_sqrt_R"], bins=mg.bins[:, sl], chi2_target=cov["chi2_target"],
+                              x_fit=mg.x[sl], G_fit=mg.mean[sl], sigma_fit=cov["sigma"] / math.sqrt(n), **kw)

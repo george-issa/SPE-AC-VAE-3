@@ -14,6 +14,11 @@ then refitted on all truths, with the split's test results stored inside it.
 
     python scripts/step3/fit_band_calibration.py out/step3/cal_F3_60k_s1_big out/step3/F3_60k_s1.pt [--strata noise] [--arm posterior]
 
+`--unflagged-only` fits and tests on the truths whose report does not flag
+narrow lines: the report withholds the table when it does (and states both
+readings of the lines instead), so those truths are not what the table
+corrects.  Use it for a model whose prior holds exact line spectra.
+
 With `--cv` (and any number of further runs through `--also DIR`) the test is
 leave-one-repetition-out instead: each repetition of the design (288 truths
 with their own pairing of noise, beta and dtau) is scored with a table fitted
@@ -44,7 +49,10 @@ NOISE_EDGES = (1e-4, 1e-3, 1e-2)
 BETA_EDGES = (2.5, 10.0)
 
 
-def load(cals, arm):
+def load(cals, arm, unflagged_only=False):
+    """Per truth: the central level that just covers each window weight, its error bar, beta,
+    parity and repetition.  With `unflagged_only`, truths whose report flags narrow lines are
+    left out: the report withholds the table from those, so they are not what it corrects."""
     rows = []
     for cal in cals:
         for p in sorted(Path(cal).glob("calibration.shard*.json")):
@@ -57,6 +65,8 @@ def load(cals, arm):
         for m, a in enumerate(r["arms"][arm]):
             w = np.array(a["w"])
             pit = ((w < wt[m]).sum(0) + rng.random(wt.shape[1])) / (len(w) + 1)
+            if unflagged_only and a.get("line_shape"):
+                continue                                  # after the draw: the other truths keep their ranks
             need.append(np.abs(2.0 * pit - 1.0))
             noise.append(r["rel_noise"][m] if "rel_noise" in r else r["noise"])
             beta.append(r["beta"])
@@ -133,9 +143,12 @@ def main():
                     help="do not fit: test the table already beside the checkpoint on this run")
     ap.add_argument("--also", action="append", default=[], help="further calibration runs to pool")
     ap.add_argument("--cv", action="store_true", help="test by leave-one-repetition-out")
+    ap.add_argument("--unflagged-only", action="store_true",
+                    help="fit and test on the truths whose report does not flag narrow lines (the ones "
+                         "the table is applied to); needs runs made with CAL_FLOOR=auto")
     args = ap.parse_args()
     cal = Path(args.cal)
-    need, noise, beta, half, fold = load([cal] + args.also, args.arm)
+    need, noise, beta, half, fold = load([cal] + args.also, args.arm, args.unflagged_only)
     if args.evaluate:
         table = json.load(open(args.flow + ".bands.json"))
         every = np.ones(len(need), bool)
@@ -180,6 +193,8 @@ def main():
     chosen = {"none": r_pool, "noise": r_noise, "noise+beta": r_str}[args.strata]
     kind = {"none": "pooled", "noise": "per-error-bar", "noise+beta": "per-error-bar-and-beta"}[args.strata]
     final.update(kind=kind, arm=args.arm, truths_total=int(len(need)),
+                 fitted_on=("truths whose report does not flag narrow lines" if args.unflagged_only
+                            else "all truths"),
                  source=", ".join([str(cal)] + args.also),
                  test_protocol="leave-one-repetition-out" if args.cv else "fitted on even truths, tested on odd",
                  held_out_test=jsonable(chosen), held_out_plain=jsonable(before))

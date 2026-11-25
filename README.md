@@ -68,7 +68,41 @@ pip install -e ".[dev]"
 pytest                    # physics invariants, symmetries, calibration, CLI
 ```
 
-## Use
+## Use: the posterior report
+
+The current model is a conditional flow over pole sets (`spevae.models.flow`)
+trained on pole mixtures, smooth bands and exactly solvable models. Its samples
+are fitted to your data and returned as a posterior together with the evidence
+for it (`spevae.posterior`). Given a flow checkpoint, `spevae continue` prints
+that report:
+
+```bash
+spevae continue --bins mybins.txt --beta 8.0 --checkpoint flow.pt \
+                --out report.npz --figure report.png
+```
+
+- **fit**: how many of the samples fit the bins, and how well;
+- **weight per frequency window** with its 5–95% interval, next to the range
+  that any non-negative, normalised spectrum consistent with the data could
+  take ("allowed by the data alone") — the part of the answer that does not
+  depend on the training prior;
+- **warnings**: narrow lines the model was not trained on, error bars smaller
+  than the systematics it can resolve, every pole in use, and so on.
+
+`report.npz` holds the band of A(ω) on a grid and every accepted pole set;
+`report.npz.json` the window table, warnings and diagnostics. From Python the
+same call is `spevae.posterior.continue_measured(flow, measured)`.
+
+Trained range: fermionic G(τ), β from 1 to 20, relative error bars from 1e-5
+to 3e-2, Δτ from 0.02 to 0.5. What has been measured about its accuracy and
+its intervals, including where they fail, is recorded in
+[`docs/TRAINING.md`](docs/TRAINING.md) (step 3) and drawn in
+`figures/`. No checkpoint is published yet; the
+training recipe is `scripts/step3/run_full.sh` (label bank from
+`scripts/step3/build_physics_bank.py`; about three hours on an
+Apple GPU).
+
+## Use: the variational autoencoder
 
 ```bash
 # Stage 1 — pretrain on the infinite synthetic-family generator
