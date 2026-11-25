@@ -247,7 +247,7 @@ class FlowPosterior(nn.Module):
         if key not in self._fb_cache:
             self._fb_cache[key] = PoleGreens(SpectralQuadrature.for_beta(float(beta), dtype=dd))
         fwd = self._fb_cache[key]
-        cpu = lambda v: v.detach().to("cpu", dd)
+        cpu = lambda v: v.detach().cpu().to(dd)        # two steps: MPS has no float64
         xf = cpu(x if x_fit is None else x_fit).reshape(-1)
         L = xf.numel()
         return {"fwd": fwd, "x": xf, "K": fwd.kernel_matrix(xf),
@@ -275,7 +275,7 @@ class FlowPosterior(nn.Module):
             self._fb_cache["coords"] = c
         c = self._fb_cache["coords"]
         fwd, x, K, Wd = data["fwd"], data["x"], data["K"], data["W"]
-        zc = x_hat.detach().to("cpu", dd)
+        zc = x_hat.detach().cpu().to(dd)
         N, P, _ = zc.shape
         step = torch.zeros(N, P, 4, dtype=dd)
         logchi = torch.zeros(N, dtype=dd)
