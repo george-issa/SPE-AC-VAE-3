@@ -72,10 +72,22 @@ def main():
         s["bracket"] = {k: F.bracket_holds([x for x in r["rows"] if x["kind"] == kind])
                         for k, kind in (("lattice", "continuum"), ("lines", "discrete"))}
         res["settings"].append(s)
+    unflagged = [x for r in runs for x in r["rows"] if x["kind"] == "discrete" and not x["fired"]]
+    res["lines_not_flagged_all_settings"] = (F.coverage(unflagged, "auto", "reported", skip_edge=False)
+                                             if unflagged else None)
     with open(out / "edges.json", "w") as fh:
         json.dump(res, fh, indent=1, default=float)
 
     S = res["settings"]
+
+    def interval(ax, pos, c, col):
+        clip = lambda v, e: [[min(e, v)], [min(e, 1.0 - v)]]
+        ax.errorbar([pos - 0.1], [c["c50"]], yerr=clip(c["c50"], 1.96 * c["se50"]), fmt="o", color=col, ms=6.5,
+                    capsize=3, lw=1.2)
+        ax.errorbar([pos + 0.1], [c["c90"]], yerr=clip(c["c90"], 1.96 * c["se90"]), fmt="o", color=col, ms=6.5,
+                    mfc="white", capsize=3, lw=1.2)
+        ax.annotate(f"{c['truths']}", (pos, 0.03), ha="center", fontsize=7.5, color=col)
+
     name = lambda s: f"beta {s['beta']:g}\nerr {s['noise']:g}\ndtau {s['dtau']:g}\n({s['n_tau']} pts)"
     f, (a0, a1, a2) = plt.subplots(1, 3, figsize=(18.5, 5.2), constrained_layout=True)
     for i, s in enumerate(S):
@@ -84,17 +96,13 @@ def main():
             a0.errorbar([i + dx], [m], yerr=[[m - lo], [hi - m]], fmt="o", color=col, ms=7, capsize=3, lw=1.3)
             a0.annotate(f"{s[key]['lower_than_maxent']}/{s[key]['n']}", (i + dx, hi), textcoords="offset points",
                         xytext=(0, 5), ha="center", fontsize=7, color=col)
-        for ax, groups in ((a1, (("lattice", LAT, 0.0),)),
-                           (a2, (("lines flagged", LIN, -0.1), ("lines not flagged", UNF, 0.1)))):
-            for g, col, dx in groups:
-                c = s["stated_intervals"].get(g)
-                if not c:
-                    continue
-                ax.errorbar([i + dx - 0.07], [c["c50"]], yerr=[1.96 * c["se50"]], fmt="o", color=col, ms=6.5,
-                            capsize=3, lw=1.2)
-                ax.errorbar([i + dx + 0.07], [c["c90"]], yerr=[1.96 * c["se90"]], fmt="o", color=col, ms=6.5,
-                            mfc="white", capsize=3, lw=1.2)
-                ax.annotate(str(c["truths"]), (i + dx, 0.03), ha="center", fontsize=7, color=col)
+        for ax, g, col in ((a1, "lattice", LAT), (a2, "lines flagged", LIN)):
+            c = s["stated_intervals"].get(g)
+            if c:
+                interval(ax, i, c, col)
+    pooled = res["lines_not_flagged_all_settings"]
+    if pooled:                      # two to four per setting: shown pooled, one column to the right
+        interval(a2, len(S), pooled, UNF)
     a0.axhline(1.0, color=INK, lw=0.8, ls=":")
     a0.set_yscale("log")
     a0.set_ylabel(r"W$_1$ of the report / W$_1$ of MaxEnt (geometric mean, 95% interval)")
@@ -103,18 +111,21 @@ def main():
     a0.legend(fontsize=8.5, frameon=False)
     a0.set_title("error against MaxEnt on the same data (below 1 = better)\nlabels: spectra where the report is the lower",
                  fontsize=9.5)
-    for ax, ttl in ((a1, "lattice spectra"), (a2, "line spectra: flagged as narrow (green), not flagged (red)")):
+    for ax, ttl in ((a1, "lattice spectra"),
+                    (a2, "line spectra: flagged as narrow (green); not flagged, pooled (red)")):
         for lv in (0.5, 0.9):
             ax.axhline(lv, color=INK, lw=0.8, ls="--")
         ax.set_ylim(0, 1.03)
         ax.set_ylabel("share of windows with the exact weight inside")
         ax.plot([], [], "o", color=INK, label="stated 50% interval")
         ax.plot([], [], "o", color=INK, mfc="white", label="stated 90% interval")
-        ax.legend(fontsize=8.5, frameon=False, loc="lower right")
+        ax.legend(fontsize=8.5, frameon=False, loc="lower left", bbox_to_anchor=(0.0, 0.07), ncol=2)
         ax.set_title(f"{ttl}\nexact window weights inside the stated intervals (dashes: nominal; bottom: spectra)",
                      fontsize=9.5)
     for ax in (a0, a1, a2):
         ax.set_xticks(range(len(S)), [name(s) for s in S], fontsize=8)
+    if pooled:
+        a2.set_xticks(range(len(S) + 1), [name(s) for s in S] + ["not flagged\nall settings"], fontsize=8)
         ax.grid(color="#e4e3df", lw=0.6)
         ax.set_axisbelow(True)
         for s_ in ("top", "right"):
@@ -134,6 +145,9 @@ def main():
         for g, c in s["stated_intervals"].items():
             print(f"   stated intervals, {g:18s} {c['c50']:.3f}±{c['se50']:.3f} / {c['c90']:.3f}±{c['se90']:.3f}  "
                   f"({c['truths']} spectra)")
+    if pooled:
+        print(f"line spectra not flagged, all settings: {pooled['c50']:.3f}±{pooled['se50']:.3f} / "
+              f"{pooled['c90']:.3f}±{pooled['se90']:.3f}  ({pooled['truths']} spectra)")
     print(f"-> {out}/edges.{{json,png}}")
 
 

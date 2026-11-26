@@ -1,7 +1,8 @@
-"""Real DQMC data with a known answer: the half-filled Hubbard dimer.
+"""Real DQMC data with a known answer: the half-filled Hubbard dimer, or a ring.
 
-Reads the bins written by `hubbard_dimer.jl` (SmoQyDQMC), computes the exact
-spectrum by exact diagonalisation, and
+Reads the bins written by `hubbard_dimer.jl` or `hubbard_ring.jl` (SmoQyDQMC;
+a directory named hubbard_ring<L>_... is read as a ring of L sites), computes
+the exact spectrum by exact diagonalisation, and
 
   1. compares the measured G(tau) with the exact one in units of the error bar
      (statistical noise vs the Trotter discretisation error of DQMC), and
@@ -9,14 +10,22 @@ spectrum by exact diagonalisation, and
      latent MAP, MaxEnt -- scoring each against the exact cumulative weight.
 
     python scripts/dqmc/judge_dimer.py out/dqmc/hubbard_dimer_U4.00_b8.00_dt0.050-1 4.0 \
-        out/flow/F_60k.pt out/step2/data_arm/D24_60k.pt out/dqmc [floor_factor]
+        out/flow/F_60k.pt out/step2/data_arm/D24_60k.pt out/dqmc [floor_factor] [discrete]
 
 `floor_factor` (a number or `auto`) is handed to `continue_posterior`; without
 it the report's default applies (`auto` since 2026-11-25; the runs banked
-before that used 1, the width floor as trained).
+before that used 1, the width floor as trained).  `discrete` states that the
+spectrum is a set of lines (`continue_posterior(discrete=True)`), which these
+models' spectra are.
+
+Writes <out>/dimer_judge.{json,png} (ring<L>_judge.{json,png} for a ring).  The
+json holds, per frequency window, the exact weight and whether it lies inside
+the intervals the report states and inside the range the data alone allow.
 """
 import json
 import math
+import os
+import re
 import sys
 import warnings
 from pathlib import Path
@@ -47,12 +56,27 @@ def main():
 
     sim, U = sys.argv[1], float(sys.argv[2])
     flow, vae, out = load_flow(sys.argv[3]).eval(), load_model(sys.argv[4]), Path(sys.argv[5])
-    ff = {} if len(sys.argv) <= 6 else {"floor_factor": sys.argv[6] if sys.argv[6] == "auto" else float(sys.argv[6])}
+    extra = sys.argv[6:]
+    ff = {"discrete": True} if "discrete" in extra else {}
+    for a in extra:
+        if a != "discrete":
+            ff["floor_factor"] = a if a == "auto" else float(a)
     out.mkdir(parents=True, exist_ok=True)
     torch.set_num_threads(6)
-    mg = read_smoqy_dir(sim, pair=(0, 1))                       # the two sites are equivalent
+    ring = re.search(r"hubbard_ring(\d+)", os.path.basename(os.path.normpath(sim)))
+    if ring:                                                    # one orbital, sites averaged by the package
+        n_sites = int(ring.group(1))
+        mg = read_smoqy_dir(sim)
+        hop = np.zeros((n_sites, n_sites))
+        for i in range(n_sites):
+            hop[i, (i + 1) % n_sites] = hop[(i + 1) % n_sites, i] = -1.0
+        tag, what = f"ring{n_sites}", f"half-filled Hubbard ring of {n_sites} sites"
+    else:
+        mg = read_smoqy_dir(sim, pair=(0, 1))                   # the two sites are equivalent
+        hop = np.array([[0.0, -1.0], [-1.0, 0.0]])
+        tag, what = "dimer", "half-filled Hubbard dimer"
     beta, N = mg.beta, mg.n_bins
-    exact = hubbard_cluster(np.array([[0.0, -1.0], [-1.0, 0.0]]), U, U / 2.0, beta)
+    exact = hubbard_cluster(hop, U, U / 2.0, beta)
     cov = mg.covariance(1e-10, method="structured")
     sl = cov["slices"]
     x = mg.x.double().numpy()
@@ -85,7 +109,22 @@ def main():
           "vae": float(np.abs(cdf(A_vae) - cdf_t).sum() * DW),
           "maxent": float(np.abs(cdf(A_me) - cdf_t).sum() * DW)}
     big = exact.weights > 1e-3
-    res = {"sim": sim, "U": U, "beta": beta, "n_bins": N, "n_tau": int(mg.n_tau),
+    # the exact weight of every window against what the report states for it
+    wins, tol = [], 1e-6
+    for w in rep.windows:
+        lo_w, hi_w = w["window"]
+        t = float(exact.weights[(exact.energies >= lo_w) & (exact.energies < hi_w)].sum() / exact.weights.sum())
+        row = dict(w, exact=t, inside_50=bool(w["q25"] - tol <= t <= w["q75"] + tol),
+                   inside_90=bool(w["q05"] - tol <= t <= w["q95"] + tol))
+        if w.get("lo") is not None and w["lo"] == w["lo"]:
+            row["inside_data_alone"] = bool(w["lo"] - tol <= t <= w["hi"] + tol)
+        wins.append(row)
+    hits = {k: int(sum(r.get(k, False) for r in wins)) for k in ("inside_50", "inside_90", "inside_data_alone")}
+    print(f"exact window weights inside the stated 50% interval: {hits['inside_50']} of {len(wins)}; 90%: "
+          f"{hits['inside_90']} of {len(wins)}; inside the range the data alone allow: "
+          f"{hits['inside_data_alone']} of {sum('inside_data_alone' in r for r in wins)}")
+    res = {"sim": sim, "model": tag, "stated_discrete": bool(ff.get("discrete")), "n_lines": int(big.sum()),
+           "U": U, "beta": beta, "n_bins": N, "n_tau": int(mg.n_tau),
            "relative_error_bar": rel, "z_max": float(np.abs(zsc[1:-1]).max()),
            "z_rms": float(np.sqrt((zsc[1:-1] ** 2).mean())),
            "dG_max": float(np.abs(mean - G_exact).max()), "chi2_exact_over_target": chi_exact,
@@ -93,10 +132,10 @@ def main():
            "w1": w1, "vae_chi2_over_target": float(rr.chi2_ratio),
            "flow": {"accepted": rep.n_accepted, "of": rep.n_samples,
                     "chi2_over_target_median": float(np.median(rep.chi2) / rep.chi2_target),
-                    "warnings": rep.warnings, "windows": rep.windows, **rep.diagnostics}}
+                    "warnings": rep.warnings, "windows": wins, "window_hits": hits, **rep.diagnostics}}
     print("W1 to the exact answer:", {k: round(v, 4) for k, v in w1.items()},
           "| VAE chi2/target", round(rr.chi2_ratio, 2))
-    with open(out / "dimer_judge.json", "w") as fh:
+    with open(out / f"{tag}_judge.json", "w") as fh:
         json.dump(res, fh, indent=1)
 
     f, (a0, a1, a2) = plt.subplots(1, 3, figsize=(17, 4.2), constrained_layout=True,
@@ -134,11 +173,11 @@ def main():
         ax.set_axisbelow(True)
         for s_ in ("top", "right"):
             ax.spines[s_].set_visible(False)
-    f.suptitle(f"Real DQMC data with a known answer: half-filled Hubbard dimer, U = {U:g}, beta = {beta:g}, "
+    f.suptitle(f"Real DQMC data with a known answer: {what}, U = {U:g}, beta = {beta:g}, "
                f"{N} bins, relative error bar {rel:.0e} (SmoQyDQMC; exact spectrum by diagonalisation)",
                fontsize=10.5)
-    f.savefig(out / "dimer_judge.png", dpi=150)
-    print(f"-> {out}/dimer_judge.json + .png")
+    f.savefig(out / f"{tag}_judge.png", dpi=150)
+    print(f"-> {out}/{tag}_judge.json + .png")
 
 
 if __name__ == "__main__":

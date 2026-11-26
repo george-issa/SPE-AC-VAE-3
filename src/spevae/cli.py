@@ -90,7 +90,7 @@ def _continue_posterior(args) -> None:
         print(f"note: {', '.join(unused)} belong to the latent-variable model and do nothing here")
     omega = np.linspace(args.omega_min, args.omega_max, args.n_omega or 4001)
     rep = continue_measured(flow, mg, min_eigenvalue=args.min_eigenvalue or 1e-10,
-                            n_samples=args.samples or 200, omega=omega,
+                            n_samples=args.samples or 200, omega=omega, discrete=args.discrete,
                             generator=torch.Generator().manual_seed(args.seed))
     print(rep.summary())
     if args.out:
@@ -531,6 +531,11 @@ def main(argv=None) -> None:
                         "model: 0 = mean only)")
     c.add_argument("--seed", type=int, default=0,
                    help="seed of the posterior samples (flow checkpoints)")
+    c.add_argument("--discrete", action="store_true",
+                   help="state that the spectrum is a set of discrete lines (an atom, a "
+                        "molecule, a finite cluster): the window intervals of the posterior "
+                        "report then also allow every feature to be one sharp line (flow "
+                        "checkpoints)")
     c.add_argument("--refine", action="store_true",
                    help="refine the latent code against this dataset first")
     c.add_argument("--refine-steps", type=int, default=2000)

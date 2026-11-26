@@ -32,6 +32,21 @@ COPIES = (
      "exactly: four lines.",
      "Left: measured minus exact G(tau) in units of the error bar. Middle: the reconstructions on the exact "
      "lines. Right: cumulative weight, where the area between a curve and the black steps is the error."),
+    ("2_real_data", "hubbard_ring4_dqmc.png",
+     ("out/dqmc/{m}/ring4_judge.png",),
+     "Real DQMC bins of the half-filled four-site Hubbard ring (U = 4, beta = 8, 400 bins), whose spectrum is "
+     "known exactly: a dense set of lines, the kind of spectrum this model finds hardest.",
+     "As for the dimer."),
+    ("2_real_data", "hubbard_ring4_dqmc_discrete_statement.png",
+     ("out/dqmc/{m}_discrete/ring4_judge_windows.png",),
+     "The four-site ring again, window by window: the exact weight against the intervals the report states "
+     "without and with the statement that the spectrum is discrete.",
+     "Black ticks: exact weight. Blue: stated 90% interval as the report gives it. Green: with `--discrete`. "
+     "Grey: the range the data alone allow."),
+    ("2_real_data", "hubbard_dimer_beta2_dqmc.png",
+     ("out/dqmc/{m}_b2/dimer_judge.png",),
+     "Real DQMC bins of the same dimer at a high temperature (U = 4, beta = 2, 400 bins).",
+     "As for the dimer at beta = 8."),
     ("2_real_data", "holstein_dqmc.png",
      ("out/step3/holstein_{m}/holstein_report.png",),
      "Real DQMC bins of a Holstein model (beta = 8, 400 bins). No exact answer exists; the dashed curve is "
@@ -52,8 +67,25 @@ COPIES = (
      "Left: error per setting, as trained, with the narrow-line fit, and MaxEnt. Right: share of windows whose "
      "exact weight lies inside the stated interval (filled) for flagged line spectra, unflagged line spectra "
      "and lattice spectra; dashes are nominal."),
-    ("4_checks", "training_seeds.png", ("out/step3/seeds.png",),
-     "Three independent trainings of the same model.",
+    ("3_error_bars", "discrete_statement.png", ("out/step3/discrete_option_{m}/discrete_option.png",),
+     "Exact line spectra again: what stating that the spectrum is discrete (`spevae continue --discrete`) "
+     "does to the intervals. Many close lines look like a continuous band in the data, so the report cannot "
+     "flag them itself; the statement is how the user tells it.",
+     "Left: share of windows whose exact weight lies inside the stated intervals, without the statement (blue) "
+     "and with it (green); dashes are nominal. Right: the width of the stated 90% interval as a share of the "
+     "range the data alone allow. The last group is the cost of making the statement about a continuous "
+     "spectrum."),
+    ("4_checks", "edges_of_trained_range.png", ("out/step3/edges_{m}/edges.png",),
+     "Known answers at the edges of the range the model was trained on: beta = 1 and 20, relative error bars "
+     "of 1e-5, dtau = 0.02 and 0.5 (20 exact lattice and 24 exact line spectra per setting).",
+     "Left: this model's error over MaxEnt's on the same data (below 1 = this model is better). Middle and "
+     "right: share of windows whose exact weight lies inside the stated intervals; dashes are nominal."),
+    ("4_checks", "training_seeds.png", ("F3L_60k_s1=out/step3/seeds_lines_report.png",),
+     "Two independent trainings of this model's recipe, through the report, on the same known answers.",
+     "Left: error per setting for each seed. Middle: the same spectrum under the two trainings, one point "
+     "each. Right: the stated intervals. Agreement shows the results belong to the recipe, not to one run."),
+    ("4_checks", "training_seeds_earlier_recipe.png", ("out/step3/seeds.png",),
+     "Three independent trainings of the earlier recipe (`F3_60k`).",
      "Agreement between seeds shows how much of any difference is the luck of one training run."),
     ("4_checks", "families_left_out.png", ("out/step3/leave_out.png",),
      "A model trained without eight of the exactly solvable families, judged on them.",
@@ -70,7 +102,7 @@ COPIES = (
      "Left and middle: the error barely moves. Right: the stated intervals on line spectra, which improve "
      "because the retrained model's report flags narrow lines on twice as many of them."),
 )
-SHARED = {"training_seeds.png", "families_left_out.png", "line_spectra_headroom.png",
+SHARED = {"training_seeds_earlier_recipe.png", "families_left_out.png", "line_spectra_headroom.png",
           "line_spectra_as_training_targets.png"}   # made on the F3_60k family
 
 
@@ -125,8 +157,9 @@ def main():
     # 2-4. copied from the judges
     heads = {"2_real_data": "Real DQMC data.",
              "3_error_bars": "Whether the stated intervals contain the truth as often as they say.",
-             "4_checks": "Checks behind the numbers. The first three were made on the `F3_60k` trainings "
-                         "(the same recipe without exact line spectra as targets) and are not redrawn per model."}
+             "4_checks": "Checks behind the numbers. The seeds of the earlier recipe, the families left out and "
+                         "the line-spectrum headroom were made on the `F3_60k` trainings (the same recipe "
+                         "without exact line spectra as targets) and are not redrawn per model."}
     done = set()
     for folder, name, cands, what, how in COPIES:
         if folder not in done:

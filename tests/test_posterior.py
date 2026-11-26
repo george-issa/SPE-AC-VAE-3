@@ -38,6 +38,22 @@ def test_prior_free_brackets_contain_the_truth_and_tighten_with_the_noise():
     assert widths[1e-4] < widths[1e-2]                                 # better data, tighter brackets
 
 
+def test_prior_free_brackets_admit_weight_beyond_the_frequency_grid():
+    # a line at omega = 30, outside the quadrature (|omega| <= 20) at beta = 1: the data cannot
+    # exclude it, so the brackets must not either.  Without nodes beyond the grid the programs
+    # have no solution at all here.
+    beta, x = 1.0, torch.linspace(0.0, 1.0, 21, dtype=torch.float64)
+    lines = ((-1.0, 0.3), (0.5, 0.6), (30.0, 0.1))
+    G = sum(w * torch.exp(-x * beta * e) / (1.0 + math.exp(-beta * e)) for e, w in lines)
+    sigma = 1e-3 * G.max() * torch.ones_like(G)
+    G = G + sigma * torch.randn(G.shape, generator=torch.Generator().manual_seed(3), dtype=torch.float64)
+    bnd = prior_free_bounds(G, x, beta, sigma)
+    for b, (lo, hi) in zip(bnd, DEFAULT_WINDOWS):
+        w = sum(wt for e, wt in lines if lo <= e < hi)
+        assert b["feasible"], b
+        assert b["lo"] - 1e-6 <= w <= b["hi"] + 1e-6, (b, w)
+
+
 def test_posterior_report_on_the_reference_flow():
     path = "out/flow/F_60k.pt"
     if not os.path.exists(path):
@@ -204,6 +220,32 @@ def test_auto_floor_refits_line_spectra_and_leaves_broad_ones_alone():
     with pytest.raises(ValueError):
         continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr, n_samples=4,
                            floor_factor="lower")
+
+
+def test_stating_a_discrete_spectrum_widens_the_window_intervals_and_nothing_else():
+    path = next((q for q in ("out/step3/F3_60k_s1.pt", "out/flow/F_60k.pt") if os.path.exists(q)), None)
+    if path is None:
+        pytest.skip("no flow checkpoint present")
+    from spevae.models.flow import load_flow
+    flow = load_flow(path).eval()
+    inst = C.draw(C.realize("lorentz pair"), 1e-3, 7)
+    kw = dict(n_samples=32, bounds=False, band_calibration=None)
+    plain = continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr,
+                               generator=torch.Generator().manual_seed(1), **kw)
+    disc = continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr, discrete=True,
+                              generator=torch.Generator().manual_seed(1), **kw)
+    assert disc.diagnostics["discrete_reading"] and not plain.diagnostics["discrete_reading"]
+    np.testing.assert_allclose(disc.band["mean"], plain.band["mean"])      # the same samples, the same fits
+    np.testing.assert_allclose(disc.chi2, plain.chi2)
+    wider = 0
+    for d, p in zip(disc.windows, plain.windows):
+        assert d["as_fitted"] == pytest.approx((p["q05"], p["q95"]))        # the first reading is the report's own
+        assert d["q05"] <= p["q05"] + 1e-12 and d["q95"] >= p["q95"] - 1e-12
+        assert d["q25"] <= p["q25"] + 1e-12 and d["q75"] >= p["q75"] - 1e-12
+        assert abs(d["mean"] - p["mean"]) < 1e-12
+        wider += (d["q95"] - d["q05"]) > (p["q95"] - p["q05"]) + 1e-6
+    assert wider >= 2                                  # poles of the pair straddle window edges
+    assert "stated to be discrete" in disc.summary()
 
 
 def test_central_interval_is_exact_at_any_sample_count():

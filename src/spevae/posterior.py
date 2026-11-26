@@ -57,7 +57,7 @@ from .physics.poles import PoleSet
 __all__ = ["PosteriorReport", "continue_posterior", "prior_free_bounds", "BOX_SIGMA",
            "DEFAULT_WINDOWS", "BAND_TARGETS", "band_levels", "fit_band_table",
            "weight_at_width_floor", "FLOOR_TRIGGER", "FLOOR_FACTOR", "FLOOR_WITHIN", "FLOOR_FOLLOW",
-           "central_interval", "continue_measured"]
+           "central_interval", "continue_measured", "DISCRETE_DRAWS"]
 
 
 #: A pole counts as sitting at the width floor when its half-width is within this factor of it.
@@ -88,6 +88,8 @@ BAND_TARGETS = (0.5, 0.68, 0.9, 0.95)
 FLOOR_TRIGGER = 0.1
 #: What ``floor_factor="auto"`` divides the trained width floor by.
 FLOOR_FACTOR = 4.0
+#: Line positions drawn per pole and sample for the discrete reading of ``continue_posterior``.
+DISCRETE_DRAWS = 16
 #: In a fit with a lowered floor, poles the flow pinned at its trained floor start pinned at the
 #: lowered one (``LoweredFloor.recode(follow_within=FLOOR_WITHIN)``).  ``False`` starts every
 #: pole at the width the flow gave it, which is what TRAINING.md (xxii) judged.
@@ -186,10 +188,21 @@ def prior_free_bounds(G, x, beta, sigma, inv_sqrt_R=None, windows=DEFAULT_WINDOW
     cannot exclude is admitted, which is why the brackets are wide -- they
     are the honest statement of what the data alone determine.
 
+    No bound on the support either: beyond the quadrature (``|omega| <=
+    omega_max``) the measure may sit on log-spaced frequencies out to
+    ``1e4 * omega_max`` and at :math:`\pm\infty`, where it reaches only
+    :math:`G(0)` or :math:`G(\beta)`.  Without those nodes a spectrum with
+    weight outside the quadrature is excluded by construction: measured on a
+    lattice spectrum with a Lorentzian tail at beta = 1 (7% of its weight
+    beyond ``omega_max``), the exact weight of a window lay outside its
+    bracket (TRAINING.md (xxviii)).
+
     Returns one dict per window: ``lo``, ``hi`` (fractions of the total
     weight), ``window`` and ``feasible``.
     """
     from scipy.optimize import linprog
+
+    from .physics.kernel import fermi_kernel
 
     G = torch.as_tensor(G, dtype=torch.float64).reshape(-1)
     x = torch.as_tensor(x, dtype=torch.float64).reshape(-1)
@@ -198,7 +211,12 @@ def prior_free_bounds(G, x, beta, sigma, inv_sqrt_R=None, windows=DEFAULT_WINDOW
     nu = quad.nodes
     use = (nu.abs() <= omega_max * beta)
     K = PoleGreens(quad).kernel_matrix(x)[use]                   # (M, L)
-    om = (nu[use] / beta).numpy()
+    far = omega_max * torch.logspace(0.0, 4.0, 49, dtype=torch.float64)[1:]
+    far = torch.cat([-far.flip(0), far])
+    at_inf = torch.stack([(x == 1.0), (x == 0.0)]).to(K.dtype)   # weight at -inf, at +inf
+    K = torch.cat([K, fermi_kernel(x.reshape(1, -1), (far * beta).reshape(-1, 1)), at_inf])
+    big = float(np.finfo(float).max)                             # +-inf, inside the open-ended windows
+    om = np.concatenate([(nu[use] / beta).numpy(), far.numpy(), [-big, big]])
     Wm = torch.eye(G.numel(), dtype=torch.float64) if inv_sqrt_R is None \
         else torch.as_tensor(inv_sqrt_R, dtype=torch.float64)
     # whitened residual r = W ((G - a K) / sigma);  |r_i| <= box_sigma
@@ -262,12 +280,17 @@ class PosteriorReport:
                          "band is plain sample quantiles")
         elif self.diagnostics.get("band_table_withheld"):
             lines.append("  intervals: plain sample quantiles; the checkpoint's band table is not applied "
-                         "when the data favour narrow lines (it was calibrated on spectra without them)")
+                         + ("to a spectrum stated to be discrete" if self.diagnostics.get("discrete_reading")
+                            else "when the data favour narrow lines")
+                         + " (it was calibrated on spectra without them)")
         else:
             lines.append("  intervals: plain sample quantiles, not calibrated (measured conservative: a "
                          "90% window interval holds the truth about 93-96% of the time)")
         if self.windows:
-            if self.diagnostics.get("line_shape_readings"):
+            if self.diagnostics.get("discrete_reading"):
+                lines.append("  the spectrum was stated to be discrete: the window intervals span both "
+                             "readings of every pole, as fitted and as one sharp line within its half-width")
+            elif self.diagnostics.get("line_shape_readings"):
                 lines.append("  the window intervals span both readings of the narrow poles: as fitted, "
                              "and as sharp lines")
             lines.append("  weight per window: posterior 5-95%  |  allowed by the data alone  "
@@ -378,7 +401,8 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                        x_fit=None, G_fit=None, sigma_fit=None,
                        max_births: int = 2, sigma_floor: float | None = None,
                        count_model=None, count_floor: float = 0.02,
-                       band_calibration="auto", floor_factor="auto") -> PosteriorReport:
+                       band_calibration="auto", floor_factor="auto",
+                       discrete: bool = False) -> PosteriorReport:
     r"""Posterior over spectra for one dataset, with its evidence and warnings.
 
     Parameters
@@ -462,6 +486,27 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         positions -- and the band table is not applied: the data do not fix
         the shape of a line that narrow, and the weight of a window with
         such a line near its edge depends on it.
+    discrete
+        State that the spectrum is a set of discrete lines (an atom, a
+        molecule, a finite cluster).  The samples are fitted as always; the
+        window intervals then span both readings of *every* pole -- as
+        fitted, and as one sharp line somewhere within one half-width of
+        its centre (drawn uniformly, :data:`DISCRETE_DRAWS` times per
+        sample) -- and the band table is not applied.  In the second
+        reading a pole that straddles a window edge puts all of its weight
+        on one side; that reading is not checked against the data, so its
+        interval is cut to the range the data alone allow when that range
+        is computed (``bounds``).  Without this statement a spectrum of
+        many close lines is indistinguishable from a continuous one in the
+        data, the prior favours the continuous one, and the intervals are
+        too narrow for the lines, with nothing to flag.  Measured
+        (TRAINING.md (xxx)) on exact line spectra the report does not
+        flag: the stated 50% / 90% intervals hold 0.34 / 0.62 without the
+        statement and 0.67 / 0.95 with it (0.29 / 0.61 and 0.70 / 0.94 at
+        settings not used to choose the reading), at 2.6 times the width;
+        the 50% interval is conservative.  On a continuous spectrum the
+        statement is wrong and costs intervals ten times wider than
+        needed.  The band of :math:`A(\omega)` is not changed.
     max_births
         A sample that cannot reach the data is given up to this many extra
         poles, one at a time, each placed where a sample that does fit has
@@ -652,7 +697,7 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
              else band_calibration)
     # the table is fitted and tested on draws of the prior, where the samples are over-dispersed;
     # on line spectra they are not (TRAINING.md (xxii)), so it is withheld when lines are flagged
-    withheld = bool(table) and (factor != 1.0 or line_shape)
+    withheld = bool(table) and (factor != 1.0 or line_shape or bool(discrete))
     if withheld:
         table = None
     lev = band_levels(table, rel_stat, float(beta))
@@ -679,6 +724,22 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                 absorptive = torch.where(narrow, (u > 0).to(absorptive.dtype), absorptive)
             return (a * absorptive - b * torch.log(u * u + gam * gam) / (2.0 * math.pi)).sum(-1)
 
+        if discrete:
+            # every pole as one sharp line, uniformly within one half-width of its centre: all
+            # of its weight on one side of a window edge in any one draw.  Chosen on the exact
+            # line spectra of five settings against wider and heavier-tailed placements and
+            # against two or three lines per pole, scored on six others (TRAINING.md (xxx))
+            t = 2.0 * torch.rand((DISCRETE_DRAWS,) + tuple(eps.shape), generator=g, dtype=torch.float64) - 1.0
+            pos = eps + gam * t                                    # (draws, samples, poles)
+
+            def cdf_lines(w):
+                if math.isinf(w):
+                    one = torch.zeros(eps.shape[0], dtype=torch.float64) if w < 0 else a.sum(-1)
+                    return one.expand(DISCRETE_DRAWS, -1)
+                u = w * beta - eps
+                return (a * (w * beta > pos).to(a.dtype)
+                        - b * torch.log(u * u + gam * gam) / (2.0 * math.pi)).sum(-1)
+
         tot = a.sum(-1)
         pf = (prior_free_bounds(Gf[0], xf, beta, sf[0], W, windows,
                                 norm=float(G[0, 0] + G[0, -1]))
@@ -693,6 +754,13 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                 (s05, s95), (s25, s75) = central_interval(ws, lev[0.9]), central_interval(ws, lev[0.5])
                 row.update(as_fitted=(q05, q95), sharp_lines=(s05, s95), q05=min(q05, s05),
                            q95=max(q95, s95), q25=min(q25, s25), q75=max(q75, s75))
+            if discrete:
+                wd = ((cdf_lines(hi_w) - cdf_lines(lo_w)) / tot).reshape(-1).numpy()
+                (d05, d95), (d25, d75) = central_interval(wd, lev[0.9]), central_interval(wd, lev[0.5])
+                if bnd is not None and bnd["feasible"]:        # the line placements were not fitted
+                    d05, d25, d75, d95 = (min(max(v, bnd["lo"]), bnd["hi"]) for v in (d05, d25, d75, d95))
+                row.update(as_fitted=(q05, q95), discrete_lines=(d05, d95), q05=min(row["q05"], d05),
+                           q95=max(row["q95"], d95), q25=min(row["q25"], d25), q75=max(row["q75"], d75))
             if bnd is not None and bnd["feasible"]:
                 width = max(bnd["hi"] - bnd["lo"], 1e-12)
                 row.update(lo=bnd["lo"], hi=bnd["hi"],
@@ -724,6 +792,7 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                      "relative_error_bar": rel_stat, "sigma_floor": sigma_floor,
                      "bootstrap_redraw": bins is not None, "band_calibrated": bool(table),
                      "band_table_withheld": withheld, "line_shape_readings": bool(line_shape),
+                     "discrete_reading": bool(discrete),
                      "weight_on_narrow_poles": narrow_share,
                      "band_levels": lev, **count_diag})
 
