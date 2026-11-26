@@ -57,7 +57,7 @@ from .physics.poles import PoleSet
 __all__ = ["PosteriorReport", "continue_posterior", "prior_free_bounds", "BOX_SIGMA",
            "DEFAULT_WINDOWS", "BAND_TARGETS", "band_levels", "fit_band_table",
            "weight_at_width_floor", "FLOOR_TRIGGER", "FLOOR_FACTOR", "FLOOR_WITHIN", "FLOOR_FOLLOW",
-           "central_interval", "continue_measured", "DISCRETE_DRAWS"]
+           "central_interval", "continue_measured", "DISCRETE_DRAWS", "BOUNDS_TIME_LIMIT"]
 
 
 #: A pole counts as sitting at the width floor when its half-width is within this factor of it.
@@ -171,6 +171,8 @@ def fit_band_table(need, rel_noise, beta, noise_edges=(), beta_edges=(), targets
 #: "consistent with the data" for the prior-free bracket.  With 65 residuals
 #: the truth satisfies it with probability 0.97.
 BOX_SIGMA = 3.5
+#: Seconds one linear program of :func:`prior_free_bounds` may take before its window is given up.
+BOUNDS_TIME_LIMIT = 30.0
 #: Default frequency windows (physical units) for weights and brackets.
 DEFAULT_WINDOWS = ((-float("inf"), -3.0), (-3.0, -1.5), (-1.5, -0.5), (-0.5, 0.5),
                    (0.5, 1.5), (1.5, 3.0), (3.0, float("inf")))
@@ -198,7 +200,11 @@ def prior_free_bounds(G, x, beta, sigma, inv_sqrt_R=None, windows=DEFAULT_WINDOW
     bracket (TRAINING.md (xxviii)).
 
     Returns one dict per window: ``lo``, ``hi`` (fractions of the total
-    weight), ``window`` and ``feasible``.
+    weight), ``window`` and ``feasible``.  ``feasible`` is false, and the
+    bounds NaN, when a program has no solution or is not solved within
+    :data:`BOUNDS_TIME_LIMIT` seconds (seen on one spectrum in 44 at
+    beta = 20 with error bars of 1e-5 and 401 time points, where a program
+    otherwise takes four seconds and that one ran for over ten minutes).
     """
     from scipy.optimize import linprog
 
@@ -232,7 +238,7 @@ def prior_free_bounds(G, x, beta, sigma, inv_sqrt_R=None, windows=DEFAULT_WINDOW
         res = {"window": (float(lo_w), float(hi_w)), "feasible": True}
         for key, sign in (("lo", 1.0), ("hi", -1.0)):
             r = linprog(sign * c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq,
-                        bounds=(0, None), method="highs")
+                        bounds=(0, None), method="highs", options={"time_limit": BOUNDS_TIME_LIMIT})
             if r.status != 0:
                 res["feasible"] = False
                 res[key] = float("nan")
@@ -299,7 +305,8 @@ class PosteriorReport:
                 lo, hi = w["window"]
                 name = f"[{lo:g}, {hi:g})".replace("inf", "∞")
                 lines.append(f"    {name:14s} {w['q05']:.3f}-{w['q95']:.3f}  |  "
-                             f"{w['lo']:.3f}-{w['hi']:.3f}  |  {w['share']:.2f}")
+                             + (f"{w['lo']:.3f}-{w['hi']:.3f}  |  {w['share']:.2f}" if w["lo"] == w["lo"]
+                                else "not computed"))
             sh = [w["share"] for w in self.windows if w["share"] == w["share"]]
             if sh:
                 lines.append(f"  the posterior spans a median {np.median(sh):.0%} of what the data alone "
@@ -772,6 +779,11 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
             else:
                 row.update(lo=float("nan"), hi=float("nan"), share=float("nan"))
             win.append(row)
+        unsolved = sum(b is not None and not b["feasible"] for b in pf)
+        if unsolved:
+            warnings.append(f"the range the data alone allow could not be computed for {unsolved} of "
+                            f"{len(win)} windows (the linear program had no solution or did not finish); "
+                            "the posterior intervals of those windows are not checked against it.")
 
     name = getattr(flow, "meta", {}).get("recipe", {}).get("name") if isinstance(
         getattr(flow, "meta", {}).get("recipe", None), dict) else None

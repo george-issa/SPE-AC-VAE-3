@@ -85,13 +85,16 @@ def fig(out):
             for r in rows:
                 for j, t in enumerate(r["truth"]):
                     b = r[key][j] if r[key] else None
-                    solv += b is not None
-                    ins += b is not None and b[0] - TOL <= t <= b[1] + TOL
+                    if b is None or b[0] != b[0] or b[1] != b[1]:      # no solution for this window
+                        continue
+                    solv += 1
+                    ins += b[0] - TOL <= t <= b[1] + TOL
             s[name] = {"solvable": int(solv), "exact_inside": int(ins)}
-        both = [(np.array(r["old"]), np.array(r["new"], float)) for r in rows
-                if r["old"] and all(b is not None for b in r["new"])]
+        both = [(o, w) for r in rows if r["old"] for o, w in zip(r["old"], r["new"])
+                if w is not None and o[0] == o[0] and o[1] == o[1]]
         if both:
-            o, w = np.concatenate([a for a, _ in both]), np.concatenate([b for _, b in both])
+            o, w = np.array([a for a, _ in both]), np.array([b for _, b in both])
+            s["windows_compared"] = len(both)
             s["contains_stored"] = bool(((w[:, 0] <= o[:, 0] + TOL) & (w[:, 1] >= o[:, 1] - TOL)).all())
             s["mean_width"] = {"stored": float((o[:, 1] - o[:, 0]).mean()), "recomputed": float((w[:, 1] - w[:, 0]).mean())}
             s["largest_widening_of_one_window"] = float(((w[:, 1] - w[:, 0]) - (o[:, 1] - o[:, 0])).max())

@@ -254,6 +254,8 @@ def bracket_holds(rows, tol=1e-6):
     hit = n = 0
     for r in rows:
         for t_, b in zip(r["auto"]["truth"], r["auto"].get("bracket") or []):
+            if b[0] != b[0] or b[1] != b[1]:          # the linear program of this window had no solution
+                continue
             n += 1
             hit += b[0] - tol <= t_ <= b[1] + tol
     return {"inside": int(hit), "windows": int(n)} if n else None

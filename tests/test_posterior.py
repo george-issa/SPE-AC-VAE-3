@@ -54,6 +54,21 @@ def test_prior_free_brackets_admit_weight_beyond_the_frequency_grid():
         assert b["lo"] - 1e-6 <= w <= b["hi"] + 1e-6, (b, w)
 
 
+def test_a_range_that_cannot_be_computed_is_reported_as_such(monkeypatch):
+    import spevae.posterior as P
+    inst = C.draw(C.realize("lorentz pair"), 1e-3, 7)
+    tr = inst.truth
+    monkeypatch.setattr(P, "BOUNDS_TIME_LIMIT", 1e-9)                  # no program can finish
+    bnd = P.prior_free_bounds(inst.G[0], tr.x, tr.beta, inst.sigma[0], inst.isr)
+    assert all(not b["feasible"] and math.isnan(b["lo"]) and math.isnan(b["hi"]) for b in bnd)
+    nan = float("nan")
+    rep = P.PosteriorReport(poles=None, omega=np.zeros(1), band={}, chi2=np.ones(4), chi2_target=1.0,
+                            n_samples=4, n_accepted=4, n_kept_raw=0,
+                            windows=[{"window": (-0.5, 0.5), "q05": 0.1, "q95": 0.2, "lo": nan, "hi": nan,
+                                      "share": nan}])
+    assert "not computed" in rep.summary() and "nan" not in rep.summary()
+
+
 def test_posterior_report_on_the_reference_flow():
     path = "out/flow/F_60k.pt"
     if not os.path.exists(path):
