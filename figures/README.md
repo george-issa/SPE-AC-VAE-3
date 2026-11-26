@@ -70,6 +70,30 @@ Left: measured minus exact G(tau) in units of the error bar. Middle: the reconst
 
 ![hubbard_dimer_dqmc.png](2_real_data/hubbard_dimer_dqmc.png)
 
+**hubbard_ring4_dqmc.png**
+
+Real DQMC bins of the half-filled four-site Hubbard ring (U = 4, beta = 8, 400 bins), whose spectrum is known exactly: a dense set of lines, the kind of spectrum this model finds hardest.
+
+As for the dimer.
+
+![hubbard_ring4_dqmc.png](2_real_data/hubbard_ring4_dqmc.png)
+
+**hubbard_ring4_dqmc_discrete_statement.png**
+
+The four-site ring again, window by window: the exact weight against the intervals the report states without and with the statement that the spectrum is discrete.
+
+Black ticks: exact weight. Blue: stated 90% interval as the report gives it. Green: with `--discrete`. Grey: the range the data alone allow.
+
+![hubbard_ring4_dqmc_discrete_statement.png](2_real_data/hubbard_ring4_dqmc_discrete_statement.png)
+
+**hubbard_dimer_beta2_dqmc.png**
+
+Real DQMC bins of the same dimer at a high temperature (U = 4, beta = 2, 400 bins).
+
+As for the dimer at beta = 8.
+
+![hubbard_dimer_beta2_dqmc.png](2_real_data/hubbard_dimer_beta2_dqmc.png)
+
 **holstein_dqmc.png**
 
 Real DQMC bins of a Holstein model (beta = 8, 400 bins). No exact answer exists; the dashed curve is another continuation of the same data, not the truth.
@@ -98,17 +122,41 @@ Left: error per setting, as trained, with the narrow-line fit, and MaxEnt. Right
 
 ![narrow_lines.png](3_error_bars/narrow_lines.png)
 
+**discrete_statement.png**
+
+Exact line spectra again: what stating that the spectrum is discrete (`spevae continue --discrete`) does to the intervals. Many close lines look like a continuous band in the data, so the report cannot flag them itself; the statement is how the user tells it.
+
+Left: share of windows whose exact weight lies inside the stated intervals, without the statement (blue) and with it (green); dashes are nominal. Right: the width of the stated 90% interval as a share of the range the data alone allow. The last group is the cost of making the statement about a continuous spectrum.
+
+![discrete_statement.png](3_error_bars/discrete_statement.png)
+
 ## 4_checks
 
-Checks behind the numbers. The first three were made on the `F3_60k` trainings (the same recipe without exact line spectra as targets) and are not redrawn per model.
+Checks behind the numbers. The seeds of the earlier recipe, the families left out and the line-spectrum headroom were made on the `F3_60k` trainings (the same recipe without exact line spectra as targets) and are not redrawn per model.
+
+**edges_of_trained_range.png**
+
+Known answers at the edges of the range the model was trained on: beta = 1 and 20, relative error bars of 1e-5, dtau = 0.02 and 0.5 (20 exact lattice and 24 exact line spectra per setting).
+
+Left: this model's error over MaxEnt's on the same data (below 1 = this model is better). Middle and right: share of windows whose exact weight lies inside the stated intervals; dashes are nominal.
+
+![edges_of_trained_range.png](4_checks/edges_of_trained_range.png)
 
 **training_seeds.png**
 
-Three independent trainings of the same model.
+Two independent trainings of this model's recipe, through the report, on the same known answers.
+
+Left: error per setting for each seed. Middle: the same spectrum under the two trainings, one point each. Right: the stated intervals. Agreement shows the results belong to the recipe, not to one run.
+
+![training_seeds.png](4_checks/training_seeds.png)
+
+**training_seeds_earlier_recipe.png**
+
+Three independent trainings of the earlier recipe (`F3_60k`).
 
 Agreement between seeds shows how much of any difference is the luck of one training run.
 
-![training_seeds.png](4_checks/training_seeds.png)
+![training_seeds_earlier_recipe.png](4_checks/training_seeds_earlier_recipe.png)
 
 **families_left_out.png**
 

@@ -1454,6 +1454,189 @@ training run, including which line spectra go unflagged — 20 of the 22–23
 are the same spectra under both seeds.  Seed 1 stays the candidate and its
 table serves either seed.
 
+(xxviii) **Known answers at the edges of the trained range: holds in β and
+Δτ, not on line spectra at error bars of 1e-5** (*measured*, 2026-11-25;
+`scripts/step3/run_edges.sh`, `edges_summary.py`,
+`out/step3/edges_F3L_60k_s1/edges.{json,png}`).  The report of `F3L_60k_s1`
+with its band table, at its defaults, on 20 exact lattice and 24 exact line
+spectra per setting (`floor_option_judge.py` with `JUDGE_DTAU`), MaxEnt on
+the same data.  W₁ geometric means; ratio with a paired 95% t interval and
+the number of spectra on which the report is the lower; exact window weights
+inside the stated 50% / 90% intervals:
+
+| setting (τ points) | lattice: report / MaxEnt | ratio | lines: report / MaxEnt | ratio | lattice intervals | flagged-line intervals |
+|---|---|---|---|---|---|---|
+| β = 1, noise 1e-2, Δτ = 0.1 (11) | 0.233 / 1.139 | 0.20 [0.13, 0.31], 19 of 20 | 0.570 / 0.775 | 0.74 [0.62, 0.87], 19 of 24 | 0.67 / 0.98 | 0.60 / 0.92 |
+| β = 1, noise 1e-3, Δτ = 0.05 (21) | 0.087 / 0.957 | 0.09 [0.07, 0.12], 20 of 20 | 0.386 / 0.417 | 0.93 [0.85, 1.00], 18 of 24 | 0.55 / 0.87 | 0.56 / 0.93 |
+| β = 8, noise 1e-3, Δτ = 0.02 (401) | 0.078 / 0.314 | 0.25 [0.19, 0.33], 20 of 20 | 0.194 / 0.434 | 0.45 [0.37, 0.54], 24 of 24 | 0.34 / 0.94 | 0.54 / 0.90 |
+| β = 8, noise 1e-3, Δτ = 0.5 (17) | 0.198 / 0.345 | 0.57 [0.45, 0.73], 18 of 20 | 0.342 / 0.375 | 0.91 [0.76, 1.10], 12 of 24 | 0.41 / 0.93 | 0.49 / 0.87 |
+| β = 8, noise 1e-5, Δτ = 0.125 (65) | 0.019 / 0.151 | 0.12 [0.08, 0.19], 20 of 20 | 0.105 / 0.068 | **1.56 [1.30, 1.87]**, 2 of 24 | 0.39 / **0.79** | 0.52 / 0.86 |
+| β = 20, noise 1e-3, Δτ = 0.125 (161) | 0.067 / 0.239 | 0.28 [0.21, 0.37], 20 of 20 | 0.175 / 0.387 | 0.45 [0.36, 0.56], 24 of 24 | 0.59 / 0.97 | 0.53 / 0.89 |
+| β = 20, noise 1e-5, Δτ = 0.05 (401) | 0.014 / 0.100 | 0.14 [0.09, 0.20], 20 of 20 | 0.074 / 0.082 | 0.91 [0.76, 1.08], 16 of 24 | 0.51 / **0.82** | 0.45 / 0.87 |
+
+*What holds.*  Lattice spectra are below MaxEnt at every edge, by a factor
+1.7 to 11.  Line spectra are ahead at β = 20 and at Δτ = 0.02, and level at
+β = 1 with noise 1e-3, at Δτ = 0.5 and at β = 20 with noise 1e-5.  The
+narrow-line flag fires on 20–22 of the 24 line spectra at every setting and
+on one lattice spectrum in 140 (β = 1, noise 1e-2); the intervals stated
+for flagged line spectra hold 0.45–0.60 / 0.86–0.93.  Half the samples or
+more are accepted on every spectrum except on line spectra at noise 1e-5.
+*What does not.*  (a) Line spectra at β = 8, noise 1e-5: MaxEnt is the
+lower on 22 of 24, by a factor 1.56, and fewer than half of the samples
+reach the data on 11 (as few as 9%; at β = 20 on 12, as few as 6%, with the
+error level with MaxEnt's).  The report says so on each of them (the
+acceptance warning, and "a method without a width floor (MaxEnt) may be
+sharper here" where the weight still sits at the lowered floor: 17 of the
+21 flagged at β = 8).
+(b) Lattice intervals at noise 1e-5 are short at the 90% level (0.79 ± 0.04
+at β = 8, 0.82 ± 0.03 at β = 20; 0.86 at noise 1e-4 in (xxvi)), and the
+50% interval ranges from 0.34 to 0.67 over the seven settings (0.49 on
+average; ±0.05 each) — the pooled level holds, a single setting's does
+not.  The misses at small error bars
+are small in weight: at noise 1e-5 the stated 90% interval is 0.007 wide
+at the median and the 29 misses in 140 windows are outside it by 0.001 at
+the median and 0.005 at most (noise 1e-4: 0.012 wide, 20 misses, 0.0006
+and 0.003).  Widening every stated end by 0.0005 of the total weight would
+give 0.87 and 0.90 there, and would take held-out prior draws below 1e-4
+from 0.91 to 0.96 with plain quantiles; not adopted.  (c) The 20 line
+spectra the report does not flag hold 0.29 ± 0.07 / 0.63 ± 0.07 pooled, as
+in (xxvi).
+*Why line spectra lose at 1e-5* (`floor_depth_probe.py`,
+`out/step3/floor_depth_F3L_60k_s1/`).  A pole at a quarter of the trained
+floor is still a Lorentzian of half-width 0.01 at β = 8; its tails alone
+cost W₁ ≈ (2γ/π) ln(Λ/γ) ≈ 0.04, which is the error of the Hubbard atom
+(0.03–0.06 against MaxEnt's 0.01–0.03).  Dividing the floor by 16 instead,
+on the 21 flagged spectra: W₁ 0.89 [0.79, 1.00] of the factor 4's, still
+1.47 [1.27, 1.71] of MaxEnt's; the weight leaves the floor (still pinned on
+1 spectrum, from 17), but the fit converges less often — median 14% of the
+samples accepted (55%), under half on 15 spectra (10) — at seven times the
+fitting time, and the stated 90% interval drops to 0.79.  A lower floor is
+therefore not the remedy, and the factor stays at 4.  What would be: poles
+of zero width as a component of their own (γ = 0 has a closed form, no
+quadrature) and a fit that reaches the data from the flow's proposals at
+this precision.  Not built.
+*The bracket from the data alone had an assumption, now removed*
+(`scripts/step3/bracket_check.py`, `out/step3/bracket_check_F3L_60k_s1/`).
+The linear programs ran on the quadrature, |ω| ≤ 20, so a spectrum with
+weight beyond it was excluded by construction.  Two consequences in these
+seven settings.  (i) One miss in the 2029 windows that had a bracket: a
+triangular-lattice spectrum with a Lorentzian lifetime η = 2.3 at β = 1,
+7% of whose weight lies beyond |ω| = 20; the exact weight of [−0.5, 0.5)
+was 0.055, the bracket [0, 0.051].  (ii) At β = 20, noise 1e-5 the programs
+had no solution for 127 of 308 windows — 18 of the 20 lattice spectra,
+whose lifetimes leave 0.1–0.4% of the weight beyond the grid, which is
+enough at that precision — and the report printed no range.
+`posterior.prior_free_bounds` now also admits weight on log-spaced
+frequencies out to 2·10⁵ and at ±∞ (where it reaches only G(0) or G(β)).
+Recomputed for all 44 spectra of five settings (β = 1 and 2 at noise 1e-3,
+β = 8 at 1e-3 and 1e-5, β = 20 at 1e-5): 1539 of 1540 windows have a
+bracket and every one holds the exact weight; every stored bracket lies
+inside its new one; the mean width grows by 0.0–0.4%, and by 2.8% at β = 1,
+where the bracket that missed becomes [0, 0.291].  The one window without:
+a program at β = 20, noise 1e-5 that the solver had not finished after ten
+minutes (the others take four seconds).  A program is now given 30 seconds
+(`BOUNDS_TIME_LIMIT`), and a window without a bracket is printed as "not
+computed", with a warning, instead of holding the report up.  Tests: a
+line at ω = 30, for which the old programs had no solution at all, and the
+not-computed path (`tests/test_posterior.py`).
+Reading: inside β = 1–20 and Δτ = 0.02–0.5 at error bars of 1e-3 and above
+the report is as good at the edges as in the middle.  Error bars of 1e-5
+are inside the trained range and the report runs, but on spectra made of a
+few sharp lines MaxEnt is the better tool there, and the report's intervals
+on continuous spectra are about ten points short.
+
+(xxix) **Two more real DQMC runs with known answers: a four-site ring and a
+hot dimer** (*measured*, 2026-11-25; `scripts/dqmc/hubbard_ring.jl`,
+`scripts/dqmc/judge_dimer.py` (now also rings, and the exact weight of every
+window against the stated intervals), `out/dqmc/F3L_60k_s1/ring4_judge.*`,
+`out/dqmc/F3L_60k_s1_b2/dimer_judge.*`; SmoQyDQMC 2.0.11, half filling,
+U = 4t, Δτ = 0.05, 400 bins of 50, under a minute each).  The report of
+`F3L_60k_s1` with its table, 200 samples.
+
+| run | lines | rel. error bar | χ² of the exact G / target | W₁ report | VAE | MaxEnt | inside stated 50% / 90% | inside the data-alone bracket |
+|---|---|---|---|---|---|---|---|---|
+| ring of 4 sites, β = 8 | 20 | 1.9e-3 | 1.09 | **0.320** | 0.513 | 0.657 | 3 / 4 of 7 | 7 of 7 |
+| dimer, β = 2 | 8 | 3.9e-3 | 1.60 | 0.413 | 0.344 | **0.350** | 6 / 7 of 7 | 7 of 7 |
+| dimer, β = 8 ((xxvi)) | 4 | 1.1e-3 | 1.34 | **0.319** | 0.405 | 0.777 | — / 7 of 7 | 7 of 7 |
+
+*The ring* is the case (xxii) could not flag, on real data: 20 lines read
+as two broad features by every method, half of MaxEnt's error, all 200
+samples accepted, no warning — and the exact weight outside the stated 90%
+interval in three windows, by 0.054 in [−1.5, −0.5) (exact 0.222, stated
+0.063–0.168), 0.019 and 0.010.  The line at −1.35 with weight 0.18 sits
+0.15 from a window edge; the samples spread it across the edge and agree
+with each other about it.  The posterior spans 36% of the data-alone
+bracket per window, and the bracket holds.
+*The hot dimer* is the β = 2 case of (xx): MaxEnt ahead by 15%, the flag
+fires (all weight at the trained floor, 59% still at the lowered one), the
+report says a method without a width floor may be sharper, and its
+intervals — both readings, 74% of the bracket — hold in 7 of 7.  The
+measured G(τ) sits 1.6× further from the exact one than the covariance
+allows (rms z 1.11, a slope in τ): at this error bar the Trotter error of
+Δτ = 0.05 is visible.
+Reading: on real data the synthetic judges predicted both outcomes.  Three
+runs with known answers now, two below MaxEnt by a factor two and one
+behind by 15%; intervals honest where the report flags lines, and too
+narrow, without a warning, on the dense line spectrum.
+
+(xxx) **A statement the user can make, "the spectrum is discrete": honest
+intervals on the line spectra the report cannot flag** (*measured*,
+2026-11-25; `continue_posterior(discrete=True)`, `spevae continue
+--discrete`, `scripts/step3/discrete_rules.py`, `discrete_option_judge.py`,
+`out/step3/discrete_rules_F3L_60k_s1/`,
+`out/step3/discrete_option_F3L_60k_s1/`, `scripts/dqmc/windows_figure.py`).
+The defect of (xxii), (xxvi) and (xxix): many close lines look like a
+continuous band in the data, the prior holds far more bands than dense line
+sets, every sample fits, the samples agree, and the exact weight of a
+window with a strong line near its edge falls outside the stated interval
+with nothing to flag.  No property of the samples separates these spectra
+(training on exact lines doubled the flagged share, (xxv); a fifth stayed).
+What the data cannot tell the user often can: an atom, a molecule and a
+finite cluster have discrete spectra.
+*The reading.*  With the statement the fit is unchanged and the window
+intervals span two readings of every pole: as fitted, and as one sharp line
+somewhere within one half-width of its centre (uniform, 16 draws per
+sample), so that a pole straddling a window edge puts all of its weight on
+one side.  The second reading is not checked against the data, so its
+interval is cut to the range the data alone allow.  The band table is not
+applied.
+*How it was chosen* (`discrete_rules.py`; the fitted poles of 264 exact
+line spectra stored, 18 readings scored offline without refitting): line
+positions from the pole's own Lorentzian, uniform within two half-widths or
+within one; one, two or three lines per pole.  On the five settings of the
+known-answer judge the Lorentzian placement over-covers at twice the width
+(unflagged line spectra 0.71 / 1.00, 90% interval 0.28 wide; in the gap of
+a Hubbard spectrum it states more weight than the data allow); uniform
+within one half-width holds 0.63 / 0.95 at 0.20, and two or three lines per
+pole 0.61 / 0.94 and 0.60 / 0.93 at 0.18 and 0.17.  One line within one
+half-width was taken: nothing in it is tuned beyond that choice.
+*Through the shipped call* (the six edge-of-range settings of (xxviii) took
+no part in the choice), exact weight inside the stated 50% / 90% interval:
+
+| line spectra | n | without | with the statement | 90% width | share of the data-alone range |
+|---|---|---|---|---|---|
+| not flagged, five settings | 23 | 0.34 / 0.62 | 0.67 ± 0.05 / 0.95 ± 0.02 | 0.072 → 0.186 | 0.24 → 0.55 |
+| not flagged, held-out settings | 18 | 0.29 / 0.61 | 0.70 ± 0.06 / 0.94 ± 0.03 | 0.052 → 0.206 | 0.20 → 0.61 |
+| flagged, five settings | 97 | 0.51 / 0.90 | 0.69 / 0.92 | 0.068 → 0.073 | 0.53 → 0.58 |
+| flagged, held-out settings | 126 | 0.54 / 0.90 | 0.69 / 0.94 | 0.101 → 0.119 | 0.58 → 0.66 |
+| all | 264 | 0.50 / 0.85 | 0.69 ± 0.02 / 0.93 ± 0.01 | 0.076 → 0.105 | 0.49 → 0.62 |
+
+By setting the 90% interval holds 0.90–0.96 with the statement at all
+eleven (0.67–0.91 without; β = 2: 0.67 → 0.92).  The 50% interval is
+conservative (0.69).  A spectrum the report already flags changes little.
+*A wrong statement* (20 exact lattice spectra, β = 8, noise 1e-3): 0.91 /
+1.00 with intervals ten times wider than needed (0.019 → 0.184, 74% of the
+data-alone range).  It is a statement about the system, not a safe default.
+*Real DQMC* ((xxix); `out/dqmc/F3L_60k_s1_discrete/`,
+`F3L_60k_s1_b2_discrete/`): the ring of four sites 4 → 7 of 7 windows
+inside the stated 90% interval (3 → 5 at 50%), the intervals at 64% of the
+data-alone range (36%); the dimer at β = 8 and at β = 2, both flagged
+already, 7 of 7 with and without.
+Reading: the weak spot is closed for the user who knows the system is
+finite, and it is the only case in which it arises in the judges — every
+unflagged failure is an exactly diagonalised cluster.  Left open: a dense
+line spectrum the user does not know to be one.
+
 **Gates for calling it shippable**, and where seed 1 stands (2026-11-25,
 after (xxiv)):
 (1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
@@ -1484,24 +1667,33 @@ setting, seed 1's band table transfers ((xxi))*;
 and the VAE, the upper satellite and its neighbour window outside their
 intervals by 0.01 in weight*.
 Since (xxv) the candidate for release is the retrained `F3L_60k_s1`; the
-gates above are stated for `F3_60k_s1`.  For the candidate, after (xxvi):
-(1) lattice below MaxEnt on 17–20 of 20 at every setting; line spectra
-ahead at β = 8, noise 1e-3 and 1e-2 and at β = 16, level at noise 1e-4
-(0.95 [0.86, 1.06]), behind or level at β = 2 (1.11 [1.00, 1.23]);
+gates above are stated for `F3_60k_s1`.  For the candidate, after (xxx):
+(1) lattice below MaxEnt on 17–20 of 20 at every one of twelve settings,
+the seven at the edges of the range included ((xxviii)); line spectra ahead
+at six (β = 8 with noise 1e-3 and 1e-2, β = 16 and 20, Δτ = 0.02, β = 1
+with noise 1e-2), level at five (noise 1e-4: 0.95 [0.86, 1.06]; β = 2: 1.11
+[1.00, 1.23]; β = 1 with noise 1e-3; Δτ = 0.5; β = 20 with noise 1e-5), and
+behind at β = 8, noise 1e-5 (1.56 [1.30, 1.87]) — *not met there*;
 (2) not repeated for this recipe; (3) met on unflagged prior draws (0.50 /
-0.90 held out), on lattice spectra pooled (0.48 / 0.91; by setting 0.86 to
-0.99 at the 90% level) and on flagged line spectra (0.51 / 0.90); not met
-on the line spectra the report cannot flag, now 19% of them (0.34 / 0.62);
+0.90 held out), on lattice spectra pooled (0.48 / 0.91 and 0.49 / 0.90 at
+the edges; by setting 0.79 to 0.99 at the 90% level, the low ones at noise
+1e-5 and 1e-4 with misses below 0.005 of the weight) and on flagged line
+spectra (0.51 / 0.90; 0.53 / 0.89 at the edges); on the line spectra the
+report cannot flag, a fifth of them, *not met as it stands* (0.34 / 0.62)
+and met at the 90% level when the user states that the spectrum is discrete
+(0.67 / 0.95; 0.70 / 0.94 held out, (xxx));
 (4) 0.50 pooled, 0.44 below error bars of 1e-4 and 0.56 between 1e-3 and
 1e-2; (5) met (0.0299 / 0.0638); (6) two seeds, within 1% of each other
 through the report, the same spectra flagged on 115 of 120, seed 1's table
 transfers ((xxvii));
-(7) done: W₁ 0.319, 7 of 7 windows.
-Not judged for any checkpoint: known answers at β = 1 and 20, at error bars
-of 1e-5, and at a Δτ other than 0.125.  The command a user runs exists
-since 2026-11-25: `spevae continue` gives the posterior report for a flow
-checkpoint (`posterior.continue_measured`), and reproduces the dimer
-judge's report to the digit.  No checkpoint is published.
+(7) three runs ((xxvi), (xxix)): dimer at β = 8, W₁ 0.319 against MaxEnt's
+0.777, 7 of 7 windows; ring of four sites 0.320 against 0.657, 4 of 7
+windows (7 of 7 with the statement); dimer at β = 2 0.413 against 0.350,
+7 of 7.
+The command a user runs exists since 2026-11-25: `spevae continue` gives
+the posterior report for a flow checkpoint (`posterior.continue_measured`),
+and reproduces the dimer judge's report to the digit.  No checkpoint is
+published.
 
 **Step-2 build (1): the smooth-family label bank — built, judged,
 pinned** (*measured*, 2026-08-27).  `data/label_bank.py` +

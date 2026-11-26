@@ -93,14 +93,30 @@ spevae continue --bins mybins.txt --beta 8.0 --checkpoint flow.pt \
 `report.npz.json` the window table, warnings and diagnostics. From Python the
 same call is `spevae.posterior.continue_measured(flow, measured)`.
 
+If the system is an atom, a molecule or a finite cluster, say so with
+`--discrete` (`discrete=True`). Many close lines look like a continuous band
+in the data, the report cannot tell the two apart, and without the statement
+its intervals are too narrow for the lines. Do not use it for an extended
+system: there it makes the intervals about ten times wider than needed.
+
 Trained range: fermionic G(τ), β from 1 to 20, relative error bars from 1e-5
-to 3e-2, Δτ from 0.02 to 0.5. What has been measured about its accuracy and
-its intervals, including where they fail, is recorded in
-[`docs/TRAINING.md`](docs/TRAINING.md) (step 3) and drawn in
-`figures/`. No checkpoint is published yet; the
-training recipe is `scripts/step3/run_full.sh` (label bank from
-`scripts/step3/build_physics_bank.py`; about three hours on an
-Apple GPU).
+to 3e-2, Δτ from 0.02 to 0.5. Measured against exact answers over that range
+and on three DQMC runs of exactly solvable clusters
+([`docs/TRAINING.md`](docs/TRAINING.md), step 3; drawn in `figures/`). Where
+it falls short:
+
+- spectra of a few sharp lines at relative error bars of 1e-5, or at β near
+  2: MaxEnt is more accurate there (by up to 1.6 and 1.2 times); in most of
+  these cases the report flags narrow lines and says so;
+- continuous spectra at relative error bars of 1e-4 and below: the stated 90%
+  interval holds the exact weight 79–86% of the time; the misses are below
+  0.005 of the total weight;
+- a spectrum of many close lines that is not stated to be discrete: intervals
+  too narrow, and no warning.
+
+No checkpoint is published yet; the training recipe is
+`scripts/step3/run_lines.sh` (label bank from
+`scripts/step3/build_physics_bank.py`; about three hours on an Apple GPU).
 
 ## Use: the variational autoencoder
 
