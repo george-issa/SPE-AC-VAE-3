@@ -1413,6 +1413,47 @@ known_answers.py`, `figures/README.md`), W₁ of this model / MaxEnt on the
 0.302 / 0.578 and 0.507 / 0.702; β = 2: 0.132 / 0.465 and 0.367 / 0.323;
 β = 16: 0.108 / 0.213 and 0.185 / 0.333.
 
+(xxvii) **A second training seed of the retrained recipe gives the same
+report** (*measured*, 2026-11-25; `scripts/step3/run_lines.sh "2"`,
+`seed_summary.py`, `seed_report_summary.py`, `out/step3/seeds_lines.{json,
+png}`, `out/step3/seeds_lines_report.{json,png}`).  `F3L_60k_s2` is the
+recipe of (xxv) with only the training seed changed, judged by the same
+chain.  Known answers with the samples as trained, W₁ of the posterior
+mean, geometric mean, seeds 1 / 2:
+
+| setting | lattice (n = 20) | MaxEnt | lines (n = 12) | MaxEnt |
+|---|---|---|---|---|
+| β = 8, noise 1e-4 | 0.042 / 0.042 | 0.172 | 0.149 / 0.149 | 0.124 |
+| β = 8, noise 1e-3 | 0.089 / 0.089 | 0.229 | 0.227 / 0.227 | 0.280 |
+| β = 8, noise 1e-2 | 0.302 / 0.292 | 0.578 | 0.517 / 0.515 | 0.702 |
+| β = 2, noise 1e-3 | 0.140 / 0.141 | 0.465 | 0.405 / 0.404 | 0.323 |
+| β = 16, noise 1e-3 | 0.111 / 0.111 | 0.213 | 0.196 / 0.197 | 0.333 |
+
+*Through the report* (neither seed carries a band table here, so the
+comparison is like for like; 100 lattice and 120 line spectra, the same
+noise draws, paired per spectrum): W₁ of seed 2 over seed 1 is 0.995
+[0.985, 1.005] on lattice spectra and 0.998 [0.989, 1.007] on line spectra;
+a single spectrum differs by a factor 1.03 at the median and 1.19 / 1.24 at
+most.  The narrow-line flag fires on 98 of 120 line spectra (seed 1: 97)
+and on no lattice spectrum for either; the seeds agree on 115 of the 120
+(95 flagged by both, 20 by neither, 3 by seed 2 only, 2 by seed 1 only).
+Exact weight inside the stated 50% / 90% interval: flagged line spectra
+0.501 ± 0.029 / 0.901 ± 0.017 (seed 1: 0.511 / 0.903); unflagged line
+spectra 0.40 / 0.66 on 22 (0.38 / 0.65 on 23); lattice, central quantiles
+without a table, 0.576 / 0.923 (0.583 / 0.931).
+*Held-out prior.*  Plain sample coverage 0.572 / 0.925 (seed 1: 0.574 /
+0.929), data-fit rank 0.47 for both, error of the refined mean 0.0505
+(0.0507).  Seed 1's band table applied unchanged to the 243 unflagged of
+seed 2's 288 held-out draws (`fit_band_calibration.py
+out/step3/cal_F3L_60k_s2 out/step3/F3L_60k_s1.pt --evaluate
+--unflagged-only`): 0.500 ± 0.018 / 0.908 ± 0.010 at nominal 0.50 / 0.90
+(plain quantiles on the same draws 0.553 / 0.919); over the ten strata rms
+z 1.28, largest 2.48 (β = 8 at the 50% level, 0.410 ± 0.036).
+Reading: what (xxv) and (xxvi) report belongs to the recipe and not to one
+training run, including which line spectra go unflagged — 20 of the 22–23
+are the same spectra under both seeds.  Seed 1 stays the candidate and its
+table serves either seed.
+
 **Gates for calling it shippable**, and where seed 1 stands (2026-11-25,
 after (xxiv)):
 (1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
@@ -1452,7 +1493,9 @@ ahead at β = 8, noise 1e-3 and 1e-2 and at β = 16, level at noise 1e-4
 0.99 at the 90% level) and on flagged line spectra (0.51 / 0.90); not met
 on the line spectra the report cannot flag, now 19% of them (0.34 / 0.62);
 (4) 0.50 pooled, 0.44 below error bars of 1e-4 and 0.56 between 1e-3 and
-1e-2; (5) met (0.0299 / 0.0638); (6) one seed, a second in training;
+1e-2; (5) met (0.0299 / 0.0638); (6) two seeds, within 1% of each other
+through the report, the same spectra flagged on 115 of 120, seed 1's table
+transfers ((xxvii));
 (7) done: W₁ 0.319, 7 of 7 windows.
 Not judged for any checkpoint: known answers at β = 1 and 20, at error bars
 of 1e-5, and at a Δτ other than 0.125.  The command a user runs exists
