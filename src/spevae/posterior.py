@@ -52,12 +52,13 @@ import numpy as np
 import torch
 
 from .physics import PoleGreens, SpectralQuadrature
-from .physics.poles import PoleSet
+from .physics.poles import PoleSet, line_density
 
 __all__ = ["PosteriorReport", "continue_posterior", "prior_free_bounds", "BOX_SIGMA",
            "DEFAULT_WINDOWS", "BAND_TARGETS", "band_levels", "fit_band_table",
            "weight_at_width_floor", "FLOOR_TRIGGER", "FLOOR_FACTOR", "FLOOR_WITHIN", "FLOOR_FOLLOW",
-           "central_interval", "continue_measured", "DISCRETE_DRAWS", "BOUNDS_TIME_LIMIT"]
+           "central_interval", "continue_measured", "DISCRETE_DRAWS", "BOUNDS_TIME_LIMIT",
+           "LINE_FIT", "LINES_VIABLE", "LINE_ROUNDS", "PEAKS_FIT_BELOW"]
 
 
 #: A pole counts as sitting at the width floor when its half-width is within this factor of it.
@@ -90,6 +91,20 @@ FLOOR_TRIGGER = 0.1
 FLOOR_FACTOR = 4.0
 #: Line positions drawn per pole and sample for the discrete reading of ``continue_posterior``.
 DISCRETE_DRAWS = 16
+#: When narrow lines are flagged, ``floor_factor="auto"`` can fit the poles the flow pinned at
+#: its width floor as zero-width lines (delta functions): it does when the spectrum is stated to
+#: be discrete, and when peaks of the minimum width reach the data for fewer than
+#: :data:`PEAKS_FIT_BELOW` of the samples (the data themselves ask for something narrower).
+#: ``False`` never does, which is the report judged in TRAINING.md (xxii)-(xxx): narrow poles
+#: as Lorentzians of a quarter of the floor.
+LINE_FIT = True
+#: Share of samples below which the fit at the trained width floor counts as rejected by the data.
+PEAKS_FIT_BELOW = 0.5
+#: Share of the flow's proposals that must settle on the data with zero-width lines for that
+#: fit to be the one reported; below it the lowered floor is fitted as well.
+LINES_VIABLE = 0.25
+#: How many times the line fit turns poles it has narrowed below the trained floor into lines.
+LINE_ROUNDS = 2
 #: In a fit with a lowered floor, poles the flow pinned at its trained floor start pinned at the
 #: lowered one (``LoweredFloor.recode(follow_within=FLOOR_WITHIN)``).  ``False`` starts every
 #: pole at the width the flow gave it, which is what TRAINING.md (xxii) judged.
@@ -252,11 +267,17 @@ def prior_free_bounds(G, x, beta, sigma, inv_sqrt_R=None, windows=DEFAULT_WINDOW
 class PosteriorReport:
     """What :func:`continue_posterior` returns."""
 
-    poles: PoleSet                       # accepted samples, physical units
+    poles: PoleSet                       # accepted samples, physical units; gamma == 0 marks a
+    #                                      zero-width line (a delta function of weight a)
     omega: np.ndarray
-    band: dict                           # q05, q16, q25, q50, q75, q84, q95, mean on omega:
-    #                                      plain sample quantiles of A(omega), pointwise
-    #                                      (the band table applies to `windows` only)
+    band: dict                           # q05, q16, q25, q50, q75, q84, q95, mean, lines on omega.
+    #                                      The quantiles are plain sample quantiles of A(omega),
+    #                                      pointwise (the band table applies to `windows` only),
+    #                                      of everything but the zero-width lines, which have no
+    #                                      height.  `lines` is the mean weight those lines put on
+    #                                      each grid node (zero without them); `mean` is the
+    #                                      posterior-mean density with that weight included, so
+    #                                      its integral over the grid is the total weight.
     chi2: np.ndarray                     # accepted samples, per point, vs the measured data
     chi2_target: float
     n_samples: int
@@ -272,7 +293,9 @@ class PosteriorReport:
         lines = [
             f"posterior from {self.n_accepted} of {self.n_samples} samples "
             f"({acc:.0%} accepted, {self.n_kept_raw} needed no refinement, "
-            f"{self.diagnostics.get('samples_given_a_pole', 0)} were given an extra pole)",
+            f"{self.diagnostics.get('samples_given_a_pole', 0)} were given an extra pole"
+            + (f", {self.diagnostics['samples_restarted']} were restarted from a sample that fits"
+               if self.diagnostics.get("samples_restarted") else "") + ")",
             f"  fit      : chi2 / target median "
             f"{np.median(self.chi2) / self.chi2_target:.2f} "
             f"[{np.quantile(self.chi2, 0.05) / self.chi2_target:.2f}, "
@@ -294,8 +317,15 @@ class PosteriorReport:
                          "90% window interval holds the truth about 93-96% of the time)")
         if self.windows:
             if self.diagnostics.get("discrete_reading"):
-                lines.append("  the spectrum was stated to be discrete: the window intervals span both "
-                             "readings of every pole, as fitted and as one sharp line within its half-width")
+                lines.append("  the spectrum was stated to be discrete: "
+                             + (f"{self.diagnostics.get('weight_on_lines', 0.0):.0%} of the weight is on "
+                                "zero-width lines, and " if self.diagnostics.get("line_fit") else "")
+                             + "the window intervals span both readings of every other pole, as fitted and "
+                               "as one sharp line within its half-width")
+            elif self.diagnostics.get("line_fit"):
+                lines.append(f"  {self.diagnostics.get('weight_on_lines', 0.0):.0%} of the weight is on "
+                             "zero-width lines, fitted because peaks of the model's minimum width do not "
+                             "reach the data")
             elif self.diagnostics.get("line_shape_readings"):
                 lines.append("  the window intervals span both readings of the narrow poles: as fitted, "
                              "and as sharp lines")
@@ -317,11 +347,22 @@ class PosteriorReport:
             lines.append("  warnings : none")
         return "\n".join(lines)
 
+    def line_cells(self, n: int = 240, omega_max: float | None = None):
+        """The zero-width lines for drawing: ``(centres, weight)`` of ``n`` equal cells over
+        ``[-omega_max, omega_max]`` (default: the grid), the mean weight the lines put in each."""
+        w = np.asarray(self.omega)
+        lim = float(np.abs(w).max()) if omega_max is None else float(omega_max)
+        edges = np.linspace(-lim, lim, int(n) + 1)
+        cells = np.histogram(w, bins=edges, weights=np.asarray(self.band.get("lines", np.zeros_like(w))))[0]
+        return 0.5 * (edges[1:] + edges[:-1]), cells
+
     def save(self, path) -> None:
         """Write the report to ``path`` (.npz) and ``path + ".json"``.
 
-        The .npz holds the frequency grid, the pointwise band, the accepted
-        pole sets (one row per sample, physical units) and their misfits; the
+        The .npz holds the frequency grid, the pointwise band (``A_lines``:
+        the weight of the zero-width lines per grid node), the accepted
+        pole sets (one row per sample, physical units; a half-width of zero
+        marks a zero-width line) and their misfits; the
         .json holds the window table, the warnings, the diagnostics and the
         text of :meth:`summary`.
         """
@@ -348,6 +389,7 @@ class PosteriorReport:
 
         blue, ink, pale = "#2a78d6", "#0b0b0b", "#d9d8d3"
         w, b = np.asarray(self.omega), self.band
+        has_lines = bool(np.any(np.asarray(b.get("lines", 0.0)) > 0))
         if omega_max is None:                      # the range holding all but 1% of the mean weight
             c = np.cumsum(b["mean"])
             c = c / max(c[-1], 1e-300)
@@ -357,10 +399,21 @@ class PosteriorReport:
         st = slice(None, None, max(1, int(m.sum() // 3000)))
         f, (a0, a1, a2) = plt.subplots(1, 3, figsize=(17, 4.6), constrained_layout=True,
                                        gridspec_kw={"width_ratios": [1.6, 0.8, 1.3]})
+        if has_lines:
+            # zero-width lines have no height: the band is that of the rest of the spectrum, and
+            # the lines are drawn as the mean weight they put in each of 240 cells (right-hand axis)
+            centres, cells = self.line_cells(240, omega_max)
+            ar = a0.twinx()
+            on = cells > 1e-4 * max(float(cells.max()), 1e-300)
+            ar.vlines(centres[on], 0.0, cells[on], color=ink, lw=1.6)
+            ar.set_ylim(0.0, 1.15 * max(float(cells.max()), 1e-6))
+            ar.set_ylabel("weight of the zero-width lines, per cell")
+            ar.spines["top"].set_visible(False)
+            a0.plot([], [], color=ink, lw=1.6, label="zero-width lines (right axis)")
         a0.fill_between(w[m][st], b["q05"][m][st], b["q95"][m][st], color=blue, alpha=0.25, lw=0,
-                        label="90% band (plain sample quantiles)")
+                        label="90% band (plain sample quantiles)" + (" of the rest" if has_lines else ""))
         a0.plot(w[m][st], b["q50"][m][st], color=blue, lw=1.5, label="median")
-        top = float(b["q95"][m].max())
+        top = max(float(b["q95"][m].max()), 1e-6)
         a0.set_ylim(-0.03 * top, 1.15 * top)
         a0.set_xlabel(r"$\omega$")
         a0.set_ylabel(r"$A(\omega)$")
@@ -387,6 +440,7 @@ class PosteriorReport:
         a2.legend(fontsize=8, frameon=False, loc="best")
         d = self.diagnostics
         kind = ("calibrated intervals" if d.get("band_calibrated") else
+                "zero-width lines fitted" if d.get("line_fit") else
                 "both readings of the narrow lines" if d.get("line_shape_readings") else "plain sample quantiles")
         a2.set_title(f"weight per window ({kind})", fontsize=9.5)
         for ax in (a0, a1, a2):
@@ -493,10 +547,33 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         positions -- and the band table is not applied: the data do not fix
         the shape of a line that narrow, and the weight of a window with
         such a line near its edge depends on it.
+
+        *Zero-width lines.*  A Lorentzian of any width has tails, and at
+        error bars near 1e-5 the data see them: a sharp line then cannot
+        be fitted with one, half the samples are rejected, and the tails
+        are most of the error.  So when the narrow poles are flagged and
+        the fit at the trained floor reaches the data for fewer than
+        :data:`PEAKS_FIT_BELOW` of the samples -- the data themselves ask
+        for something narrower -- the poles the flow pinned at its floor
+        are fitted as zero-width lines instead (delta functions: a position
+        and a weight; ``gamma == 0`` in the reported poles), with the other
+        poles free to narrow to the lowered floor; a pole the fit then
+        narrows below the trained floor is tried as a line too.  If at least
+        :data:`LINES_VIABLE` of the flow's proposals settle on the data that
+        way, the rest are started again from one that did and that fit is
+        the report; otherwise the lowered floor is fitted as before.  The
+        same is done whenever ``discrete`` is set.  Window intervals of a
+        report with lines are never narrower than the relative error bar of
+        the data.  Measured (TRAINING.md (xxxi)) on exact line spectra at
+        beta = 8, error bars 1e-5: W1 0.105 -> 0.042 against MaxEnt's 0.068.
     discrete
         State that the spectrum is a set of discrete lines (an atom, a
-        molecule, a finite cluster).  The samples are fitted as always; the
-        window intervals then span both readings of *every* pole -- as
+        molecule, a finite cluster).  Poles the flow pins at its width
+        floor are then fitted as zero-width lines whenever narrow lines are
+        flagged (see ``floor_factor``), whether or not the data could tell
+        a line from a narrow peak; the other samples are fitted as always.
+        The window intervals span both readings of every pole that is not
+        a fitted line -- as
         fitted, and as one sharp line somewhere within one half-width of
         its centre (drawn uniformly, :data:`DISCRETE_DRAWS` times per
         sample) -- and the band table is not applied.  In the second
@@ -540,7 +617,8 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
     fwd0 = PoleGreens(SpectralQuadrature.for_beta(float(beta), gamma_min=flow.coords.gamma_min))
 
     def chi2_with(fwd, ps):
-        d = ((fwd(ps, xf) - Gf) / sf) @ W.T
+        d = (fwd(ps, xf) - Gf) / sf
+        d = d @ W.T.to(d.dtype)
         return (d * d).mean(-1)
 
     z, norm = flow.sample_coords(G, x, beta, sigma=sigma, n_samples=S, generator=g,
@@ -560,14 +638,19 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
     # a raw sample that already fits the measured data is a posterior draw as it stands
     fits_raw = c_raw <= chi2_target * (1.0 + 2.0 * math.sqrt(2.0 / L))
 
-    def fit(model, z_start):
-        """The fit stage in the coordinates of ``model``: the flow, or a LoweredFloor on it."""
+    def fit(model, z_start, lines=None):
+        """The fit stage in the coordinates of ``model``: the flow, or a LoweredFloor on it.
+        With ``lines`` (samples, poles), those poles are fitted as zero-width lines, in float64."""
         fwd = fwd0 if model is flow else PoleGreens(
             SpectralQuadrature.for_beta(float(beta), gamma_min=model.coords.gamma_min))
-        ps, _, u = refine_samples(model, z_start, norm, beta, xf, target, sf.expand(S, -1), W, lam,
-                                  anneal_from=1e-2, return_coords=True)
-        ps = PoleSet(*(torch.where(fits_raw.unsqueeze(-1), getattr(raw, k).to(getattr(ps, k).dtype),
-                                   getattr(ps, k)) for k in ("eps", "gamma", "a", "b")))
+        nrm, sig = norm, sf.expand(S, -1)
+        if lines is not None:
+            z_start, nrm, lines = z_start.double(), norm.double(), lines.clone()
+        ps, _, u = refine_samples(model, z_start, nrm, beta, xf, target, sig, W, lam,
+                                  anneal_from=1e-2, return_coords=True, lines=lines)
+        if lines is None:
+            ps = PoleSet(*(torch.where(fits_raw.unsqueeze(-1), getattr(raw, k).to(getattr(ps, k).dtype),
+                                       getattr(ps, k)) for k in ("eps", "gamma", "a", "b")))
         c2 = chi2_with(fwd, ps)
         # births: a sample that cannot reach the data gets one more pole, borrowed from a
         # sample that fits, and a second fit from where the first one ended
@@ -580,12 +663,17 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
             good = ~bad
             pool = PoleSet(*(getattr(ps, k)[good if bool(good.any()) else slice(None)]
                              for k in ("eps", "gamma", "a", "b")))
-            z_new, born = add_pole(model, zc, pool, generator=g)
+            if lines is None:
+                z_new, born = add_pole(model, zc, pool, generator=g)
+                ln_new = None
+            else:
+                z_new, born, ln_new = add_pole(model, zc, pool, generator=g, lines=lines)
             did = born & bad
             if not bool(did.any()):
                 break
-            ps2, _, u2 = refine_samples(model, z_new[did], norm[did], beta, xf, target[did],
-                                        sf.expand(S, -1)[did], W, lam, lm_iters=60, return_coords=True)
+            ps2, _, u2 = refine_samples(model, z_new[did], nrm[did], beta, xf, target[did], sig[did], W, lam,
+                                        lm_iters=60, return_coords=True,
+                                        lines=None if ln_new is None else ln_new[did])
             c_new = chi2_with(fwd, ps2)
             better = c_new < c2[did]
             rows = torch.nonzero(did).flatten()[better]
@@ -594,7 +682,56 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
             zc[rows] = torch.cat([u2, z_new[did][..., 4:5]], -1)[better]
             c2[rows] = c_new[better]
             n_born[rows] += 1
-        return ps, c2, n_born
+            if ln_new is not None:
+                lines[rows] = ln_new[rows]
+        if lines is None:
+            return ps, c2, n_born
+        # a pole the fit has narrowed below the trained floor is tried as a line as well; the
+        # change is kept for a sample when it then fits the data, or fits them better than before
+        for _ in range(int(LINE_ROUNDS)):
+            more = (ps.gamma > 0) & (ps.gamma <= FLOOR_WITHIN * gmin_trained) & (ps.a != 0)
+            did = more.any(-1)
+            if not bool(did.any()):
+                break
+            ln_new = lines | more
+            ps2, _, u2 = refine_samples(model, zc[did], nrm[did], beta, xf, target[did], sig[did], W, lam,
+                                        lm_iters=60, return_coords=True, lines=ln_new[did])
+            c_new = chi2_with(fwd, ps2)
+            better = (c_new <= band_edge) | (c_new < c2[did])
+            rows = torch.nonzero(did).flatten()[better]
+            if rows.numel() == 0:
+                break
+            for k in ("eps", "gamma", "a", "b"):
+                getattr(ps, k)[rows] = getattr(ps2, k)[better]
+            zc[rows, :, :4] = u2[better]
+            c2[rows] = c_new[better]
+            lines[rows] = ln_new[rows]
+
+        def settled(p, c):
+            """Fits the data, with no pole left that is narrower than the trained floor yet not a line."""
+            return (c <= band_edge) & ~((p.gamma > 0) & (p.gamma <= FLOOR_WITHIN * gmin_trained)
+                                        & (p.a != 0)).any(-1)
+        good = settled(ps, c2)
+        info = {"fraction": float(good.float().mean()), "restarted": torch.zeros(S, dtype=torch.bool)}
+        # a sample the fit left elsewhere starts again from one that settled (its poles and which
+        # of them are lines) and is fitted to its own redraw of the data
+        bad = ~good
+        if info["fraction"] >= LINES_VIABLE and bool(bad.any()):
+            src = torch.nonzero(good).flatten()
+            src = src[torch.randint(src.numel(), (int(bad.sum()),), generator=g)]
+            ps2, _, u2 = refine_samples(model, zc[src], nrm[bad], beta, xf, target[bad], sig[bad], W, lam,
+                                        lm_iters=60, return_coords=True, lines=lines[src])
+            c_new = chi2_with(fwd, ps2)
+            took = settled(ps2, c_new)
+            rows = torch.nonzero(bad).flatten()[took]
+            for k in ("eps", "gamma", "a", "b"):
+                getattr(ps, k)[rows] = getattr(ps2, k)[took]
+            c2[rows] = c_new[took]
+            n_born[rows] = n_born[src][took]
+            info["restarted"][rows] = True
+            good = settled(ps, c2)
+        info["settled"] = good
+        return ps, c2, n_born, info
 
     def floor_share(ps, c2, gamma_min):
         ok = c2 <= band_edge
@@ -605,12 +742,15 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
     if auto and floor_factor != "auto":
         raise ValueError(f"floor_factor={floor_factor!r}; expected a number >= 1 or 'auto'")
     gmin_trained = flow.coords.gamma_min
-    factor, floor_diag = 1.0, {}
+    factor, floor_diag, line_diag, wide, usable = 1.0, {}, {}, None, None
+    kept_raw = fits_raw.clone()                     # samples reported exactly as the flow drew them
+    flagged = False
     if auto or float(floor_factor) == 1.0:
         ps, c2, n_born = fit(flow, z)
         share, frac_trained = floor_share(ps, c2, gmin_trained)
+        frac_peaks = float((c2 <= band_edge).float().mean())    # 0 when no sample fits at this floor
         if auto and share >= FLOOR_TRIGGER:
-            factor = FLOOR_FACTOR
+            flagged, factor = True, FLOOR_FACTOR
             floor_diag = {"weight_at_trained_width_floor": share,
                           "accepted_fraction_trained_floor": frac_trained,
                           "chi2_median_trained_floor": float(c2.median())}
@@ -618,9 +758,38 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         factor = float(floor_factor)
     if factor != 1.0:
         low = LoweredFloor(flow, factor)
-        ps, c2, n_born = fit(low, low.recode(z, follow_within=FLOOR_WITHIN if FLOOR_FOLLOW else None))
+        z_low = low.recode(z, follow_within=FLOOR_WITHIN if FLOOR_FOLLOW else None)
+        if flagged and LINE_FIT and (discrete or frac_peaks < PEAKS_FIT_BELOW):
+            # the samples put weight on poles at the model's minimum width, and either the user
+            # states that the spectrum is a set of lines or peaks of that width do not reach the
+            # data.  A Lorentzian of any width has tails, and at small error bars a sharp line
+            # cannot be fitted with one: fit the same proposals, against the same redraws, with
+            # the poles the flow pinned at its floor as zero-width lines (the other poles may
+            # narrow to the lowered floor)
+            ok1 = c2 <= band_edge
+            wide = PoleSet(*(getattr(ps, k)[ok1].double() for k in ("eps", "gamma", "a", "b")))
+            pinned = (raw.gamma <= FLOOR_WITHIN * gmin_trained) & (raw.a != 0)
+            ps_l, c2_l, born_l, info = fit(low, z_low, lines=pinned)
+            ok_l = info["settled"]
+            line_diag = {"accepted_fraction_as_lines": info["fraction"],
+                         "samples_restarted": int((info["restarted"] & ok_l).sum()),
+                         "samples_fitting_at_trained_floor": int(ok1.sum())}
+            kept_raw = kept_raw & ~ok_l
+            if info["fraction"] >= LINES_VIABLE:
+                ps, c2, n_born, usable = ps_l, c2_l, born_l, ok_l
+            else:                           # lines do not reach the data: the lowered floor, as before,
+                ps, c2, n_born = fit(low, z_low)        # and the line fit for the samples it settled
+                line_diag["accepted_fraction_lowered_floor"] = float((c2 <= band_edge).float().mean())
+                pick = ok_l.unsqueeze(-1)
+                ps = PoleSet(*(torch.where(pick, getattr(ps_l, k), getattr(ps, k).double())
+                               for k in ("eps", "gamma", "a", "b")))
+                c2 = torch.where(ok_l, c2_l, c2.to(c2_l.dtype))
+                n_born = torch.where(ok_l, born_l, n_born)
+                line_diag["samples_mixed"] = bool(ok_l.any())
+        else:
+            ps, c2, n_born = fit(low, z_low)
     gmin_fit = gmin_trained / factor
-    acc = c2 <= band_edge
+    acc = (c2 <= band_edge) if usable is None else usable
     warnings = []
     if not bool(acc.any()):
         warnings.append("NO sample fits the data within noise; the band below is the unfitted "
@@ -653,7 +822,9 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
     if float(n_pres.float().median()) >= flow.P:
         warnings.append(f"the accepted samples use all {flow.P} pole slots; the spectrum may need "
                         "more structure than the model can place.")
-    at_floor = weight_at_width_floor(sel.a, sel.gamma, gmin_fit)
+    is_line = sel.gamma == 0
+    on_lines = float(((sel.a.double() * is_line).sum(-1) / sel.a.double().sum(-1).clamp_min(1e-300)).median())
+    at_floor = weight_at_width_floor(torch.where(is_line, torch.zeros_like(sel.a), sel.a), sel.gamma, gmin_fit)
     narrower = ("the data favour lines narrower than the model can draw. Positions and weights of "
                 "those lines are usable; their widths and tails are the model's, and a method "
                 "without a width floor (MaxEnt) may be sharper here.")
@@ -661,7 +832,27 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         a64 = sel.a.double()
         floor_diag["weight_below_trained_width_floor"] = float(
             ((a64 * (sel.gamma.double() < gmin_trained)).sum(-1) / a64.sum(-1).clamp_min(1e-300)).median())
-        if floor_diag.get("weight_at_trained_width_floor") is not None:
+        if bool(is_line.any()):
+            n1 = line_diag["samples_fitting_at_trained_floor"]
+            msg = (f"{floor_diag['weight_at_trained_width_floor']:.0%} of the spectral weight sat on poles at "
+                   f"the model's minimum width ({gmin_trained / float(beta):.3g} at this beta)")
+            if n1 < PEAKS_FIT_BELOW * S:
+                msg += (f", and peaks of that width fit the data for {n1} of {S} samples only: the data ask "
+                        "for narrower features, so those poles were fitted as zero-width lines "
+                        f"({line_diag['accepted_fraction_as_lines']:.0%} of the samples fit the data that way).")
+            else:
+                msg += (". The spectrum was stated to be discrete, so those poles were fitted as zero-width "
+                        f"lines ({line_diag['accepted_fraction_as_lines']:.0%} of the samples fit the data "
+                        f"that way); peaks of the minimum width fit as well ({n1} of {S} samples), so the "
+                        "data alone would not tell a line from a narrow peak here.")
+            msg += (" The flow was trained on nothing that narrow: the positions and weights of those lines "
+                    "are set by the fit to the data.")
+            if line_diag.get("samples_mixed"):
+                msg += (f" With the minimum width divided by {factor:g} instead, "
+                        f"{line_diag['accepted_fraction_lowered_floor']:.0%} of the samples fit; a sample "
+                        "is reported with lines where that settled and with narrow peaks otherwise.")
+            warnings.append(msg)
+        elif floor_diag.get("weight_at_trained_width_floor") is not None:
             warnings.append(f"{floor_diag['weight_at_trained_width_floor']:.0%} of the spectral weight sat "
                             f"on poles at the model's minimum width, so the samples were fitted again "
                             f"with that minimum divided by {factor:g} ({gmin_fit / float(beta):.3g} at "
@@ -699,7 +890,8 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
     omega = np.linspace(-8.0, 8.0, 801) if omega is None else np.asarray(omega, float)
     nu = torch.tensor(omega * beta, dtype=torch.float64)
     p64 = PoleSet(*(getattr(sel, k).double() for k in ("eps", "gamma", "a", "b")))
-    A = (p64.spectral(nu) * beta).numpy()
+    A = (p64.spectral(nu) * beta).numpy()                  # everything but the zero-width lines
+    A_lines = (line_density(p64.eps, p64.gamma, p64.a, nu) * beta).numpy().mean(0)
     table = (getattr(flow, "meta", {}).get("band_calibration") if isinstance(band_calibration, str)
              else band_calibration)
     # the table is fitted and tested on draws of the prior, where the samples are over-dispersed;
@@ -713,23 +905,36 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         warnings.append(f"only {n_sel} samples to form the intervals from: the 90% window intervals "
                         "are the range of the samples and hold less than that. Draw more samples.")
     q = np.quantile(A, [0.05, 0.16, 0.25, 0.5, 0.75, 0.84, 0.95], axis=0)
-    band = dict(zip(("q05", "q16", "q25", "q50", "q75", "q84", "q95"), q), mean=A.mean(0))
+    cell = np.gradient(omega) if omega.size > 1 else np.ones_like(omega)
+    cell[[0, -1]] *= 0.5 if omega.size > 1 else 1.0        # trapezoid cells, as line_density uses
+    band = dict(zip(("q05", "q16", "q25", "q50", "q75", "q84", "q95"), q), mean=A.mean(0) + A_lines,
+                lines=A_lines * cell)
 
     win = []
     if windows:
         # exact window weights of each sample from the pole CDF
         eps, gam, a, b = (getattr(p64, k) for k in ("eps", "gamma", "a", "b"))
 
-        narrow = gam <= FLOOR_WITHIN * gmin_trained
+        def weights(p, lo_w, hi_w, sharp=False):
+            """Share of each sample's weight in [lo_w, hi_w); with ``sharp``, a pole no wider than
+            the trained floor is read as a line at its position (a zero-width line is one anyway)."""
+            line = p.gamma == 0
+            step = (line | (p.gamma <= FLOOR_WITHIN * gmin_trained)) if sharp else line
+            gs = torch.where(line, torch.ones_like(p.gamma), p.gamma)
 
-        def cdf(w, sharp=False):
-            if math.isinf(w):
-                return torch.zeros(eps.shape[0], dtype=torch.float64) if w < 0 else a.sum(-1)
-            u = w * beta - eps
-            absorptive = torch.atan(u / gam) / math.pi + 0.5
-            if sharp:                                  # a narrow pole read as a line at its position
-                absorptive = torch.where(narrow, (u > 0).to(absorptive.dtype), absorptive)
-            return (a * absorptive - b * torch.log(u * u + gam * gam) / (2.0 * math.pi)).sum(-1)
+            def cdf(w):
+                if math.isinf(w):
+                    return torch.zeros(p.eps.shape[0], dtype=torch.float64) if w < 0 else p.a.sum(-1)
+                u = w * beta - p.eps
+                absorptive = torch.where(step, (u > 0).to(p.a.dtype), torch.atan(u / gs) / math.pi + 0.5)
+                disp = torch.where(line, torch.zeros_like(u), torch.log(u * u + gs * gs))
+                return (p.a * absorptive - p.b * disp / (2.0 * math.pi)).sum(-1)
+            return ((cdf(hi_w) - cdf(lo_w)) / p.a.sum(-1)).numpy()
+
+        # when the reported samples hold fitted lines, the fit at the trained floor is the other
+        # reading of the same features, where it reaches the data for at least half the samples
+        other = wide if (wide is not None and bool(is_line.any()) and not discrete
+                         and 2 * wide.eps.shape[0] >= S) else None
 
         if discrete:
             # every pole as one sharp line, uniformly within one half-width of its centre: all
@@ -744,23 +949,31 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                     one = torch.zeros(eps.shape[0], dtype=torch.float64) if w < 0 else a.sum(-1)
                     return one.expand(DISCRETE_DRAWS, -1)
                 u = w * beta - eps
-                return (a * (w * beta > pos).to(a.dtype)
-                        - b * torch.log(u * u + gam * gam) / (2.0 * math.pi)).sum(-1)
+                disp = torch.where(gam == 0, torch.zeros_like(u), torch.log(u * u + gam * gam))
+                return (a * (w * beta > pos).to(a.dtype) - b * disp / (2.0 * math.pi)).sum(-1)
 
         tot = a.sum(-1)
+        # samples made of lines can agree on a window's weight exactly (no line in it: zero), but
+        # weight below the error bar of the data is invisible to them: no interval is narrower
+        pad = rel_stat if bool(is_line.any()) else 0.0
         pf = (prior_free_bounds(Gf[0], xf, beta, sf[0], W, windows,
                                 norm=float(G[0, 0] + G[0, -1]))
               if bounds else [None] * len(windows))
         for (lo_w, hi_w), bnd in zip(windows, pf):
-            wgt = ((cdf(hi_w) - cdf(lo_w)) / tot).numpy()
+            wgt = weights(p64, lo_w, hi_w)
             (q05, q95), (q25, q75) = central_interval(wgt, lev[0.9]), central_interval(wgt, lev[0.5])
             row = {"window": (float(lo_w), float(hi_w)), "mean": float(wgt.mean()),
                    "q05": q05, "q95": q95, "q25": q25, "q75": q75}
             if line_shape:
-                ws = ((cdf(hi_w, True) - cdf(lo_w, True)) / tot).numpy()
+                ws = weights(p64, lo_w, hi_w, sharp=True)
                 (s05, s95), (s25, s75) = central_interval(ws, lev[0.9]), central_interval(ws, lev[0.5])
                 row.update(as_fitted=(q05, q95), sharp_lines=(s05, s95), q05=min(q05, s05),
                            q95=max(q95, s95), q25=min(q25, s25), q75=max(q75, s75))
+                if other is not None:
+                    wo = weights(other, lo_w, hi_w)
+                    (o05, o95), (o25, o75) = central_interval(wo, lev[0.9]), central_interval(wo, lev[0.5])
+                    row.update(minimum_width_peaks=(o05, o95), q05=min(row["q05"], o05),
+                               q95=max(row["q95"], o95), q25=min(row["q25"], o25), q75=max(row["q75"], o75))
             if discrete:
                 wd = ((cdf_lines(hi_w) - cdf_lines(lo_w)) / tot).reshape(-1).numpy()
                 (d05, d95), (d25, d75) = central_interval(wd, lev[0.9]), central_interval(wd, lev[0.5])
@@ -768,6 +981,9 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
                     d05, d25, d75, d95 = (min(max(v, bnd["lo"]), bnd["hi"]) for v in (d05, d25, d75, d95))
                 row.update(as_fitted=(q05, q95), discrete_lines=(d05, d95), q05=min(row["q05"], d05),
                            q95=max(row["q95"], d95), q25=min(row["q25"], d25), q75=max(row["q75"], d75))
+            if pad:
+                row.update(q05=row["q05"] - pad, q95=row["q95"] + pad, q25=row["q25"] - pad,
+                           q75=row["q75"] + pad)
             if bnd is not None and bnd["feasible"]:
                 width = max(bnd["hi"] - bnd["lo"], 1e-12)
                 row.update(lo=bnd["lo"], hi=bnd["hi"],
@@ -794,13 +1010,16 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
     return PosteriorReport(
         poles=PoleSet(sel.eps / beta, sel.gamma / beta, sel.a, sel.b), omega=omega, band=band,
         chi2=chi2_sel.numpy(), chi2_target=float(chi2_target), n_samples=S,
-        n_accepted=int(acc.sum()), n_kept_raw=int((acc & fits_raw).sum()), windows=win,
+        n_accepted=int(acc.sum()), n_kept_raw=int((acc & kept_raw).sum()), windows=win,
         warnings=warnings, prior=prior,
         diagnostics={"accepted_fraction": frac, "raw_chi2_median": float(c_raw.median()),
                      "samples_given_a_pole": int((n_born[acc] > 0).sum()),
+                     "samples_restarted": line_diag.get("samples_restarted", 0),
                      "n_poles_median": float(n_pres.float().median()),
                      "weight_at_width_floor": at_floor, "floor_factor": factor,
                      "floor_follow": bool(FLOOR_FOLLOW and factor != 1.0), **floor_diag,
+                     "line_fit": bool(is_line.any()), "weight_on_lines": on_lines, **line_diag,
+                     "window_interval_floor": rel_stat if bool(is_line.any()) else 0.0,
                      "relative_error_bar": rel_stat, "sigma_floor": sigma_floor,
                      "bootstrap_redraw": bins is not None, "band_calibrated": bool(table),
                      "band_table_withheld": withheld, "line_shape_readings": bool(line_shape),

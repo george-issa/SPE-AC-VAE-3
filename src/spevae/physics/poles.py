@@ -79,6 +79,8 @@ __all__ = [
     "effective_pole_count",
     "per_pole_extrema",
     "spectral_norm",
+    "cumulative_from_poles",
+    "line_density",
 ]
 
 #: Cap on the per-pole dispersive amplitude in the ``"dispersive"`` residue
@@ -102,6 +104,12 @@ class PoleSet:
     after :meth:`to_physical`.  ``a`` and ``b`` are the real and imaginary parts
     of the residues and are *unit-free* (they carry spectral weight, which is
     dimensionless).
+
+    A pole with ``gamma == 0`` is a zero-width line: the delta function
+    :math:`a_p\,\delta(\omega - \varepsilon_p)` (its ``b`` is zero).
+    :class:`~spevae.physics.forward.PoleGreens` transforms it exactly,
+    :meth:`cumulative` counts its weight, and :meth:`spectral` -- a density on
+    a grid -- leaves it out (see :func:`line_density`).
     """
 
     eps: torch.Tensor
@@ -149,6 +157,10 @@ class PoleSet:
         """:math:`A(\\omega)` on an arbitrary grid; see :func:`spectral_from_poles`."""
         return spectral_from_poles(self.eps, self.gamma, self.a, self.b, omega)
 
+    def cumulative(self, omega: torch.Tensor) -> torch.Tensor:
+        """Spectral weight below each frequency; see :func:`cumulative_from_poles`."""
+        return cumulative_from_poles(self.eps, self.gamma, self.a, self.b, omega)
+
     def detach(self) -> "PoleSet":
         return PoleSet(self.eps.detach(), self.gamma.detach(),
                        self.a.detach(), self.b.detach())
@@ -194,7 +206,17 @@ def spectral_from_poles(
     [(\omega-\varepsilon_p)^2 + \gamma_p^2]` rather than via complex division,
     which avoids a complex intermediate and keeps the ``b = 0`` path exactly
     non-negative in floating point.
+
+    A pole with ``gamma == 0`` is a zero-width line, :math:`a_p\,
+    \delta(\omega - \varepsilon_p)`.  It has no density to evaluate on a
+    grid and is left out here; :func:`cumulative_from_poles` counts its
+    weight exactly and :func:`line_density` deposits it on a grid.
     """
+    line = gamma == 0
+    if bool(line.any()):
+        gamma = torch.where(line, torch.ones_like(gamma), gamma)
+        a = torch.where(line, torch.zeros_like(a), a)
+        b = torch.where(line, torch.zeros_like(b), b)
     if omega.ndim == 1:
         omega = omega.unsqueeze(0)          # (1, M)
     w = omega.unsqueeze(1)                  # (B|1, 1, M)
@@ -202,6 +224,64 @@ def spectral_from_poles(
     den = d * d + (gamma * gamma).unsqueeze(-1)
     num = (a * gamma).unsqueeze(-1) - b.unsqueeze(-1) * d
     return (num / den).sum(dim=1) / math.pi
+
+
+def cumulative_from_poles(
+    eps: torch.Tensor,
+    gamma: torch.Tensor,
+    a: torch.Tensor,
+    b: torch.Tensor,
+    omega: torch.Tensor,
+) -> torch.Tensor:
+    r"""Spectral weight below each frequency of ``omega``, exactly: ``(B, M)``.
+
+    :math:`\int_{-\infty}^{\omega} A = \sum_p a_p\,[\tfrac12 + \tfrac1\pi
+    \arctan\frac{\omega-\varepsilon_p}{\gamma_p}] - \frac{b_p}{2\pi}
+    \ln[(\omega-\varepsilon_p)^2 + \gamma_p^2]` (the logarithms cancel at
+    infinity because :math:`\sum_p b_p = 0`).  A zero-width line
+    (``gamma == 0``) is a step: its weight counts from frequencies strictly
+    above its position, so the weight of ``[lo, hi)`` is the difference of
+    two values.  ``omega`` is ``(M,)`` and may hold :math:`\pm\infty`.
+    """
+    w = omega.reshape(1, 1, -1)
+    e, g, a, b = (t.unsqueeze(-1) for t in (eps, gamma, a, b))
+    line = g == 0
+    gs = torch.where(line, torch.ones_like(g), g)
+    u = w - e
+    fin = torch.isfinite(u)
+    uf = torch.where(fin, u, torch.zeros_like(u))
+    absorptive = torch.where(line, (u > 0).to(a.dtype), torch.atan(u / gs) / math.pi + 0.5)
+    disp = torch.where(fin & ~line, torch.log(uf * uf + gs * gs), torch.zeros_like(uf))
+    return (a * absorptive - b * disp / (2.0 * math.pi)).sum(1)
+
+
+def line_density(eps: torch.Tensor, gamma: torch.Tensor, a: torch.Tensor,
+                 omega: torch.Tensor) -> torch.Tensor:
+    r"""The zero-width lines of a pole set as a density on the grid ``omega``: ``(B, M)``.
+
+    Each line (``gamma == 0``) is shared between the two grid nodes that
+    bracket it, in proportion to its distance from them, and divided by the
+    node's trapezoid cell, so that the trapezoid integral of the result over
+    any stretch of the grid holds the lines' weight to within one cell.  The
+    height of the spike is the weight over the cell width: it depends on the
+    grid, the weight does not.  Lines outside the grid are left out.
+    ``omega`` is ``(M,)``, ascending.
+    """
+    M = omega.numel()
+    out = torch.zeros(eps.shape[0], M, dtype=a.dtype, device=a.device)
+    line = (gamma == 0) & (a != 0) & (eps >= omega[0]) & (eps <= omega[-1])
+    if not bool(line.any()):
+        return out
+    cell = torch.empty(M, dtype=a.dtype, device=a.device)
+    cell[1:-1] = 0.5 * (omega[2:] - omega[:-2])
+    cell[0], cell[-1] = 0.5 * (omega[1] - omega[0]), 0.5 * (omega[-1] - omega[-2])
+    row, col = torch.nonzero(line, as_tuple=True)
+    e, w = eps[row, col].to(omega.dtype), a[row, col]
+    j = (torch.searchsorted(omega, e, right=True) - 1).clamp(0, M - 2)
+    t = ((e - omega[j]) / (omega[j + 1] - omega[j])).to(a.dtype)
+    out.index_put_((row, j), w * (1.0 - t) / cell[j], accumulate=True)
+    out.index_put_((row, j + 1), w * t / cell[j + 1], accumulate=True)
+    return out
 
 
 def spectral_norm(a: torch.Tensor) -> torch.Tensor:

@@ -259,12 +259,22 @@ class PoleGreens(nn.Module):
         -------
         torch.Tensor
             ``(B, L)``.
+
+        Notes
+        -----
+        A pole with ``gamma == 0`` is a zero-width line and needs no
+        quadrature: it contributes :math:`a_p K(x, \varepsilon_p)` exactly.
         """
         x = x.reshape(-1).to(poles.eps.dtype)
         K = self.kernel_matrix(x) if kernel_matrix is None else kernel_matrix
         nodes = self.quad.nodes.to(poles.eps.dtype)
         A = spectral_from_poles(poles.eps, poles.gamma, poles.a, poles.b, nodes)
-        return (A * self.quad.weights.to(A.dtype)) @ K
+        G = (A * self.quad.weights.to(A.dtype)) @ K
+        line = poles.gamma == 0
+        if bool(line.any()):
+            al = torch.where(line, poles.a, torch.zeros_like(poles.a)).unsqueeze(-1)
+            G = G + (al * fermi_kernel(x.reshape(1, 1, -1), poles.eps.unsqueeze(-1))).sum(1)
+        return G
 
     def jacobian(
         self,
@@ -289,6 +299,11 @@ class PoleGreens(nn.Module):
         (:mod:`spevae.physics.lsq`) rather than something to hand to a
         first-order optimiser.
 
+        For a zero-width line (``gamma == 0``) the contribution is
+        :math:`a_p K(x, \varepsilon_p)`, with :math:`\partial_\varepsilon K =
+        K\,[f(\varepsilon) - x]` (:math:`f` the Fermi function) and no
+        dependence on ``gamma`` or ``b``.
+
         Returns
         -------
         (G, dG)
@@ -298,6 +313,17 @@ class PoleGreens(nn.Module):
         with torch.no_grad():
             dt = poles.eps.dtype
             x = x.reshape(-1).to(dt)
+            line = poles.gamma == 0
+            if bool(line.any()):
+                zero = torch.zeros_like(poles.a)
+                G, dG = self.jacobian(PoleSet(poles.eps, torch.where(line, torch.ones_like(zero), poles.gamma),
+                                              torch.where(line, zero, poles.a), torch.where(line, zero, poles.b)),
+                                      x, kernel_matrix)
+                Kl = fermi_kernel(x.reshape(1, 1, -1), poles.eps.unsqueeze(-1))      # (B, P, L)
+                al = torch.where(line, poles.a, zero).unsqueeze(-1)
+                dl = torch.stack([al * Kl * (torch.sigmoid(-poles.eps).unsqueeze(-1) - x.reshape(1, 1, -1)),
+                                  torch.zeros_like(Kl), Kl, torch.zeros_like(Kl)], -1).permute(0, 2, 1, 3)
+                return G + (al * Kl).sum(1), torch.where(line.reshape(line.shape[0], 1, -1, 1), dl, dG)
             K = self.kernel_matrix(x) if kernel_matrix is None else kernel_matrix.to(dt)
             Kw = self.quad.weights.to(dt).unsqueeze(-1) * K               # (M, L)
             eps, gam, a, b = (t.unsqueeze(-1) for t in

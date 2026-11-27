@@ -191,6 +191,11 @@ def run(flow_path, bank, out, shard, nshards, lam=10.0, base_scale=None, reps=1,
                 # the intervals exactly as the report states them: (q05, q25, q75, q95) per window
                 "reported": [[w_["q05"], w_["q25"], w_["q75"], w_["q95"]] for w_ in rep.windows],
                 "line_shape": bool(rep.diagnostics.get("line_shape_readings")),
+                # narrow poles fitted as zero-width lines (TRAINING.md (xxxi)): the share of the
+                # weight on them, and the window intervals of the line reading alone
+                "line_fit": bool(rep.diagnostics.get("line_fit")),
+                "on_lines": rep.diagnostics.get("weight_on_lines", 0.0),
+                "as_fitted": [list(w_["as_fitted"]) for w_ in rep.windows] if "as_fitted" in rep.windows[0] else None,
                 "at_floor": rep.diagnostics.get("weight_at_trained_width_floor",
                                                 rep.diagnostics["weight_at_width_floor"])})
             rec["arms"]["posterior"][-1]["n"] = (rep.poles.a != 0).sum(-1).tolist()

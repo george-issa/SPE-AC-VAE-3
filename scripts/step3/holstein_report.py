@@ -105,7 +105,13 @@ def main():
             label="SmoQyDEAC reference (another continuation, not the truth)")
     a0.set_xlabel(r"$\omega$")
     a0.set_ylabel(r"$A(\omega)$")
-    a0.set_ylim(-0.03 * float(rep.band["q95"][m].max()), 1.15 * float(rep.band["q95"][m].max()))
+    top = float(max(rep.band["q95"][m].max(), A_me[m].max()))
+    lc, lw_ = rep.line_cells(300, 6.0)                      # zero-width lines of the posterior, if any
+    if (lw_ > 1e-3).any():
+        on = lw_ > 1e-3
+        a0.vlines(lc[on], 0, lw_[on] / lw_.max() * 0.9 * top, color=FLOW, lw=3.5, alpha=0.5,
+                  label="flow posterior, zero-width lines (height proportional to weight)")
+    a0.set_ylim(-0.03 * top, 1.15 * top)
     a0.set_title(f"spectrum; {rep.n_accepted} of {rep.n_samples} samples fit the bins", fontsize=9.5)
     a0.legend(fontsize=7.5, frameon=False, loc="upper left")
 

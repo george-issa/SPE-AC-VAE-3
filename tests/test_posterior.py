@@ -182,12 +182,15 @@ def test_broad_spectra_do_not_draw_the_width_floor_warning():
     assert not any("minimum width" in w for w in rep.warnings)
 
 
-def test_auto_floor_refits_line_spectra_and_leaves_broad_ones_alone():
+def test_auto_floor_refits_line_spectra_and_leaves_broad_ones_alone(monkeypatch):
     path = next((p for p in ("out/step3/F3_60k_s1.pt", "out/flow/F_60k.pt") if os.path.exists(p)), None)
     if path is None:
         pytest.skip("no flow checkpoint present")
+    import spevae.posterior as P
     from spevae.models.flow import load_flow
     from spevae.posterior import FLOOR_FACTOR
+    # the route judged in TRAINING.md (xxii)-(xxx): narrow poles as Lorentzians of the lowered floor
+    monkeypatch.setattr(P, "LINE_FIT", False)
     flow = load_flow(path).eval()
     beta = 8.0
     # two exact lines at omega = +-1 (a Hubbard atom, U = 2)
@@ -237,12 +240,87 @@ def test_auto_floor_refits_line_spectra_and_leaves_broad_ones_alone():
                            floor_factor="lower")
 
 
+def test_narrow_lines_are_fitted_as_zero_width_lines(tmp_path, monkeypatch):
+    path = next((p for p in ("out/step3/F3L_60k_s1.pt", "out/step3/F3_60k_s1.pt", "out/flow/F_60k.pt")
+                 if os.path.exists(p)), None)
+    if path is None:
+        pytest.skip("no flow checkpoint present")
+    import spevae.posterior as P
+    from spevae.models.flow import load_flow
+    flow = load_flow(path).eval()
+    beta, S = 8.0, 32
+    # two exact lines at omega = +-1 (a Hubbard atom, U = 2)
+    x = torch.linspace(0.0, 1.0, 65)
+    e = torch.tensor([-1.0, 1.0], dtype=torch.float64) * beta
+    G0 = (0.5 * torch.exp(-x.double()[:, None] * e) / (1.0 + torch.exp(-e))).sum(-1)
+
+    def data(noise):
+        sigma = torch.full_like(G0, noise * float(G0.max()))
+        return G0 + sigma * torch.randn(65, generator=torch.Generator().manual_seed(5), dtype=torch.float64), sigma
+    call = lambda G, sigma, **kw: continue_posterior(flow, G, x, beta, sigma, n_samples=S, bounds=False,
+                                                     generator=torch.Generator().manual_seed(2), **kw)
+    # error bars of 1e-5, the spectrum stated to be discrete: the pinned poles are fitted as lines
+    G, sigma = data(1e-5)
+    r = call(G, sigma, discrete=True)
+    d = r.diagnostics
+    assert d["line_fit"] and d["floor_factor"] == P.FLOOR_FACTOR and d["weight_on_lines"] > 0.9
+    assert d["line_shape_readings"] and d["band_table_withheld"] and d["discrete_reading"]
+    assert any("zero-width lines" in w for w in r.warnings) and "zero-width lines" in r.summary()
+    p = r.poles
+    line = (p.gamma == 0) & (p.a != 0)
+    assert bool(line.any()) and (p.b[line] == 0).all()
+    for sign in (-1.0, 1.0):                         # the lines sit where the exact ones are, with their weights
+        near = line & ((p.eps - sign).abs() < 5e-3)
+        assert abs(float(((p.a * near).sum(-1) / p.a.sum(-1)).median()) - 0.5) < 5e-3
+    assert np.median(r.chi2) < 1.3 and r.n_accepted >= S // 2
+    # the weight in a window: right, sharp, and never stated more precisely than the error bars
+    mid = next(w for w in r.windows if w["window"] == (0.5, 1.5))
+    assert mid["q05"] <= 0.5 <= mid["q95"] and mid["q95"] - mid["q05"] < 0.02
+    assert d["window_interval_floor"] > 0
+    for w in r.windows:
+        assert w["q95"] - w["q05"] >= 2 * d["window_interval_floor"] * (1 - 1e-9)
+    # the quantile band is that of the rest of the spectrum; the lines' weight is listed per grid
+    # node and included in the mean, whose integral over the grid is the total weight
+    mean, om = np.asarray(r.band["mean"]), np.asarray(r.omega)
+    assert abs(float((0.5 * (mean[1:] + mean[:-1]) * np.diff(om)).sum()) - 1.0) < 0.02
+    assert abs(float(r.band["lines"].sum()) - d["weight_on_lines"]) < 0.05
+    assert float(r.band["q95"].max()) < 0.05 * float(mean.max())
+    centres, cells = r.line_cells(160)
+    assert abs(float(cells.sum()) - float(r.band["lines"].sum())) < 1e-9
+    assert abs(float(np.abs(centres[cells > 0.1]).mean()) - 1.0) < 0.06
+    r.save(tmp_path / "rep")
+    r.plot(tmp_path / "rep.png")
+    saved = np.load(tmp_path / "rep.npz")
+    assert (saved["poles_gamma"] == 0).any() and "A_lines" in saved
+    assert os.path.getsize(tmp_path / "rep.png") > 10_000
+    # without the statement the data decide: lines exactly when peaks of the minimum width reach
+    # the data for fewer than half of the samples
+    q = call(G, sigma)
+    assert q.diagnostics["line_fit"] == (q.diagnostics.get("samples_fitting_at_trained_floor", S)
+                                         < P.PEAKS_FIT_BELOW * S)
+    # at error bars of 1e-3 such peaks fit, so the default report holds no line and the stated one does
+    G, sigma = data(1e-3)
+    a, b = call(G, sigma), call(G, sigma, discrete=True)
+    assert not a.diagnostics["line_fit"] and a.diagnostics["weight_on_lines"] == 0.0
+    assert float(a.poles.gamma[a.poles.a != 0].min()) > 0.0 and float(a.band["lines"].sum()) == 0.0
+    assert any("fitted again" in w for w in a.warnings)
+    assert b.diagnostics["line_fit"] and b.diagnostics["samples_fitting_at_trained_floor"] >= S // 2
+    assert any("stated to be discrete" in w for w in b.warnings)
+    # switched off, even the statement fits Lorentzians of the lowered floor, as before
+    monkeypatch.setattr(P, "LINE_FIT", False)
+    c = call(G, sigma, discrete=True)
+    assert not c.diagnostics["line_fit"]
+    np.testing.assert_allclose(c.chi2, a.chi2)
+
+
 def test_stating_a_discrete_spectrum_widens_the_window_intervals_and_nothing_else():
     path = next((q for q in ("out/step3/F3_60k_s1.pt", "out/flow/F_60k.pt") if os.path.exists(q)), None)
     if path is None:
         pytest.skip("no flow checkpoint present")
     from spevae.models.flow import load_flow
     flow = load_flow(path).eval()
+    # two broad peaks: no pole at the width floor, so the statement changes the intervals only (with
+    # narrow lines flagged it also fits them as zero-width lines, tested above)
     inst = C.draw(C.realize("lorentz pair"), 1e-3, 7)
     kw = dict(n_samples=32, bounds=False, band_calibration=None)
     plain = continue_posterior(flow, inst.G, inst.truth.x, 8.0, inst.sigma, inst.isr,

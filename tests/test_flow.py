@@ -211,3 +211,56 @@ def test_lowered_floor_keeps_the_proposals_and_lets_the_fit_narrow_a_line():
     assert float(ps_low.gamma[:, :2].max()) < m.coords.gamma_min             # the lowered one is used
     assert float(ps_low.gamma[:, :2].min()) >= low.coords.gamma_min
     assert float(chi_low.max()) < 0.5 * float(chi.min())                     # and the lines fit better
+
+
+def test_tokens_marked_as_lines_decode_and_fit_as_zero_width_lines():
+    from spevae.models.flow import LoweredFloor, add_pole, refine_samples
+    torch.manual_seed(0)
+    beta = 8.0
+    m = FlowPosterior(d_model=32, enc_layers=1, flow_layers=1, n_heads=2, d_ff=64).eval()
+    z = torch.randn(5, m.P, 5)
+    lines = torch.zeros(5, m.P, dtype=torch.bool)
+    lines[:, ::2] = True
+    p = m.coords.decode(z, nu_max=m.nu_max(beta), lines=lines)
+    live = p.a != 0
+    assert bool((lines & live).any()) and bool((~lines & live).any())
+    assert (p.gamma[lines & live] == 0).all() and (p.b[lines & live] == 0).all()
+    assert (p.gamma[~lines & live] >= m.coords.gamma_min).all()
+    assert torch.allclose(p.a.sum(-1), torch.ones(5), atol=1e-5) and float(p.b.sum(-1).abs().max()) < 1e-5
+    p0 = m.coords.decode(z, nu_max=m.nu_max(beta))
+    p1 = m.coords.decode(z, nu_max=m.nu_max(beta), lines=torch.zeros_like(lines))
+    for k in ("eps", "gamma", "a", "b"):                      # no line marked: the same poles
+        assert torch.allclose(getattr(p0, k), getattr(p1, k), atol=1e-6), k
+    assert torch.equal(p.eps, p0.eps) and torch.equal(p.a, p0.a)
+    # two exact lines (a Hubbard atom) at error bars of 1e-5; proposals: two poles pinned at the
+    # floor, each a tenth of a unit off, with the wrong weights
+    x = torch.linspace(0.0, 1.0, 65, dtype=torch.float64)
+    e, w = torch.tensor([-1.2, 0.3], dtype=torch.float64) * beta, torch.tensor([0.3, 0.7], dtype=torch.float64)
+    G = (w * torch.exp(-x[:, None] * e) / (1.0 + torch.exp(-e))).sum(-1)
+    sigma = torch.full_like(G, 1e-5 * float(G.max()))
+    G = G + sigma * torch.randn(65, generator=torch.Generator().manual_seed(5), dtype=torch.float64)
+    g0 = m.coords.gamma_min
+    lab = {"eps": torch.zeros(1, m.P), "gamma": torch.ones(1, m.P), "a": torch.zeros(1, m.P),
+           "b": torch.zeros(1, m.P)}
+    lab["eps"][0, :2] = torch.tensor([-1.1, 0.4]) * beta
+    lab["gamma"][0, :2] = 1.05 * g0
+    lab["a"][0, :2] = 0.5
+    low = LoweredFloor(m, 4.0)
+    z0 = low.recode(m.coords.encode(lab), follow_within=1.25).double().repeat(3, 1, 1)
+    ln = torch.zeros(3, m.P, dtype=torch.bool)
+    ln[:, :2] = True
+    args = (torch.ones(3, dtype=torch.float64), beta, x, G.expand(3, -1), sigma.expand(3, -1),
+            torch.eye(65, dtype=torch.float64))
+    ps, chi, u = refine_samples(low, z0, *args, lam=10.0, anneal_from=1e-2, return_coords=True, lines=ln)
+    assert float(chi.max()) < 1.6                              # the lines reach the data
+    assert (ps.gamma[:, :2] == 0).all() and (ps.b == 0).all()
+    assert float((ps.eps[:, :2] / beta - torch.tensor([-1.2, 0.3])).abs().max()) < 2e-3
+    assert float((ps.a[:, :2] - w).abs().max()) < 2e-3
+    # the same proposals as Lorentzians of the lowered floor cannot: a Lorentzian has tails
+    _, chi_wide = refine_samples(low, z0, *args, lam=10.0, anneal_from=1e-2)
+    assert float(chi_wide.min()) > 5.0
+    # a birth borrows a line from a line
+    zc = torch.cat([u, z0[..., 4:5]], -1)
+    z_new, born, ln_new = add_pole(low, zc, ps, generator=torch.Generator().manual_seed(1), lines=ln)
+    assert bool(born.all()) and (ln_new.sum(-1) == 3).all() and (ln.sum(-1) == 2).all()
+    assert ((z_new[..., 4] > 0).sum(-1) == 3).all()

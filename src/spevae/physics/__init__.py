@@ -16,7 +16,9 @@ from .forward import (
 )
 from .poles import (
     PoleSet,
+    cumulative_from_poles,
     effective_pole_count,
+    line_density,
     per_pole_extrema,
     spectral_from_poles,
     spectral_norm,

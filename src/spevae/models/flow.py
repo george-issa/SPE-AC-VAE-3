@@ -127,9 +127,15 @@ class PoleCoords(nn.Module):
         self.std.copy_(u.std(0).clamp_min(1e-3))
 
     def decode(self, x: torch.Tensor, norm: torch.Tensor | None = None,
-               nu_max: float | None = None) -> PoleSet:
+               nu_max: float | None = None, lines: torch.Tensor | None = None) -> PoleSet:
         """Coordinates (B, P, 5) -> dimensionless :class:`PoleSet`; absent
-        slots come out as zero-weight padding."""
+        slots come out as zero-weight padding.
+
+        ``lines`` is an optional ``(B, P)`` bool mask of tokens that are
+        zero-width lines: they come out with ``gamma = 0`` and ``b = 0``
+        whatever their width and dispersive coordinates say, and the
+        dispersive amplitudes of the other poles are balanced among
+        themselves."""
         u = x[..., :4] * self.std + self.mean
         present = x[..., 4] > 0
         none = ~present.any(-1, keepdim=True)            # keep at least one pole
@@ -142,7 +148,14 @@ class PoleCoords(nn.Module):
         logit = torch.where(present, u[..., 2], torch.full_like(u[..., 2], -float("inf")))
         a = torch.softmax(logit, dim=-1)
         d = torch.where(present, self.D * torch.tanh(u[..., 3]), torch.zeros_like(u[..., 3]))
-        b = d - d.sum(-1, keepdim=True) * a
+        if lines is None:
+            b = d - d.sum(-1, keepdim=True) * a
+        else:
+            lines = lines & present
+            gamma = torch.where(lines, torch.zeros_like(gamma), gamma)
+            d = torch.where(lines, torch.zeros_like(d), d)
+            wide = torch.where(lines, torch.zeros_like(a), a)
+            b = d - d.sum(-1, keepdim=True) * wide / wide.sum(-1, keepdim=True).clamp_min(1e-300)
         if norm is not None:
             n = norm.reshape(-1, 1)
             a, b = a * n, b * n
@@ -470,7 +483,7 @@ def refine_samples(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: t
                    anneal: float | None = None, lr_final: float | None = None,
                    anneal_from: float | None = None, solver: str = "lm",
                    lm_iters: int = 40, lm_stages: int = 6, lm_stage_iters: int = 6,
-                   return_coords: bool = False):
+                   return_coords: bool = False, lines: torch.Tensor | None = None):
     r"""Sample-then-refine: pull each flow sample onto the data.
 
     Each sample's token coordinates ``u`` minimise
@@ -516,6 +529,12 @@ def refine_samples(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: t
     re-expressed by its ``recode``: the fit then lets poles go below the
     trained width floor, on a correspondingly finer quadrature.
 
+    ``lines`` is an optional ``(N, P)`` bool mask of tokens fitted as
+    zero-width lines (delta functions): only their position and weight move,
+    and their transform is exact (:class:`~spevae.physics.forward.PoleGreens`).
+    A Lorentzian of any width has tails; at error bars near 1e-5 a sharp
+    line cannot be fitted with one (TRAINING.md (xxxi)).
+
     ``G_fit, sigma_fit`` are ``(N, L)`` (already repeated per sample),
     ``x_fit`` ``(L,)``, ``inv_sqrt_R`` ``(L, L)``.  Returns
     ``(PoleSet, chi2 per point (N,) against the UNperturbed data)``, plus the
@@ -545,7 +564,7 @@ def refine_samples(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: t
     best_u = u0.clone()
 
     def objective(uu, data):
-        ps = flow.coords.decode(torch.cat([uu, pres], -1), norm=norm, nu_max=nu_max)
+        ps = flow.coords.decode(torch.cat([uu, pres], -1), norm=norm, nu_max=nu_max, lines=lines)
         d = ((fwd(ps, x_fit, kernel_matrix=K) - data) / sigma_fit.to(dt)) @ W.T
         c2 = (d * d).sum(-1)
         prox = (keep * (uu - u0) ** 2).sum((-1, -2))
@@ -563,7 +582,7 @@ def refine_samples(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: t
         raise ValueError(f"solver={solver!r}; expected 'lm' or 'adam'")
     if solver == "lm":
         best_u = _refine_lm(flow, z0, norm, beta, x_fit, target, sig_true, W, lam, start,
-                            lm_iters, lm_stages, lm_stage_iters).to(dt)
+                            lm_iters, lm_stages, lm_stage_iters, lines=lines).to(dt)
         steps = 0                                       # skip the first-order loop below
     for k in range(steps):
         fac = 1.0 if start is None or k >= t_anneal else start ** (1.0 - k / t_anneal)
@@ -586,7 +605,7 @@ def refine_samples(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: t
             obj, _ = objective(u, target)
             better = obj < best
             best_u[better] = u.detach()[better]
-        ps = flow.coords.decode(torch.cat([best_u, pres], -1), norm=norm, nu_max=nu_max)
+        ps = flow.coords.decode(torch.cat([best_u, pres], -1), norm=norm, nu_max=nu_max, lines=lines)
         d = ((fwd(ps, x_fit, kernel_matrix=K) - G_fit.to(dt)) / sigma_fit.to(dt)) @ W.T
         chi2 = (d * d).mean(-1)
     if return_coords:
@@ -596,7 +615,8 @@ def refine_samples(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: t
 
 @torch.no_grad()
 def add_pole(flow: FlowPosterior | LoweredFloor, z: torch.Tensor, donors: PoleSet,
-             generator: torch.Generator | None = None, weight: float = 0.03) -> tuple:
+             generator: torch.Generator | None = None, weight: float = 0.03,
+             lines: torch.Tensor | None = None) -> tuple:
     """Switch on one dormant pole slot in each row of ``z`` (a *birth*).
 
     The refinement keeps each sample's pole count, so a sample the flow gave
@@ -609,6 +629,11 @@ def add_pole(flow: FlowPosterior | LoweredFloor, z: torch.Tensor, donors: PoleSe
     presence channel); ``donors`` a dimensionless :class:`PoleSet` whose
     non-zero-weight poles form the pool.  Returns ``(z_new, born)`` with
     ``born`` an ``(N,)`` bool mask.
+
+    With ``lines`` (the ``(N, P)`` mask of tokens that are zero-width lines,
+    see :func:`refine_samples`) the new pole is a line when the donor pole
+    is one (``gamma == 0``), and the updated mask is returned as a third
+    value.
     """
     c = flow.coords
     z = z.clone()
@@ -617,7 +642,7 @@ def add_pole(flow: FlowPosterior | LoweredFloor, z: torch.Tensor, donors: PoleSe
     present = z[..., 4] > 0
     born = ~present.all(-1) & (pool_e.numel() > 0)
     if not bool(born.any()):
-        return z, born
+        return (z, born) if lines is None else (z, born, lines)
     N = z.shape[0]
     pick = torch.randint(pool_e.numel(), (N,), generator=generator)
     u_e = torch.asinh(pool_e[pick].to(z.dtype) / math.pi)
@@ -632,13 +657,18 @@ def add_pole(flow: FlowPosterior | LoweredFloor, z: torch.Tensor, donors: PoleSe
     slot = torch.where(present, torch.full_like(z[..., 4], -float("inf")), z[..., 4]).argmax(-1)
     rows = torch.nonzero(born).flatten()
     z[rows, slot[rows]] = new[rows]
-    return z, born
+    if lines is None:
+        return z, born
+    lines = lines.clone()
+    lines[rows, slot[rows]] = (pool_g[pick] == 0)[rows]
+    return z, born, lines
 
 
 def _refine_lm(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: torch.Tensor,
                beta: float, x_fit: torch.Tensor, target: torch.Tensor, sigma: torch.Tensor,
                W: torch.Tensor, lam: float, start: torch.Tensor | None, iters: int,
-               stages: int, stage_iters: int, chunk: int = 256) -> torch.Tensor:
+               stages: int, stage_iters: int, chunk: int = 256,
+               lines: torch.Tensor | None = None) -> torch.Tensor:
     """Levenberg--Marquardt on the refinement objective; returns ``u`` ``(N, P, 4)``.
 
     Residuals per sample: the whitened data misfit (L) and ``sqrt(lam)`` times
@@ -667,7 +697,12 @@ def _refine_lm(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: torch
         top = torch.zeros_like(present).scatter_(-1, zc[..., 4].argmax(-1, keepdim=True), True)
         present = present | (~present.any(-1, keepdim=True) & top)
         keep = present.to(dd).unsqueeze(-1)
-        live = keep.expand(-1, -1, 4).reshape(n, -1)
+        ln = None if lines is None else lines[rows] & present
+        live = keep.expand(-1, -1, 4)
+        if ln is not None:               # a line has a position and a weight, nothing else
+            wide = keep[..., 0] * (~ln).to(dd)
+            live = torch.stack([keep[..., 0], wide, keep[..., 0], wide], -1)
+        live = live.reshape(n, -1)
         tether_jac = root * torch.diag_embed(live)
 
         def fun(uf, jac, fac):
@@ -675,12 +710,12 @@ def _refine_lm(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: torch
             rt = root * (keep * (u - u0)).reshape(n, -1)
             if not jac:
                 with torch.no_grad():
-                    ps = flow.coords.decode(torch.cat([u, pres], -1), norm=nrm, nu_max=nu_max)
+                    ps = flow.coords.decode(torch.cat([u, pres], -1), norm=nrm, nu_max=nu_max, lines=ln)
                     rd = ((fwd(ps, x, kernel_matrix=K) - tgt) / (sig * fac)) @ Wd.T
                 return torch.cat([rd, rt], -1), None
             with torch.enable_grad():
                 ug = u.detach().requires_grad_(True)
-                ps = flow.coords.decode(torch.cat([ug, pres], -1), norm=nrm, nu_max=nu_max)
+                ps = flow.coords.decode(torch.cat([ug, pres], -1), norm=nrm, nu_max=nu_max, lines=ln)
                 th = torch.stack([ps.eps, ps.gamma, ps.a, ps.b], -1).reshape(n, -1)
                 Jt = rowwise_jacobian(th, ug)                       # (n, 4P, 4P)
             G, dG = fwd.jacobian(ps.detach(), x, K)

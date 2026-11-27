@@ -533,9 +533,10 @@ def main(argv=None) -> None:
                    help="seed of the posterior samples (flow checkpoints)")
     c.add_argument("--discrete", action="store_true",
                    help="state that the spectrum is a set of discrete lines (an atom, a "
-                        "molecule, a finite cluster): the window intervals of the posterior "
-                        "report then also allow every feature to be one sharp line (flow "
-                        "checkpoints)")
+                        "molecule, a finite cluster): features at the model's minimum width "
+                        "are then fitted as zero-width lines, and the window intervals of the "
+                        "posterior report allow every other feature to be one sharp line "
+                        "(flow checkpoints)")
     c.add_argument("--refine", action="store_true",
                    help="refine the latent code against this dataset first")
     c.add_argument("--refine-steps", type=int, default=2000)

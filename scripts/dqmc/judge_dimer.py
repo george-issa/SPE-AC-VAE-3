@@ -154,8 +154,14 @@ def main():
     a1.plot(WG[m][st], A_vae[m][st], color=VAE, lw=1.0, label="VAE latent MAP")
     a1.plot(WG[m][st], A_me[m][st], color=ME, lw=1.0, label="MaxEnt")
     top = 1.25 * float(max(rep.band["q95"][m].max(), A_vae[m].max()))
-    a1.vlines(exact.energies[big], 0, exact.weights[big] / exact.weights.max() * 0.92 * top, color=INK,
-              lw=1.8, label="exact lines (height = weight)")
+    scale = 0.92 * top / exact.weights.max()               # one scale for the exact lines and the model's
+    lc, lw_ = rep.line_cells(400, 8.0)                      # zero-width lines of the posterior, if any
+    on = lw_ > 1e-3
+    if on.any():
+        a1.vlines(lc[on], 0, np.minimum(lw_[on] * scale, top), color=FLOW, lw=4.5, alpha=0.5,
+                  label="flow posterior, zero-width lines (same scale)")
+    a1.vlines(exact.energies[big], 0, exact.weights[big] * scale, color=INK,
+              lw=1.5, label="exact lines (height = weight)")
     a1.set_ylim(-0.03 * top, top)
     a1.set_xlabel(r"$\omega$")
     a1.set_title(f"spectra;  W$_1$ to the exact answer: flow {w1['flow']:.3f}, VAE {w1['vae']:.3f}, "

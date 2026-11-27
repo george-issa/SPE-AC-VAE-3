@@ -362,3 +362,48 @@ def test_spectral_from_poles_accepts_per_sample_grids():
                                               poles.b, shared),
                           spectral_from_poles(poles.eps, poles.gamma, poles.a,
                                               poles.b, per_sample))
+
+
+def test_a_zero_width_line_transforms_exactly_and_counts_in_the_cumulative_weight():
+    """A pole with gamma = 0 is a delta function: a K(x, eps) in G, a step in the cumulative weight."""
+    from spevae.physics import cumulative_from_poles, line_density
+    dd = torch.float64
+    fwd = PoleGreens(SpectralQuadrature.for_beta(8.0, dtype=dd))
+    x = torch.linspace(0.0, 1.0, 33, dtype=dd)
+    ps = PoleSet(torch.tensor([[-3.0, 1.2, 0.4]], dtype=dd), torch.tensor([[0.0, 0.8, 0.0]], dtype=dd),
+                 torch.tensor([[0.3, 0.5, 0.2]], dtype=dd), torch.zeros(1, 3, dtype=dd))
+    G = fwd(ps, x)
+    wide = fwd(PoleSet(ps.eps[:, 1:2], ps.gamma[:, 1:2], ps.a[:, 1:2], ps.b[:, 1:2]), x)
+    exact = (0.3 * fermi_kernel(x, torch.tensor(-3.0, dtype=dd))
+             + 0.2 * fermi_kernel(x, torch.tensor(0.4, dtype=dd)))
+    assert float((G - wide - exact).abs().max()) < 1e-14
+    assert abs(float(G[0, 0] + G[0, -1]) - 1.0) < 1e-8             # the sum rule holds with lines
+    # the Jacobian against central differences; a line has no width and no dispersive part
+    G2, dG = fwd.jacobian(ps, x)
+    assert float((G2 - G).abs().max()) < 1e-14
+    h = 1e-6
+    for k, name in enumerate(("eps", "gamma", "a", "b")):
+        for p in range(3):
+            if float(ps.gamma[0, p]) == 0.0 and name in ("gamma", "b"):
+                assert float(dG[0, :, p, k].abs().max()) == 0.0
+                continue
+            t = [getattr(ps, n).clone() for n in ("eps", "gamma", "a", "b")]
+            t[k][0, p] += h
+            up = fwd(PoleSet(*t), x)
+            t[k][0, p] -= 2 * h
+            dn = fwd(PoleSet(*t), x)
+            assert float((((up - dn) / (2 * h))[0] - dG[0, :, p, k]).abs().max()) < 1e-7, (name, p)
+    # cumulative weight: a line counts from frequencies strictly above it
+    w = torch.tensor([-math.inf, -3.0, -3.0 + 1e-9, 0.4, 0.4 + 1e-9, math.inf], dtype=dd)
+    c = cumulative_from_poles(ps.eps, ps.gamma, ps.a, ps.b, w)[0]
+    assert float(c[0]) == 0.0 and abs(float(c[-1]) - 1.0) < 1e-12
+    assert abs(float(c[2] - c[1]) - 0.3) < 1e-8 and abs(float(c[4] - c[3]) - 0.2) < 1e-8
+    assert torch.equal(ps.cumulative(w), c.unsqueeze(0))
+    # a density on a grid leaves the lines out; line_density deposits them, weight and first moment kept
+    om = torch.linspace(-8.0, 8.0, 801, dtype=dd)
+    A = ps.spectral(om)
+    assert bool(torch.isfinite(A).all()) and abs(float(torch.trapz(A, om)) - 0.5) < 0.04
+    ld = line_density(ps.eps, ps.gamma, ps.a, om)
+    assert abs(float(torch.trapz(ld, om)) - 0.5) < 1e-12
+    assert abs(float(torch.trapz(ld * om, om)) - (0.3 * -3.0 + 0.2 * 0.4)) < 1e-12
+    assert float(line_density(ps.eps, ps.gamma + 0.1, ps.a, om).abs().max()) == 0.0      # no lines, nothing
