@@ -1,6 +1,6 @@
 # Figures: model `F3L_60k_s1`
 
-Built 2026-11-25 by `python scripts/figures/build.py F3L_60k_s1`. Read in folder order: what the model reconstructs when the answer is known, what it does on real DQMC bins, whether its error bars hold, and the checks behind those.
+Built 2026-11-27 by `python scripts/figures/build.py F3L_60k_s1`. Read in folder order: what the model reconstructs when the answer is known, what it does on real DQMC bins, whether its error bars hold, and the checks behind those.
 
 Error throughout is the area between the reconstructed and the exact cumulative spectral weight (W1, in units of omega; lower is better). "Relative error bar" is the error bar of G(tau) over its largest value.
 
@@ -18,6 +18,16 @@ On line spectra the median curve is low wherever the samples disagree about a li
 | beta = 2, relative error bar 0.001 | 0.132 / 0.465 | 18 of 20 | 0.367 / 0.323 | 5 of 12 |
 | beta = 16, relative error bar 0.001 | 0.108 / 0.213 | 17 of 20 | 0.185 / 0.333 | 11 of 12 |
 
+The line spectra again with the spectrum stated to be discrete (`--discrete`), which these are: features at the model's minimum width are then fitted as zero-width lines, drawn as blue bars on the scale of the exact lines.
+
+| setting | line spectra, stated discrete: this model / MaxEnt | lower on | fitted with zero-width lines |
+|---|---|---|---|
+| beta = 8, relative error bar 0.001 | 0.156 / 0.280 | 11 of 12 | 11 of 12 |
+| beta = 8, relative error bar 0.0001 | 0.062 / 0.124 | 10 of 12 | 11 of 12 |
+| beta = 8, relative error bar 0.01 | 0.479 / 0.702 | 12 of 12 | 9 of 12 |
+| beta = 2, relative error bar 0.001 | 0.295 / 0.323 | 6 of 12 | 7 of 12 |
+| beta = 16, relative error bar 0.001 | 0.150 / 0.333 | 11 of 12 | 10 of 12 |
+
 **lattice_beta8_errorbar0.001.png**
 
 ![lattice_beta8_errorbar0.001.png](1_known_answers/lattice_beta8_errorbar0.001.png)
@@ -25,6 +35,10 @@ On line spectra the median curve is low wherever the samples disagree about a li
 **lines_beta8_errorbar0.001.png**
 
 ![lines_beta8_errorbar0.001.png](1_known_answers/lines_beta8_errorbar0.001.png)
+
+**lines_stated_discrete_beta8_errorbar0.001.png**
+
+![lines_stated_discrete_beta8_errorbar0.001.png](1_known_answers/lines_stated_discrete_beta8_errorbar0.001.png)
 
 **lattice_beta8_errorbar0.0001.png**
 
@@ -34,6 +48,10 @@ On line spectra the median curve is low wherever the samples disagree about a li
 
 ![lines_beta8_errorbar0.0001.png](1_known_answers/lines_beta8_errorbar0.0001.png)
 
+**lines_stated_discrete_beta8_errorbar0.0001.png**
+
+![lines_stated_discrete_beta8_errorbar0.0001.png](1_known_answers/lines_stated_discrete_beta8_errorbar0.0001.png)
+
 **lattice_beta8_errorbar0.01.png**
 
 ![lattice_beta8_errorbar0.01.png](1_known_answers/lattice_beta8_errorbar0.01.png)
@@ -41,6 +59,10 @@ On line spectra the median curve is low wherever the samples disagree about a li
 **lines_beta8_errorbar0.01.png**
 
 ![lines_beta8_errorbar0.01.png](1_known_answers/lines_beta8_errorbar0.01.png)
+
+**lines_stated_discrete_beta8_errorbar0.01.png**
+
+![lines_stated_discrete_beta8_errorbar0.01.png](1_known_answers/lines_stated_discrete_beta8_errorbar0.01.png)
 
 **lattice_beta2_errorbar0.001.png**
 
@@ -50,6 +72,10 @@ On line spectra the median curve is low wherever the samples disagree about a li
 
 ![lines_beta2_errorbar0.001.png](1_known_answers/lines_beta2_errorbar0.001.png)
 
+**lines_stated_discrete_beta2_errorbar0.001.png**
+
+![lines_stated_discrete_beta2_errorbar0.001.png](1_known_answers/lines_stated_discrete_beta2_errorbar0.001.png)
+
 **lattice_beta16_errorbar0.001.png**
 
 ![lattice_beta16_errorbar0.001.png](1_known_answers/lattice_beta16_errorbar0.001.png)
@@ -57,6 +83,10 @@ On line spectra the median curve is low wherever the samples disagree about a li
 **lines_beta16_errorbar0.001.png**
 
 ![lines_beta16_errorbar0.001.png](1_known_answers/lines_beta16_errorbar0.001.png)
+
+**lines_stated_discrete_beta16_errorbar0.001.png**
+
+![lines_stated_discrete_beta16_errorbar0.001.png](1_known_answers/lines_stated_discrete_beta16_errorbar0.001.png)
 
 ## 2_real_data
 
@@ -69,6 +99,14 @@ Real DQMC bins of the half-filled Hubbard dimer (U = 4, beta = 8, 400 bins), who
 Left: measured minus exact G(tau) in units of the error bar. Middle: the reconstructions on the exact lines. Right: cumulative weight, where the area between a curve and the black steps is the error.
 
 ![hubbard_dimer_dqmc.png](2_real_data/hubbard_dimer_dqmc.png)
+
+**hubbard_dimer_dqmc_stated_discrete.png**
+
+The same dimer bins with the spectrum stated to be discrete (`spevae continue --discrete`): the four lines are fitted as zero-width lines.
+
+As above; the posterior's lines are the blue bars, on the scale of the exact lines.
+
+![hubbard_dimer_dqmc_stated_discrete.png](2_real_data/hubbard_dimer_dqmc_stated_discrete.png)
 
 **hubbard_ring4_dqmc.png**
 
@@ -93,6 +131,14 @@ Real DQMC bins of the same dimer at a high temperature (U = 4, beta = 2, 400 bin
 As for the dimer at beta = 8.
 
 ![hubbard_dimer_beta2_dqmc.png](2_real_data/hubbard_dimer_beta2_dqmc.png)
+
+**hubbard_dimer_beta2_dqmc_stated_discrete.png**
+
+The dimer at beta = 2 with the spectrum stated to be discrete.
+
+As for the dimer at beta = 8.
+
+![hubbard_dimer_beta2_dqmc_stated_discrete.png](2_real_data/hubbard_dimer_beta2_dqmc_stated_discrete.png)
 
 **holstein_dqmc.png**
 
@@ -122,11 +168,19 @@ Left: error per setting, as trained, with the narrow-line fit, and MaxEnt. Right
 
 ![narrow_lines.png](3_error_bars/narrow_lines.png)
 
+**zero_width_lines.png**
+
+Exact line spectra at all twelve settings: the report before zero-width lines, at its defaults (lines fitted when peaks of the model's minimum width do not reach the data, which happens at relative error bars near 1e-5), and with the spectrum stated to be discrete (lines fitted whenever narrow lines are flagged). Grey: lines fitted whenever they fit, the rule that was not shipped.
+
+Top left: error over MaxEnt's on the same data (below 1 = better). Top right: one point per flagged line spectrum, with the statement against before. Bottom left: share of windows whose exact weight lies inside the stated intervals; dashes are nominal. Bottom right: all settings pooled.
+
+![zero_width_lines.png](3_error_bars/zero_width_lines.png)
+
 **discrete_statement.png**
 
 Exact line spectra again: what stating that the spectrum is discrete (`spevae continue --discrete`) does to the intervals. Many close lines look like a continuous band in the data, so the report cannot flag them itself; the statement is how the user tells it.
 
-Left: share of windows whose exact weight lies inside the stated intervals, without the statement (blue) and with it (green); dashes are nominal. Right: the width of the stated 90% interval as a share of the range the data alone allow. The last group is the cost of making the statement about a continuous spectrum.
+Left: share of windows whose exact weight lies inside the stated intervals, without the statement (blue) and with it (green); dashes are nominal. Right: the width of the stated 90% interval as a share of the range the data alone allow. The last group is the cost of making the statement about a continuous spectrum. Made before zero-width lines were fitted: the line spectra the report does not flag, which this figure is about, are reported the same way now; the flagged ones are in zero_width_lines.png.
 
 ![discrete_statement.png](3_error_bars/discrete_statement.png)
 
@@ -138,9 +192,17 @@ Checks behind the numbers. The seeds of the earlier recipe, the families left ou
 
 Known answers at the edges of the range the model was trained on: beta = 1 and 20, relative error bars of 1e-5, dtau = 0.02 and 0.5 (20 exact lattice and 24 exact line spectra per setting).
 
-Left: this model's error over MaxEnt's on the same data (below 1 = this model is better). Middle and right: share of windows whose exact weight lies inside the stated intervals; dashes are nominal.
+Left: this model's error over MaxEnt's on the same data (below 1 = this model is better). Middle and right: share of windows whose exact weight lies inside the stated intervals; dashes are nominal. Made before zero-width lines were fitted: the line spectra at relative error bars of 1e-5 are better now (3_error_bars/zero_width_lines.png); everything else is unchanged.
 
 ![edges_of_trained_range.png](4_checks/edges_of_trained_range.png)
+
+**lines_whenever_they_fit_on_prior_draws.png**
+
+Why zero-width lines are not fitted whenever they fit: held-out draws of the training prior that the report flags, by what they really are. Where the narrow features are lines the error falls; where they are peaks of the minimum width or band edges it rises, and the data cannot tell the two apart.
+
+Left: share of windows whose exact weight lies inside the stated intervals, before and with lines fitted whenever they fit. Right: error of the mean window weights, with lines over before.
+
+![lines_whenever_they_fit_on_prior_draws.png](4_checks/lines_whenever_they_fit_on_prior_draws.png)
 
 **training_seeds.png**
 

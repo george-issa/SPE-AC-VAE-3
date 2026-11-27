@@ -93,11 +93,20 @@ spevae continue --bins mybins.txt --beta 8.0 --checkpoint flow.pt \
 `report.npz.json` the window table, warnings and diagnostics. From Python the
 same call is `spevae.posterior.continue_measured(flow, measured)`.
 
+A sharp line is fitted as what it is: a zero-width line with a position and a
+weight (a pole with half-width 0 in the output; drawn as a bar in the figure,
+listed per grid point in `A_lines`). A Lorentzian of any width has tails, and
+at error bars near 1e-5 a line cannot be fitted with one. The report does
+this on its own when the data reject peaks of the model's minimum width, and
+says so in a warning.
+
 If the system is an atom, a molecule or a finite cluster, say so with
-`--discrete` (`discrete=True`). Many close lines look like a continuous band
-in the data, the report cannot tell the two apart, and without the statement
-its intervals are too narrow for the lines. Do not use it for an extended
-system: there it makes the intervals about ten times wider than needed.
+`--discrete` (`discrete=True`). The data often cannot tell a line from a
+narrow peak, or many close lines from a continuous band; the statement
+settles it: features at the minimum width are fitted as zero-width lines at
+any error bar, and the intervals allow every other feature to be one sharp
+line. Do not use it for an extended system: there it puts lines where there
+are none and makes the intervals about ten times wider than needed.
 
 Trained range: fermionic G(τ), β from 1 to 20, relative error bars from 1e-5
 to 3e-2, Δτ from 0.02 to 0.5. Measured against exact answers over that range
@@ -105,9 +114,12 @@ and on three DQMC runs of exactly solvable clusters
 ([`docs/TRAINING.md`](docs/TRAINING.md), step 3; drawn in `figures/`). Where
 it falls short:
 
-- spectra of a few sharp lines at relative error bars of 1e-5, or at β near
-  2: MaxEnt is more accurate there (by up to 1.6 and 1.2 times); in most of
-  these cases the report flags narrow lines and says so;
+- spectra of a few sharp lines at β near 2 that are not stated to be
+  discrete: MaxEnt is about 1.1 times more accurate (with the statement the
+  two are level);
+- lines too close for the data to separate: one fitted line stands in for
+  the group, and MaxEnt's broad peak can be the closer of the two (by up to
+  2 times on the worst case judged);
 - continuous spectra at relative error bars of 1e-4 and below: the stated 90%
   interval holds the exact weight 79–86% of the time; the misses are below
   0.005 of the total weight;

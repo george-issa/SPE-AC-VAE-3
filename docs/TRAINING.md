@@ -1637,6 +1637,140 @@ finite, and it is the only case in which it arises in the judges — every
 unflagged failure is an exactly diagonalised cluster.  Left open: a dense
 line spectrum the user does not know to be one.
 
+(xxxi) **Zero-width lines in the fit: sharp lines at error bars of 1e-5 no
+longer lose to MaxEnt.  Fitted when the data ask for them or the spectrum is
+stated to be discrete** (*measured*, 2026-11-27; `physics/poles.py`,
+`physics/forward.py`, `models/flow.py`, `posterior.py`,
+`scripts/step3/line_fit_judge.py`, `run_line_fit.sh`,
+`line_fit_prior_check.py`, `out/step3/line_fit_F3L_60k_s1/`,
+`out/step3/line_fit_always_F3L_60k_s1/`).  The defect of (xxviii): at β = 8
+and error bars of 1e-5 the report lost to MaxEnt on exact line spectra by
+1.56 [1.30, 1.87], with under half the samples accepted on 11 of 24, and a
+lower width floor did not help.
+*Cause.*  A Lorentzian has tails.  Against a line of the same weight its
+cumulative weight differs by W₁ = (2γ/π)(1 + ln(Ω/γ)) per unit weight (Ω
+the frequency range): 0.056 at a quarter of the floor at β = 8.  That is the
+whole reported error of a Hubbard atom there (0.042 with 0.75 of the weight
+at the floor; MaxEnt 0.023), at any error bar.  At error bars of 1e-5 the
+data see the tails as well: the fit surrounds each line with further poles
+and dispersive residues that cancel them (5 to 11 poles for the atom's two
+lines), and half the samples fail.
+*The line.*  A pole with γ = 0 is now a zero-width line, a·δ(ω − ε) with
+b = 0.  Its transform is a·K(x, ε), exact, with ∂K/∂ε = K·[f(ε) − x]
+(`PoleGreens.forward`, `.jacobian`); `cumulative_from_poles` counts it as a
+step, `line_density` deposits it on a grid, and `PoleSet.spectral` leaves it
+out.  In the flow's coordinates a token marked as a line has a position and
+a weight and nothing else (`PoleCoords.decode(lines=)`,
+`refine_samples(lines=)`), and a birth borrowed from a line is a line.
+*The fit* (`continue_posterior`, when narrow lines are flagged and the rule
+below says so).  Same proposals, same redraws of the data.  The poles the
+flow pinned at its floor (within 1.25 floors) are lines; the others live in
+the lowered-floor coordinates of (xxii); float64 throughout.  After the fit
+and its births, a pole the fit has narrowed below the trained floor is tried
+as a line too (twice at most; kept when the sample then fits, or fits
+better).  A sample has *settled* when it fits and holds no pole narrower
+than the trained floor that is not a line.  If a quarter of the proposals
+settle, the others start again from one that did (its poles, and which of
+them are lines) against their own redraw, and that is the report; otherwise
+the lowered floor is fitted as before, with the settled line fits kept
+sample by sample.  Window intervals of a report with lines are not stated
+more narrowly than the relative error bar of the data: samples made of lines
+agree exactly on a window that holds none.  The band: its quantiles are
+those of the rest of the spectrum (a line has no height), `band["lines"]` is
+the mean weight of the lines per grid node, and the mean includes it.
+On the Hubbard atom at 1e-5: both lines to four decimals in position and
+weight, W₁ 0.0417 → 0.0013.
+*When to fit them.*  Built first to fit lines whenever they fit ("always";
+12 settings × 44 spectra, the noise and seeds of (xxii) and (xxviii)):
+flagged line spectra (245) W₁ over MaxEnt 0.77 [0.72, 0.82] → 0.52 [0.47,
+0.56], lower than MaxEnt on 183 → 219, stated intervals 0.52 / 0.90 → 0.76 /
+0.95 at a narrower 90% width (0.073 → 0.057), every setting better or
+level.  On held-out draws of the prior that the report flags (41 of 288,
+`line_fit_prior_check.py`) it cuts both ways: on exact line spectra (21) the
+error of the mean window weights is 0.70 [0.49, 1.02] of before; on the
+others (20: pole mixtures whose narrowest pole sits at the prior's minimum
+width, and band edges at β ≤ 2) 1.32 [1.06, 1.64] — and the one lattice
+spectrum of 240 that is flagged (hypercubic, β = 1, noise 1e-2) goes from
+W₁ 0.100 to 0.226.  Nothing the report has tells the two kinds apart at
+those error bars: the flow pins its poles the same way for both (share of
+the weight within 1.08 floors; height of a pinned pole over the background
+of the wide ones: no separation), and both readings fit the data.  Drawing
+sharp lines into a continuous spectrum is the worse mistake of the two.
+*The rule shipped* (`posterior.PEAKS_FIT_BELOW`): lines are fitted (a) when
+the fit at the trained floor reaches the data for fewer than half the
+samples — the data themselves ask for something narrower — or (b) when the
+user states that the spectrum is discrete (`discrete=True`, `--discrete`).
+Otherwise the report is the one of (xxii)–(xxx), to the digit.
+*Judged as shipped* (same spectra, noise and seeds, all twelve settings;
+with the statement the range the data alone allow is computed as well,
+except at β = 20 with error bars of 1e-5, where it takes minutes per
+spectrum and the discrete reading was left uncut):
+
+| line spectra | n | W₁ / MaxEnt | lower than MaxEnt | inside stated 50% / 90% | 90% width | fitted with lines | under half the samples fit |
+|---|---|---|---|---|---|---|---|
+| flagged, before | 245 | 0.77 [0.72, 0.82] | 183 | 0.52 / 0.90 | 0.073 | 0 | 22 |
+| flagged, at the defaults | 245 | 0.68 [0.63, 0.73] | 196 | 0.55 ± 0.02 / 0.90 ± 0.01 | 0.067 | 27 | 2 |
+| flagged, stated to be discrete | 245 | 0.52 [0.47, 0.56] | 219 | 0.80 ± 0.01 / 0.96 ± 0.01 | 0.042 | 245 | 1 |
+| not flagged, before and at the defaults | 43 | 0.94 [0.85, 1.05] | 18 | 0.32 / 0.62 | 0.061 | 0 | 1 |
+| not flagged, stated to be discrete | 43 | 0.94 [0.85, 1.05] | 18 | 0.69 ± 0.04 / 0.95 ± 0.01 | 0.193 | 0 | 1 |
+| all, before | 288 | 0.79 [0.75, 0.84] | 201 | 0.49 / 0.85 | 0.069 | 0 | 23 |
+| all, at the defaults | 288 | 0.71 [0.67, 0.76] | 214 | 0.51 / 0.86 | 0.065 | 27 | 3 |
+| all, stated to be discrete | 288 | 0.56 [0.52, 0.61] | 237 | 0.78 ± 0.01 / 0.96 ± 0.01 | 0.051 | 245 | 2 |
+
+With the statement the intervals of the flagged spectra are 0.6 of their
+earlier width and hold more often (the 50% interval is conservative); the
+spectra the report does not flag keep the reading of (xxx).  By setting the
+90% interval holds 0.92–0.98 with the statement.  The 240 lattice spectra
+are unchanged at the defaults (0.49 / 0.90, none fitted with lines).  On
+the 288 held-out draws of the prior the rule fits lines on none (peaks of
+the minimum width fit at least half the samples of all 41 flagged ones):
+every sample is the one of before.
+At the defaults lines are fitted at the two settings with error bars of
+1e-5 and almost nowhere else (15 of 21 flagged spectra at β = 8, 11 of 22
+at β = 20, one at β = 8 with 1e-4, none at the other nine): β = 8, 1e-5:
+1.56 [1.30, 1.87] → 0.64 [0.45, 0.92] (W₁ 0.105 → 0.043 against MaxEnt's
+0.068), lower than MaxEnt on 2 → 14 of 24, under half the samples accepted
+on 10 → 0 of the flagged (median accepted 0.55 → 0.98); β = 20, 1e-5: 0.91
+[0.76, 1.08] → 0.63 [0.43, 0.92], under half accepted on 12 → 2.  Every
+spectrum fitted without lines is unchanged (501 of 501 within 1%).
+With the statement, by family: Hubbard atoms 0.67 → 0.27 of MaxEnt's error,
+dimers 0.79 → 0.46, Anderson clusters 0.84 → 0.54, trimers 0.72 → 0.63, the
+four-site ring 0.81 → 0.70, Holstein atoms 0.88 → 0.90; by setting ahead of
+MaxEnt at eleven and level at β = 2 (1.11 [1.00, 1.23] → 0.89 [0.75,
+1.06]); β = 8 with 1e-4: 0.95 → 0.55 [0.42, 0.71]; β = 20 with 1e-5: 0.91 →
+0.34 [0.20, 0.59].
+*Where one line is not enough.*  Lines the data cannot separate: the trimer
+at U = 0.48 has four lines within ±0.18 of ω = −3.42; with the statement,
+at 1e-5, every sample puts one line at their centroid and a small satellite
+beside it, and W₁ goes from 0.044 to 0.073 (MaxEnt 0.038).  With the
+statement the error rose by more than 5% on 25 of 245 flagged line spectra,
+most of them at β = 1.
+*Real DQMC* ((xxix)): peaks of the minimum width fit both dimers (200 and
+196 of 200 samples), so at the defaults their reports are unchanged.  With
+the statement: dimer at β = 8 W₁ 0.319 → 0.291 (MaxEnt 0.777) and 7 → 5 of
+7 windows inside the stated 90% interval — the upper satellite (0.073 of
+the weight) and its neighbour, by 0.010 and 0.008; the exact G(τ) itself
+misses these bins at 1.34 times the χ² of a perfect fit (Trotter error) —
+dimer at β = 2 0.413 → 0.342 (MaxEnt 0.350, VAE 0.344), 7 of 7;
+the ring is not flagged and is unchanged.
+*Ruled out on the way*: single precision (the lattice spectra at 1e-5
+fitted in float64: same error, same coverage 0.39 / 0.79).
+*Cost*: none to speak of.  A 200-sample report on a flagged line spectrum
+at β = 8 with error bars of 1e-5 takes 104–120 s with lines against 96–109 s
+before (three spectra, four threads): the line fit replaces the fit at the
+lowered floor, and its quadrature is done for the poles that are not lines
+only (`PoleGreens.jacobian(active=)`; the results are the same to six
+digits on the 15 spectra rerun).
+Tests: lines in the forward map against exact values and central
+differences, in the coordinates and the fit (two lines at 1e-5 recovered to
+2e-3; the same proposals as Lorentzians cannot reach the data), and through
+the report (the rule, the statement, the band, save and plot).
+Reading: the error-bar-1e-5 defect is closed where it arose, and a user who
+knows the system is finite gets lines at every error bar.  Left open: lines
+the data cannot separate (a width the data choose would serve them better
+than one line), and the flagged spectrum that is not stated to be discrete
+at error bars the data cannot decide — reported as before.
+
 **Gates for calling it shippable**, and where seed 1 stands (2026-11-25,
 after (xxiv)):
 (1) known-answer W₁ at or below MaxEnt on every family — *met on the ten
@@ -1667,29 +1801,34 @@ setting, seed 1's band table transfers ((xxi))*;
 and the VAE, the upper satellite and its neighbour window outside their
 intervals by 0.01 in weight*.
 Since (xxv) the candidate for release is the retrained `F3L_60k_s1`; the
-gates above are stated for `F3_60k_s1`.  For the candidate, after (xxx):
+gates above are stated for `F3_60k_s1`.  For the candidate, after (xxxi):
 (1) lattice below MaxEnt on 17–20 of 20 at every one of twelve settings,
 the seven at the edges of the range included ((xxviii)); line spectra ahead
-at six (β = 8 with noise 1e-3 and 1e-2, β = 16 and 20, Δτ = 0.02, β = 1
-with noise 1e-2), level at five (noise 1e-4: 0.95 [0.86, 1.06]; β = 2: 1.11
-[1.00, 1.23]; β = 1 with noise 1e-3; Δτ = 0.5; β = 20 with noise 1e-5), and
-behind at β = 8, noise 1e-5 (1.56 [1.30, 1.87]) — *not met there*;
+at eight (β = 8 with noise 1e-5, 1e-3 and 1e-2, β = 16, β = 20 with noise
+1e-3 and 1e-5, Δτ = 0.02, β = 1 with noise 1e-2), level at four (noise
+1e-4: 0.91 [0.79, 1.05]; β = 2: 1.11 [1.00, 1.23]; β = 1 with noise 1e-3:
+0.93 [0.85, 1.00]; Δτ = 0.5: 0.91 [0.76, 1.10]) and behind at none, since
+the fit has zero-width lines ((xxxi); β = 8, noise 1e-5: 1.56 → 0.64
+[0.45, 0.92]); with the spectrum stated to be discrete, ahead at eleven
+and level at β = 2 (0.89 [0.75, 1.06]);
 (2) not repeated for this recipe; (3) met on unflagged prior draws (0.50 /
 0.90 held out), on lattice spectra pooled (0.48 / 0.91 and 0.49 / 0.90 at
 the edges; by setting 0.79 to 0.99 at the 90% level, the low ones at noise
 1e-5 and 1e-4 with misses below 0.005 of the weight) and on flagged line
-spectra (0.51 / 0.90; 0.53 / 0.89 at the edges); on the line spectra the
-report cannot flag, a fifth of them, *not met as it stands* (0.34 / 0.62)
-and met at the 90% level when the user states that the spectrum is discrete
-(0.67 / 0.95; 0.70 / 0.94 held out, (xxx));
+spectra (0.55 / 0.90 over the twelve settings, (xxxi)); on the line spectra
+the report cannot flag, a seventh of them, *not met as it stands* (0.32 /
+0.62) and met at the 90% level when the user states that the spectrum is
+discrete (0.68 / 0.95; flagged ones 0.80 / 0.96 at 0.6 of the width, (xxx),
+(xxxi));
 (4) 0.50 pooled, 0.44 below error bars of 1e-4 and 0.56 between 1e-3 and
 1e-2; (5) met (0.0299 / 0.0638); (6) two seeds, within 1% of each other
 through the report, the same spectra flagged on 115 of 120, seed 1's table
 transfers ((xxvii));
 (7) three runs ((xxvi), (xxix)): dimer at β = 8, W₁ 0.319 against MaxEnt's
-0.777, 7 of 7 windows; ring of four sites 0.320 against 0.657, 4 of 7
-windows (7 of 7 with the statement); dimer at β = 2 0.413 against 0.350,
-7 of 7.
+0.777, 7 of 7 windows (with the statement 0.291, 5 of 7, the misses 0.01 of
+the weight); ring of four sites 0.320 against 0.657, 4 of 7 windows (7 of 7
+with the statement); dimer at β = 2 0.413 against 0.350, 7 of 7 (with the
+statement 0.342, 7 of 7).
 The command a user runs exists since 2026-11-25: `spevae continue` gives
 the posterior report for a flow checkpoint (`posterior.continue_measured`),
 and reproduces the dimer judge's report to the digit.  No checkpoint is
