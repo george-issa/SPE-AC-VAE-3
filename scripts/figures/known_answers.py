@@ -129,8 +129,9 @@ def draw(res, cur, kind, path):
         k = r.get("k", i)                               # the spectrum's index in the stored curves
         w, q, me, ex = cur[f"w{k}"], cur[f"q{k}"], cur[f"me{k}"], cur[f"ex{k}"]
         ln = cur[f"ln{k}"] if f"ln{k}" in cur else np.zeros((2, 1))
-        ax.fill_between(w, q[0], q[2], color=MODEL, alpha=0.25, lw=0, label="this model, 90% band")
-        ax.plot(w, q[1], color=MODEL, lw=1.4, label="this model, median")
+        rest = " of all but its lines" if res.get("stated") else ""           # a line has no height
+        ax.fill_between(w, q[0], q[2], color=MODEL, alpha=0.25, lw=0, label="this model, 90% band" + rest)
+        ax.plot(w, q[1], color=MODEL, lw=1.4, label="this model, median" + rest)
         ax.plot(w, me, color=ME, lw=1.0, label="MaxEnt")
         if kind == "continuum":
             ax.plot(w, ex, color=INK, lw=1.4, ls="--", label="exact")

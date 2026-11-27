@@ -148,9 +148,10 @@ def main():
                  f"rms {res['z_rms']:.2f}, max {res['z_max']:.1f}; shaded = $\\pm 2\\sigma$", fontsize=9.5)
     m = np.abs(WG) <= 8
     st = slice(None, None, 8)
+    rest = " of all but its lines" if rep.diagnostics.get("line_fit") else ""     # a line has no height
     a1.fill_between(WG[m][st], rep.band["q05"][m][st], rep.band["q95"][m][st], color=FLOW, alpha=0.25, lw=0,
-                    label="flow posterior, 90% band")
-    a1.plot(WG[m][st], rep.band["q50"][m][st], color=FLOW, lw=1.3, label="flow posterior, median")
+                    label="flow posterior, 90% band" + rest)
+    a1.plot(WG[m][st], rep.band["q50"][m][st], color=FLOW, lw=1.3, label="flow posterior, median" + rest)
     a1.plot(WG[m][st], A_vae[m][st], color=VAE, lw=1.0, label="VAE latent MAP")
     a1.plot(WG[m][st], A_me[m][st], color=ME, lw=1.0, label="MaxEnt")
     top = 1.25 * float(max(rep.band["q95"][m].max(), A_vae[m].max()))

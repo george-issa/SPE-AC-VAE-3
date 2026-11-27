@@ -565,7 +565,7 @@ def continue_posterior(flow, G, x, beta: float, sigma, inv_sqrt_R=None, bins=Non
         same is done whenever ``discrete`` is set.  Window intervals of a
         report with lines are never narrower than the relative error bar of
         the data.  Measured (TRAINING.md (xxxi)) on exact line spectra at
-        beta = 8, error bars 1e-5: W1 0.105 -> 0.042 against MaxEnt's 0.068.
+        beta = 8, error bars 1e-5: W1 0.105 -> 0.043 against MaxEnt's 0.068.
     discrete
         State that the spectrum is a set of discrete lines (an atom, a
         molecule, a finite cluster).  Poles the flow pins at its width

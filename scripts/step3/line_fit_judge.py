@@ -239,7 +239,7 @@ def fig(out, args):
     fmt = lambda t: "{:.2f} [{:.2f}, {:.2f}]".format(*t)
     cells, labels = [], []
     for name, v in res["pooled"].items():
-        for arm, lab, _ in arms:
+        for arm, lab, _ in ARMS:                        # the arm that was not shipped is in the json
             t = v[arm]
             if not t:
                 continue
@@ -249,14 +249,14 @@ def fig(out, args):
                           f"{t['lower_than_maxent']} of {t['with_maxent']}" if "over_maxent" in t else "-",
                           fmt(t["over_before"]), f"{c['c50']:.2f} / {c['c90']:.2f}", f"{t['width90_median']:.3f}",
                           f"{t['with_lines']}", f"{t['accepted_below_half']}"])
-    tab = a3.table(cellText=cells, rowLabels=labels, loc="center right", cellLoc="center",
+    tab = a3.table(cellText=cells, rowLabels=labels, loc="lower right", cellLoc="center",
                    colLabels=["W1 / MaxEnt", "lower than\nMaxEnt", "W1 / W1 before", "inside stated\n50% / 90%",
                               "median 90%\nwidth", "fitted with\nlines", "under half the\nsamples fit"])
     tab.auto_set_font_size(False)
     tab.set_fontsize(7)
-    tab.scale(1.0, 1.55)
+    tab.scale(1.0, 1.6)
     tab.auto_set_column_width(list(range(7)))
-    a3.set_title("all settings pooled", fontsize=9.5)
+    a3.set_title("all settings pooled (in brackets: number of spectra)", fontsize=9.5)
     for ax in (a0, a1, a2):
         ax.grid(color="#e4e3df", lw=0.6)
         ax.set_axisbelow(True)

@@ -718,7 +718,8 @@ def _refine_lm(flow: FlowPosterior | LoweredFloor, z0: torch.Tensor, norm: torch
                 ps = flow.coords.decode(torch.cat([ug, pres], -1), norm=nrm, nu_max=nu_max, lines=ln)
                 th = torch.stack([ps.eps, ps.gamma, ps.a, ps.b], -1).reshape(n, -1)
                 Jt = rowwise_jacobian(th, ug)                       # (n, 4P, 4P)
-            G, dG = fwd.jacobian(ps.detach(), x, K)
+            # with lines, the quadrature is done for the present poles that are not lines only
+            G, dG = fwd.jacobian(ps.detach(), x, K, active=None if ln is None else present & ~ln)
             rd = ((G - tgt) / (sig * fac)) @ Wd.T
             Jd = Wd @ ((dG.reshape(n, -1, 4 * P) @ Jt) / (sig * fac).unsqueeze(-1))
             return torch.cat([rd, rt], -1), torch.cat([Jd, tether_jac], 1)

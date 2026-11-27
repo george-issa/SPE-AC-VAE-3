@@ -407,3 +407,38 @@ def test_a_zero_width_line_transforms_exactly_and_counts_in_the_cumulative_weigh
     assert abs(float(torch.trapz(ld, om)) - 0.5) < 1e-12
     assert abs(float(torch.trapz(ld * om, om)) - (0.3 * -3.0 + 0.2 * 0.4)) < 1e-12
     assert float(line_density(ps.eps, ps.gamma + 0.1, ps.a, om).abs().max()) == 0.0      # no lines, nothing
+
+
+def test_the_jacobian_can_be_limited_to_the_poles_that_move():
+    """`active` skips the quadrature of poles that carry no weight in it; nothing else changes."""
+    dd = torch.float64
+    fwd = PoleGreens(SpectralQuadrature.for_beta(8.0, dtype=dd))
+    x = torch.linspace(0.0, 1.0, 33, dtype=dd)
+    g = torch.Generator().manual_seed(0)
+    B, P = 5, 12
+    eps = 6.0 * torch.randn(B, P, generator=g, dtype=dd)
+    gam = 0.4 + torch.rand(B, P, generator=g, dtype=dd)
+    a = torch.rand(B, P, generator=g, dtype=dd)
+    b = 0.1 * torch.randn(B, P, generator=g, dtype=dd)
+    present = torch.rand(B, P, generator=g) < 0.6
+    line = present & (torch.rand(B, P, generator=g) < 0.5)
+    zero = torch.zeros_like(a)
+    ps = PoleSet(eps, torch.where(line, zero, gam), torch.where(present, a, zero),
+                 torch.where(present & ~line, b, zero))
+    G0, d0 = fwd.jacobian(ps, x)                               # every slot that is not a line
+    G1, d1 = fwd.jacobian(ps, x, active=present & ~line)       # the present Lorentzians only
+    live = present.reshape(B, 1, P, 1)
+    assert float((G0 - G1).abs().max()) < 1e-13 and float((fwd(ps, x) - G1).abs().max()) < 1e-13
+    assert float(((d0 - d1) * live).abs().max()) < 1e-13       # present poles, lines included: the same
+    assert float((d1 * ~live).abs().max()) == 0.0              # absent slots: not computed
+    # no line at all: the same holds
+    wide = PoleSet(eps, gam, ps.a, torch.where(present, b, zero))
+    G2, d2 = fwd.jacobian(wide, x, active=present)
+    G3, d3 = fwd.jacobian(wide, x)
+    assert float((G2 - G3).abs().max()) < 1e-13 and float(((d2 - d3) * live).abs().max()) < 1e-13
+    # lines only: no quadrature is done, and the answer is the exact one
+    only = PoleSet(eps, zero, ps.a, zero)
+    G4, _ = fwd.jacobian(only, x, active=torch.zeros(B, P, dtype=torch.bool))
+    exact = (only.a.unsqueeze(-1) * fermi_kernel(x.reshape(1, 1, -1), eps.unsqueeze(-1))).sum(1)
+    assert float((G4 - exact).abs().max()) < 1e-14
+

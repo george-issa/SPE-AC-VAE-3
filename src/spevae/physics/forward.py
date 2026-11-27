@@ -281,6 +281,7 @@ class PoleGreens(nn.Module):
         poles: PoleSet,
         x: torch.Tensor,
         kernel_matrix: torch.Tensor | None = None,
+        active: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         r""":math:`G(x)` and its exact derivative with respect to every pole parameter.
 
@@ -304,6 +305,13 @@ class PoleGreens(nn.Module):
         K\,[f(\varepsilon) - x]` (:math:`f` the Fermi function) and no
         dependence on ``gamma`` or ``b``.
 
+        ``active`` is an optional ``(B, P)`` mask of the poles whose
+        derivatives are wanted.  The quadrature -- nearly all of the cost --
+        is then done for those poles only (lines never need it): every other
+        pole must carry no weight there (``a = b = 0``, or be a line) and
+        gets zero derivatives, lines keeping their exact ones.  A fit that
+        moves three poles of twelve pays for three.
+
         Returns
         -------
         (G, dG)
@@ -314,16 +322,30 @@ class PoleGreens(nn.Module):
             dt = poles.eps.dtype
             x = x.reshape(-1).to(dt)
             line = poles.gamma == 0
-            if bool(line.any()):
+            if bool(line.any()) or active is not None:
+                B, P = poles.eps.shape
                 zero = torch.zeros_like(poles.a)
-                G, dG = self.jacobian(PoleSet(poles.eps, torch.where(line, torch.ones_like(zero), poles.gamma),
-                                              torch.where(line, zero, poles.a), torch.where(line, zero, poles.b)),
-                                      x, kernel_matrix)
-                Kl = fermi_kernel(x.reshape(1, 1, -1), poles.eps.unsqueeze(-1))      # (B, P, L)
-                al = torch.where(line, poles.a, zero).unsqueeze(-1)
-                dl = torch.stack([al * Kl * (torch.sigmoid(-poles.eps).unsqueeze(-1) - x.reshape(1, 1, -1)),
-                                  torch.zeros_like(Kl), Kl, torch.zeros_like(Kl)], -1).permute(0, 2, 1, 3)
-                return G + (al * Kl).sum(1), torch.where(line.reshape(line.shape[0], 1, -1, 1), dl, dG)
+                # the quadrature, for the poles that need it, moved to the front of each row
+                on = ~line if active is None else (active & ~line)
+                n_on = int(on.sum(-1).max())
+                dG = torch.zeros(B, x.numel(), P, 4, dtype=dt, device=poles.eps.device)
+                G = torch.zeros(B, x.numel(), dtype=dt, device=poles.eps.device)
+                if n_on:
+                    order = torch.argsort((~on).to(torch.uint8), dim=-1, stable=True)[:, :n_on]
+                    m = torch.gather(on, 1, order)
+                    pick = lambda t, fill: torch.where(m, torch.gather(t, 1, order),
+                                                       torch.full_like(t[:, :n_on], fill))
+                    G, d_on = self.jacobian(PoleSet(pick(poles.eps, 0.0), pick(poles.gamma, 1.0),
+                                                    pick(poles.a, 0.0), pick(poles.b, 0.0)), x, kernel_matrix)
+                    d_on = d_on * m.reshape(B, 1, n_on, 1).to(dt)
+                    dG.scatter_(2, order.reshape(B, 1, n_on, 1).expand(B, x.numel(), n_on, 4), d_on)
+                if bool(line.any()):
+                    Kl = fermi_kernel(x.reshape(1, 1, -1), poles.eps.unsqueeze(-1))      # (B, P, L)
+                    al = torch.where(line, poles.a, zero).unsqueeze(-1)
+                    dl = torch.stack([al * Kl * (torch.sigmoid(-poles.eps).unsqueeze(-1) - x.reshape(1, 1, -1)),
+                                      torch.zeros_like(Kl), Kl, torch.zeros_like(Kl)], -1).permute(0, 2, 1, 3)
+                    G, dG = G + (al * Kl).sum(1), torch.where(line.reshape(B, 1, -1, 1), dl, dG)
+                return G, dG
             K = self.kernel_matrix(x) if kernel_matrix is None else kernel_matrix.to(dt)
             Kw = self.quad.weights.to(dt).unsqueeze(-1) * K               # (M, L)
             eps, gam, a, b = (t.unsqueeze(-1) for t in
